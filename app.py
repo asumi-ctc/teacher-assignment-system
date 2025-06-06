@@ -4,6 +4,8 @@ import pandas as pd
 import io
 import contextlib
 import re # 正規表現モジュール
+import google.generativeai as genai # Gemini API 用
+from streamlit_oauth import OAuth2Component # OIDC認証用
 import random # データ生成用
 
 # --- 1. データ定義 ---
@@ -75,6 +77,37 @@ def _get_log_explanation(log_line: str) -> str:
     return "(このログメッセージに対する定義済みの解説はありません)"
 
 # --- 大規模データ生成 ---
+# (変更なし)
+
+# --- Gemini API 連携 ---
+def get_gemini_explanation(log_text: str, api_key: str) -> str:
+    """
+    指定されたログテキストを Gemini API に送信し、解説を取得します。
+    """
+    if not api_key:
+        return "エラー: Gemini API キーが設定されていません。"
+    if not log_text:
+        return "解説対象のログがありません。"
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash-latest') # または 'gemini-pro' など適切なモデル
+        prompt = f"""以下のシステムログについて、IT専門家でない人にも分かりやすく解説してください。
+ログの各部分が何を示しているのか、全体としてどのような処理が行われているのかを説明してください。
+特に重要な情報、警告、エラーがあれば指摘し、考えられる原因や対処法についても言及してください。
+
+ログ本文:
+```text
+{log_text}
+```
+
+解説:
+"""
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        st.error(f"Gemini API での解説中にエラーが発生しました: {e}")
+        return f"Gemini API での解説中にエラーが発生しました: {str(e)[:500]}..." # エラーメッセージを短縮して表示
 
 PREFECTURES = [
     "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
@@ -338,7 +371,50 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
 # --- 3. Streamlit UI ---
 def main():
     st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
-    st.title("講師割り当てシステム デモ (OR-Tools)")
+
+    # --- OIDC認証設定 ---
+    GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
+    REDIRECT_URI = st.secrets.get("REDIRECT_URI")
+    GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
+
+    AUTHORIZE_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+    TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+    # REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke" # 必要に応じて
+
+    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI]):
+        st.error("Google OAuth の設定が不完全です。管理者にお問い合わせください。(.streamlit/secrets.toml を確認してください)")
+        st.stop()
+
+    oauth2 = OAuth2Component(
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        authorize_endpoint=AUTHORIZE_ENDPOINT,
+        token_endpoint=TOKEN_ENDPOINT,
+        refresh_token_endpoint=None,
+        revoke_token_endpoint=None, # REVOKE_ENDPOINT,
+    )
+
+    if "token" not in st.session_state:
+        result = oauth2.authorize_button(
+            name="Google でログイン",
+            icon="https://www.google.com/favicon.ico",
+            redirect_uri=REDIRECT_URI,
+            scope="openid email profile",
+            key="google_login",
+            use_container_width=True,
+        )
+        if result:
+            st.session_state.token = result.get("token")
+            st.rerun()
+        return # 認証が完了するまでメインコンテンツは表示しない
+    else:
+        # token = st.session_state.token # 必要であればトークン情報を使用
+        if st.sidebar.button("ログアウト"):
+            del st.session_state.token
+            st.rerun()
+
+    st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
 
     # --- サイドバー: 設定 ---
     st.sidebar.header("最適化設定")
@@ -389,10 +465,14 @@ def main():
     if st.button("最適割り当てを実行", type="primary"):
         if "raw_solver_log_for_gca" in st.session_state: # 関連するセッション変数もクリア
             del st.session_state.raw_solver_log_for_gca
+        if "gemini_explanation" in st.session_state:
+            del st.session_state.gemini_explanation
         if "solution_executed" in st.session_state: # 関連するセッション変数もクリア
             del st.session_state.solution_executed
+
         st.header("最適化結果")
         with st.spinner("最適化計算を実行中..."):
+            # 既存の solve_assignment 関数呼び出し
             solution_status, objective_value, results_df_data, all_courses, all_lecturers, solver_raw_status, raw_solver_log, explained_log = solve_assignment(
                 DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
                 DEFAULT_TRAVEL_COSTS_MATRIX, DEFAULT_AGE_PRIORITY_COSTS, DEFAULT_FREQUENCY_PRIORITY_COSTS,
@@ -401,6 +481,15 @@ def main():
             )
             # 結果をセッション状態に保存してGCA解説ボタンで使えるようにする
             st.session_state.raw_solver_log_for_gca = raw_solver_log
+            st.session_state.solution_executed = True # 実行済みフラグ
+
+            # Gemini API で解説を取得
+            if raw_solver_log and GEMINI_API_KEY:
+                with st.spinner("Gemini API でログを解説中..."):
+                    gemini_explanation_text = get_gemini_explanation(raw_solver_log, GEMINI_API_KEY)
+                    st.session_state.gemini_explanation = gemini_explanation_text
+            elif not GEMINI_API_KEY:
+                st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
 
         st.subheader(f"求解ステータス: {solution_status}")
         if objective_value is not None:
@@ -458,6 +547,11 @@ def main():
             st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
         else:
             st.error(solution_status)
+
+        # Gemini API による解説結果の表示
+        if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
+            with st.expander("Gemini API によるログ解説", expanded=True):
+                st.markdown(st.session_state.gemini_explanation)
 
         # 解説付きログの表示
         if explained_log: # explained_log があれば表示
