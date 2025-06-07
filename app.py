@@ -394,28 +394,59 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     # --- Gemini API送信用ログのフィルタリング ---
     def filter_log_for_gemini(log_content: str) -> str:
         lines = log_content.splitlines()
-        gemini_log_lines = []
+        gemini_log_lines_final = []
+        
+        solver_log_block = []
+        app_summary_lines = [] # 詳細パターンに一致しない、かつソルバーブロック外のアプリログ
+        app_detailed_lines_collected = [] # 詳細パターンに一致するアプリログ
+
         in_solver_log_block = False
+        
         # 除外するアプリケーションログのパターン (詳細な割り当て試行ログ)
         detailed_app_log_patterns = [
             r"^\s*\+ Potential assignment:",
             r"^\s*- Filtered out:",
             r"^\s*Cost for ",
         ]
+        
+        solver_log_start_marker = "--- Solver Log (Captured by app.py) ---"
+        solver_log_end_marker = "--- End Solver Log (Captured by app.py) ---"
 
         for line in lines:
-            if "--- Solver Log (Captured by app.py) ---" in line:
+            if solver_log_start_marker in line:
                 in_solver_log_block = True
+                solver_log_block.append(line)
+                continue 
             
-            if in_solver_log_block: # ソルバーログブロック内は全て含める
-                gemini_log_lines.append(line)
-            elif not any(re.search(pattern, line) for pattern in detailed_app_log_patterns):
-                # ソルバーログブロック外で、詳細パターンにマッチしないもの（サマリーなど）を含める
-                gemini_log_lines.append(line)
+            if solver_log_end_marker in line: # solver_log_end_marker が先に来ることはないはずだが念のため
+                solver_log_block.append(line)
+                in_solver_log_block = False
+                continue
+
+            if in_solver_log_block:
+                solver_log_block.append(line)
+            else: # Application log
+                is_detailed = any(re.search(pattern, line) for pattern in detailed_app_log_patterns)
+                if is_detailed:
+                    app_detailed_lines_collected.append(line)
+                else:
+                    app_summary_lines.append(line)
+        
+        gemini_log_lines_final.extend(app_summary_lines)
+
+        MAX_FIRST_N_DETAIL_LINES = 10
+        MAX_LAST_N_DETAIL_LINES = 10
+        if len(app_detailed_lines_collected) > (MAX_FIRST_N_DETAIL_LINES + MAX_LAST_N_DETAIL_LINES):
+            gemini_log_lines_final.extend(app_detailed_lines_collected[:MAX_FIRST_N_DETAIL_LINES])
+            omitted_count = len(app_detailed_lines_collected) - (MAX_FIRST_N_DETAIL_LINES + MAX_LAST_N_DETAIL_LINES)
+            gemini_log_lines_final.append(f"\n[... {omitted_count} 件の詳細なアプリケーションログ（個々の割り当てチェック等）は簡潔さのため省略されました ...]\n")
+            gemini_log_lines_final.extend(app_detailed_lines_collected[-MAX_LAST_N_DETAIL_LINES:])
+        else:
+            gemini_log_lines_final.extend(app_detailed_lines_collected)
             
-            if "--- End Solver Log (Captured by app.py) ---" in line and in_solver_log_block:
-                in_solver_log_block = False # ブロック終了
-        return "\n".join(gemini_log_lines)
+        gemini_log_lines_final.extend(solver_log_block)
+        
+        return "\n".join(gemini_log_lines_final)
 
     gemini_api_log = filter_log_for_gemini(full_captured_logs)
 
