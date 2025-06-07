@@ -223,11 +223,23 @@ DEFAULT_FREQUENCY_PRIORITY_COSTS = {
     "high": 10
 }
 
+from typing import TypedDict, List, Optional, Any, Tuple # 追加
+
 # --- 2. OR-Tools 最適化ロジック ---
+class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型定義
+    solution_status_str: str
+    objective_value: Optional[float]
+    assignments: List[dict]
+    all_courses: List[dict]
+    all_lecturers: List[dict]
+    solver_raw_status_code: int
+    raw_solver_log: str
+    explained_log_text: str
+
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
                      travel_costs_matrix, age_priority_costs, frequency_priority_costs,
                      weight_travel, weight_age, weight_frequency, unassigned_course_penalty_value,
-                     option_avoid_last_classroom):
+                     option_avoid_last_classroom) -> SolverOutput: # 戻り値の型ヒントを変更
     model = cp_model.CpModel()
     # solve_assignment 内の print 文も解説対象に含めるために、
     # ここで stdout のキャプチャを開始する
@@ -279,7 +291,25 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
 
         if not possible_assignments:
             print("No possible assignments found after filtering. Optimization will likely result in no assignments.")
-            # ... (早期リターンの処理はそのまま)
+            # 早期リターンのための準備 (現状のコードでは早期リターンはないが、もし追加する場合)
+            all_captured_logs = full_log_stream.getvalue()
+            if all_captured_logs:
+                for line in all_captured_logs.splitlines():
+                    explanation = _get_log_explanation(line)
+                    explained_log_output.append(f"ログ: {line.strip()}")
+                    explained_log_output.append(f"解説: {explanation}")
+                    explained_log_output.append("-" * 20)
+            explained_log_text = "\n".join(explained_log_output)
+            return SolverOutput(
+                solution_status_str="前提条件エラー (割り当て候補なし)",
+                objective_value=None,
+                assignments=[],
+                all_courses=courses_data,
+                all_lecturers=lecturers_data,
+                solver_raw_status_code=cp_model.UNKNOWN, # 適切なステータスコード
+                raw_solver_log=all_captured_logs,
+                explained_log_text=explained_log_text
+            )
 
         for course_item in courses_data:
             course_id = course_item["id"]
@@ -314,12 +344,31 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             model.Minimize(sum(objective_terms))
         else:
             print("Objective terms list is empty. No assignments to optimize.")
+            # 目的項がない場合も早期リターンと同様の処理
+            all_captured_logs = full_log_stream.getvalue()
+            if all_captured_logs:
+                for line in all_captured_logs.splitlines():
+                    explanation = _get_log_explanation(line)
+                    explained_log_output.append(f"ログ: {line.strip()}")
+                    explained_log_output.append(f"解説: {explanation}")
+                    explained_log_output.append("-" * 20)
+            explained_log_text = "\n".join(explained_log_output)
+            return SolverOutput(
+                solution_status_str="目的関数エラー (最適化対象なし)",
+                objective_value=None,
+                assignments=[],
+                all_courses=courses_data,
+                all_lecturers=lecturers_data,
+                solver_raw_status_code=cp_model.MODEL_INVALID, # 適切なステータスコード
+                raw_solver_log=all_captured_logs,
+                explained_log_text=explained_log_text
+            )
 
         solver = cp_model.CpSolver()
         solver.parameters.log_search_progress = True
         
         print("--- Solver Log (Captured by app.py) ---") # CP-SATのログ開始を示すマーカー
-        status = solver.Solve(model)
+        status_code = solver.Solve(model) # status_code を保持
         print("--- End Solver Log (Captured by app.py) ---") # CP-SATのログ終了を示すマーカー
 
     # キャプチャ終了
@@ -334,13 +383,13 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     
     explained_log_text = "\n".join(explained_log_output)
 
-    status_name = solver.StatusName(status) # Get the status name
+    status_name = solver.StatusName(status_code) # Get the status name
     results = []
     objective_value = None
-    solution_status = "解なし"
+    solution_status_str = "解なし"
 
-    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        solution_status = "最適解" if status == cp_model.OPTIMAL else "実行可能解"
+    if status_code == cp_model.OPTIMAL or status_code == cp_model.FEASIBLE:
+        solution_status_str = "最適解" if status_code == cp_model.OPTIMAL else "実行可能解"
         objective_value = solver.ObjectiveValue() / 100 # スケーリングを戻す
         
         for pa in possible_assignments:
@@ -361,12 +410,21 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                     "頻度コスト(元)": frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999)
 
                 })
-    elif status == cp_model.INFEASIBLE:
-        solution_status = "実行不可能 (制約を満たす解なし)"
+    elif status_code == cp_model.INFEASIBLE:
+        solution_status_str = "実行不可能 (制約を満たす解なし)"
     else:
-        solution_status = f"解探索失敗 (ステータス: {status_name} [{status}])" # Include name and code
+        solution_status_str = f"解探索失敗 (ステータス: {status_name} [{status_code}])" # Include name and code
         
-    return solution_status, objective_value, results, courses_data, lecturers_data, status, all_captured_logs, explained_log_text
+    return SolverOutput(
+        solution_status_str=solution_status_str,
+        objective_value=objective_value,
+        assignments=results,
+        all_courses=courses_data,
+        all_lecturers=lecturers_data,
+        solver_raw_status_code=status_code,
+        raw_solver_log=all_captured_logs,
+        explained_log_text=explained_log_text
+    )
 
 # --- 3. Streamlit UI ---
 def main():
@@ -473,52 +531,52 @@ def main():
         st.header("最適化結果")
         with st.spinner("最適化計算を実行中..."):
             # 既存の solve_assignment 関数呼び出し
-            solution_status, objective_value, results_df_data, all_courses, all_lecturers, solver_raw_status, raw_solver_log, explained_log = solve_assignment(
+            solver_result = solve_assignment( # 変更: 構造化された結果を受け取る
                 DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
                 DEFAULT_TRAVEL_COSTS_MATRIX, DEFAULT_AGE_PRIORITY_COSTS, DEFAULT_FREQUENCY_PRIORITY_COSTS,
                 weight_travel, weight_age, weight_frequency, unassigned_penalty_slider,
                 option_avoid_last_classroom
             )
             # 結果をセッション状態に保存してGCA解説ボタンで使えるようにする
-            st.session_state.raw_solver_log_for_gca = raw_solver_log
+            st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
             st.session_state.solution_executed = True # 実行済みフラグ
 
             # Gemini API で解説を取得
-            if raw_solver_log and GEMINI_API_KEY:
+            if solver_result["raw_solver_log"] and GEMINI_API_KEY:
                 with st.spinner("Gemini API でログを解説中..."):
-                    gemini_explanation_text = get_gemini_explanation(raw_solver_log, GEMINI_API_KEY)
+                    gemini_explanation_text = get_gemini_explanation(solver_result["raw_solver_log"], GEMINI_API_KEY)
                     st.session_state.gemini_explanation = gemini_explanation_text
             elif not GEMINI_API_KEY:
                 st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
 
-        st.subheader(f"求解ステータス: {solution_status}")
-        if objective_value is not None:
-            st.metric("総コスト (目的値)", f"{objective_value:.2f}")
+        st.subheader(f"求解ステータス: {solver_result['solution_status_str']}") # 変更
+        if solver_result['objective_value'] is not None: # 変更
+            st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}") # 変更
 
-        if solver_raw_status == cp_model.OPTIMAL or solver_raw_status == cp_model.FEASIBLE:
+        # 変更: solver_result から各値を取得するように修正
+        if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
             # results_df_data が実際に割り当て結果を含んでいるかを確認
-            actual_assignments_made = bool(results_df_data) 
+            actual_assignments_made = bool(solver_result['assignments']) 
 
             if actual_assignments_made:
                 st.subheader("割り当て結果")
-                results_df = pd.DataFrame(results_df_data)
+                results_df = pd.DataFrame(solver_result['assignments'])
                 st.dataframe(results_df)
 
-                assigned_course_ids = {res["講座ID"] for res in results_df_data}
-                unassigned_courses = [c for c in all_courses if c["id"] not in assigned_course_ids]
+                assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
+                unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
 
                 if unassigned_courses:
                     st.subheader("割り当てられなかった講座")
                     st.dataframe(pd.DataFrame(unassigned_courses))
                 else:
                     st.success("全ての講座が割り当てられました。") 
-
                 # 講師ごとの割り当て状況（オプション）
                 st.subheader("講師ごとの割り当て状況")
                 lecturer_assignments = {}
-                for l_data in all_lecturers: # Iterate over actual lecturer data
+                for l_data in solver_result['all_lecturers']: # Iterate over actual lecturer data
                     lecturer_assignments[l_data["name"]] = []
-                for res in results_df_data:
+                for res in solver_result['assignments']:
                     lecturer_name = res.get("講師名", "不明な講師") # 講師名がない場合のフォールバック
                     if lecturer_name not in lecturer_assignments: # まれに講師データにない名前が結果に含まれる場合への対処
                         lecturer_assignments[lecturer_name] = []
@@ -542,11 +600,11 @@ def main():
                     f"  - 各候補のコスト計算結果、およびフィルタリングで除外された理由"
                 )
                 st.subheader("全ての講座が割り当てられませんでした")
-                st.dataframe(pd.DataFrame(all_courses))
-        elif solver_raw_status == cp_model.INFEASIBLE: # "実行不可能" の場合
+                st.dataframe(pd.DataFrame(solver_result['all_courses']))
+        elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE: # "実行不可能" の場合
             st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
         else:
-            st.error(solution_status)
+            st.error(solver_result['solution_status_str'])
 
         # Gemini API による解説結果の表示
         if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
@@ -554,13 +612,13 @@ def main():
                 st.markdown(st.session_state.gemini_explanation)
 
         # 解説付きログの表示
-        if explained_log: # explained_log があれば表示
+        if solver_result['explained_log_text']: # explained_log があれば表示
             with st.expander("処理ログ詳細 (解説付き)"):
-                st.text_area("Explained Log Output", explained_log, height=400)
+                st.text_area("Explained Log Output", solver_result['explained_log_text'], height=400)
 
-        if raw_solver_log: # raw_solver_log があれば表示
+        if solver_result['raw_solver_log']: # raw_solver_log があれば表示
             with st.expander("生ログ詳細 (最適化処理の全出力)"):
-                st.text_area("Raw Solver Log Output", raw_solver_log, height=300)
+                st.text_area("Raw Solver Log Output", solver_result['raw_solver_log'], height=300)
 
 if __name__ == "__main__":
     main()
