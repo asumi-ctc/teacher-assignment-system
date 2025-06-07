@@ -374,10 +374,29 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     # キャプチャ終了
     all_captured_logs = full_log_stream.getvalue()
     
+    # Geminiに渡すログをフィルタリングする例 (より関心のある情報に絞る)
+    filtered_log_for_gemini_lines = []
+    keywords_to_include = [
+        "Presolve summary:", "status:", "objective:", "best_bound:",
+        "Initial optimization model", "Presolved optimization model",
+        "#Bound", "#Done", "CpSolverResponse summary:",
+        "--- Solver Log", "--- End Solver Log" # マーカーは残す
+    ]
+    # Presolveのルール適用状況も有用な場合がある
+    # keywords_to_include.append("- rule '")
+
+    for line in all_captured_logs.splitlines():
+        # フィルタリング条件をここに記述
+        # 例: 特定のキーワードを含む行、または探索ステップのbest値を含む行
+        if any(keyword in line for keyword in keywords_to_include) or \
+           re.search(r"#\d+\s+[\d\.]+s\s+best:", line) or \
+           re.search(r"^\s*- rule '", line): # Presolveルールも追加
+            filtered_log_for_gemini_lines.append(line)
+
     if all_captured_logs:
         for line in all_captured_logs.splitlines():
             explanation = _get_log_explanation(line) # このファイル内の関数を使用
-            explained_log_output.append(f"ログ: {line.strip()}")
+            explained_log_output.append(f"ログ: {line.strip()}") # .strip() は元のコードにもあったので維持
             explained_log_output.append(f"解説: {explanation}")
             explained_log_output.append("-" * 20) # 区切り線
     
@@ -422,7 +441,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         all_courses=courses_data,
         all_lecturers=lecturers_data,
         solver_raw_status_code=status_code,
-        raw_solver_log=all_captured_logs,
+        # Geminiにはフィルタリングしたログを、生ログとしては全体を渡すように変更も可能
+        raw_solver_log=all_captured_logs, # UI表示用には全ログ
         explained_log_text=explained_log_text
     )
 
@@ -541,10 +561,17 @@ def main():
             st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
             st.session_state.solution_executed = True # 実行済みフラグ
 
+            # Geminiに送信するログを準備 (フィルタリングされたもの、または全体)
+            # ここで filtered_log_for_gemini_lines を使って文字列を再構築
+            log_for_gemini_api = "\n".join(filtered_log_for_gemini_lines) if filtered_log_for_gemini_lines else solver_result["raw_solver_log"]
+            # あまりに短い場合は元のログを使うなどの調整
+            if len(log_for_gemini_api) < 500 and solver_result["raw_solver_log"]: # 閾値は適宜調整
+                log_for_gemini_api = solver_result["raw_solver_log"]
+
             # Gemini API で解説を取得
-            if solver_result["raw_solver_log"] and GEMINI_API_KEY:
+            if log_for_gemini_api and GEMINI_API_KEY:
                 with st.spinner("Gemini API でログを解説中..."):
-                    gemini_explanation_text = get_gemini_explanation(solver_result["raw_solver_log"], GEMINI_API_KEY)
+                    gemini_explanation_text = get_gemini_explanation(log_for_gemini_api, GEMINI_API_KEY)
                     st.session_state.gemini_explanation = gemini_explanation_text
             elif not GEMINI_API_KEY:
                 st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
