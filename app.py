@@ -384,30 +384,46 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     all_captured_logs = full_log_stream.getvalue()
     
     # Geminiに渡すログをフィルタリングする例 (より関心のある情報に絞る)
+    # ソルバーログのセクションのみを対象とする
     filtered_log_for_gemini_lines = []
-    # 提案された抽出条件に基づいてキーワードとパターンを定義
+    in_solver_log_section = False
 
     for line in all_captured_logs.splitlines():
         stripped_line = line.strip()
-        # ソルバーが何を選んだか (最終ステータス、目的値、応答サマリー)
-        if stripped_line.startswith("CpSolverResponse summary:") or \
-           stripped_line.startswith("status:") or \
-           stripped_line.startswith("objective:") or \
-           # ソルバー内部で使われたツールや選択
-           stripped_line.startswith("Presolve summary:") or \ # Presolve処理の概要
-           re.search(r"Parameters:.*(linear_programming_relaxation|use_lp)", stripped_line, re.IGNORECASE) or \ # LP緩和がパラメータで有効か
-           "LP statistics" in stripped_line or \ # LPソルバーの統計情報
-           re.search(r"Using relaxation:.*linear_programming", stripped_line, re.IGNORECASE) or \ # LP緩和利用の明示的なログ
-           re.search(r"Starting presolve", stripped_line) or \ # Presolve処理の開始
-           re.search(r"Starting search", stripped_line) or \ # 探索処理の開始
-           # 探索ステップのうち、主要なソルバー/戦略の活動を示すもの (ログ量を抑えるため、全ての探索ステップは含めない)
-           # 下記は代表的なソルバー名や戦略名。必要に応じて追加・削除してください。
-           re.search(r"#\d+\s+[\d\.]+s\s+best:[\w\.]+\s+next:\[[^\]]*\]\s+(lp|feasibility_pump|rnd_lns|rins_lns|rens_lns|search_random|search_sequential|probing|max_hs|core|no_lp|fp_lns|graph_lns|shaving|presolve_to_core|pseudo_costs|objective_lb_search|synchronize|enumerate_all)", stripped_line, re.IGNORECASE):
-            filtered_log_for_gemini_lines.append(line)
+
+        if stripped_line.startswith("--- Solver Log ("):
+            in_solver_log_section = True
+            filtered_log_for_gemini_lines.append(line) # 開始マーカーは含める
+            continue
+
+        if stripped_line.startswith("--- End Solver Log ("):
+            in_solver_log_section = False
+            filtered_log_for_gemini_lines.append(line) # 終了マーカーは含める
+            continue
+        
+        if in_solver_log_section:
+            # ソルバーログセクション内のログのみをフィルタリング対象とする
+            # ソルバーが何を選んだか (最終ステータス、目的値、応答サマリー)
+            if stripped_line.startswith("CpSolverResponse summary:") or \
+               stripped_line.startswith("status:") or \
+               stripped_line.startswith("objective:") or \
+               # ソルバー内部で使われたツールや選択
+               stripped_line.startswith("Presolve summary:") or \
+               re.search(r"Parameters:.*(linear_programming_relaxation|use_lp|log_search_progress|num_search_workers|max_time_in_seconds)", stripped_line, re.IGNORECASE) or \
+               "LP statistics" in stripped_line or \
+               re.search(r"Using relaxation:.*linear_programming", stripped_line, re.IGNORECASE) or \
+               re.search(r"Starting presolve", stripped_line, re.IGNORECASE) or \
+               re.search(r"Starting search", stripped_line, re.IGNORECASE) or \
+               # 探索ステップのうち、主要なソルバー/戦略の活動を示すもの (キーワードを調整してさらに絞り込むことも可能)
+               re.search(r"#\d+\s+[\d\.]+s\s+best:[\w\.]+\s+next:\[[^\]]*\]\s+(lp|core|objective_lb_search|enumerate_all|feasibility_pump|rins|rens|rnd_lns|fp_lns|no_lp)", stripped_line, re.IGNORECASE):
+                filtered_log_for_gemini_lines.append(line)
+        # else:
+            # ソルバーログセクション外のアプリケーションログは、Geminiへの入力からは除外
+            # (UI表示用の explained_log_text には含まれる)
+            pass
 
     filtered_log_str_for_gemini = "\n".join(filtered_log_for_gemini_lines)
     # あまりに短い場合は元のログを使うなどの調整 (ただし、トークン数上限に注意)
-    # ここでは、フィルタリング結果が空でなければそれを使うという単純なロジックにしておく
     if not filtered_log_str_for_gemini and all_captured_logs:
         # filtered_log_str_for_gemini = all_captured_logs[:1000000] # トークン上限に近い文字数で切り詰める例
         pass # 一旦、フィルタリング結果が空なら空のまま渡す（UI側で全ログを使うため）
