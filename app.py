@@ -235,6 +235,7 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     solver_raw_status_code: int
     raw_solver_log: str
     explained_log_text: str
+    filtered_log_for_gemini: str # Gemini API送信用にフィルタリングされたログ
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
                      travel_costs_matrix, age_priority_costs, frequency_priority_costs,
@@ -393,6 +394,13 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
            re.search(r"^\s*- rule '", line): # Presolveルールも追加
             filtered_log_for_gemini_lines.append(line)
 
+    filtered_log_str_for_gemini = "\n".join(filtered_log_for_gemini_lines)
+    # あまりに短い場合は元のログを使うなどの調整 (ただし、トークン数上限に注意)
+    # ここでは、フィルタリング結果が空でなければそれを使うという単純なロジックにしておく
+    if not filtered_log_str_for_gemini and all_captured_logs:
+        # filtered_log_str_for_gemini = all_captured_logs[:1000000] # トークン上限に近い文字数で切り詰める例
+        pass # 一旦、フィルタリング結果が空なら空のまま渡す（UI側で全ログを使うため）
+
     if all_captured_logs:
         for line in all_captured_logs.splitlines():
             explanation = _get_log_explanation(line) # このファイル内の関数を使用
@@ -443,7 +451,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         solver_raw_status_code=status_code,
         # Geminiにはフィルタリングしたログを、生ログとしては全体を渡すように変更も可能
         raw_solver_log=all_captured_logs, # UI表示用には全ログ
-        explained_log_text=explained_log_text
+        explained_log_text=explained_log_text,
+        filtered_log_for_gemini=filtered_log_str_for_gemini
     )
 
 # --- 3. Streamlit UI ---
@@ -562,11 +571,7 @@ def main():
             st.session_state.solution_executed = True # 実行済みフラグ
 
             # Geminiに送信するログを準備 (フィルタリングされたもの、または全体)
-            # ここで filtered_log_for_gemini_lines を使って文字列を再構築
-            log_for_gemini_api = "\n".join(filtered_log_for_gemini_lines) if filtered_log_for_gemini_lines else solver_result["raw_solver_log"]
-            # あまりに短い場合は元のログを使うなどの調整
-            if len(log_for_gemini_api) < 500 and solver_result["raw_solver_log"]: # 閾値は適宜調整
-                log_for_gemini_api = solver_result["raw_solver_log"]
+            log_for_gemini_api = solver_result["filtered_log_for_gemini"] if solver_result["filtered_log_for_gemini"] else solver_result["raw_solver_log"]
 
             # Gemini API で解説を取得
             if log_for_gemini_api and GEMINI_API_KEY:
