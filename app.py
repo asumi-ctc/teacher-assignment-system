@@ -393,15 +393,18 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
 
         if stripped_line.startswith("--- Solver Log ("):
             in_solver_log_section = True
+            print(f"[DEBUG_FILTER] Entered solver log section. Line: '{stripped_line}'") # DEBUG
             filtered_log_for_gemini_lines.append(line) # 開始マーカーは含める
             continue
 
         if stripped_line.startswith("--- End Solver Log ("):
             in_solver_log_section = False
+            print(f"[DEBUG_FILTER] Exited solver log section. Line: '{stripped_line}'") # DEBUG
             filtered_log_for_gemini_lines.append(line) # 終了マーカーは含める
             continue
         
         if in_solver_log_section:
+            # print(f"[DEBUG_FILTER] In solver section, checking line: '{stripped_line}'") # DEBUG (詳細すぎる場合はコメントアウト)
             # ソルバーログセクション内のログのみをフィルタリング対象とする
             # ソルバーが何を選んだか (最終ステータス、目的値、応答サマリー)
             keep_line = False
@@ -426,12 +429,15 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                 keep_line = True
             
             if keep_line:
+                print(f"[DEBUG_FILTER]   KEEPING line: '{stripped_line}'") # DEBUG
                 filtered_log_for_gemini_lines.append(line)
-        # else:
+            else:
+                print(f"[DEBUG_FILTER]   EXCLUDING line (in solver section): '{stripped_line}'") # DEBUG
+        else:
             # ソルバーログセクション外のアプリケーションログは、Geminiへの入力からは除外
             # (UI表示用の explained_log_text には含まれる)
+            # print(f"[DEBUG_FILTER] Outside solver section, EXCLUDING line: '{stripped_line}'") # DEBUG (詳細すぎる場合はコメントアウト)
             pass
-
     filtered_log_str_for_gemini = "\n".join(filtered_log_for_gemini_lines)
 
     if all_captured_logs:
