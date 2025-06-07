@@ -8,6 +8,9 @@ import google.generativeai as genai # Gemini API 用
 from streamlit_oauth import OAuth2Component # OIDC認証用
 import random # データ生成用
 
+# アプリケーションバージョン
+APP_VERSION = "1.1.0" # 例: バージョン番号を定義
+
 # --- 1. データ定義 ---
 
 # ログパターンと解説の対応辞書 (log_explainer.py から移動)
@@ -482,6 +485,9 @@ def main():
     st.sidebar.subheader("未割り当て講座ペナルティ")
     unassigned_penalty_slider = st.sidebar.slider("未割り当て講座1件あたりのペナルティの大きさ", 0, 200000, 100000, 1000, help="値を大きくするほど、全ての講座を割り当てることを強く優先します。0にするとペナルティなし。")
 
+    # アプリケーションバージョンをサイドバーに表示
+    st.sidebar.markdown("---")
+    st.sidebar.info(f"アプリバージョン: {APP_VERSION}")
     # --- メインコンテンツ ---
     st.header("入力データ")
     col1, col2 = st.columns(2)
