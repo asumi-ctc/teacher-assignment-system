@@ -468,10 +468,6 @@ def main():
         revoke_token_endpoint=None, # REVOKE_ENDPOINT,
     )
 
-    st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
-    st.write("Googleアカウントでログインしてください。") # ログインを促すメッセージ
-
-    # --- サイドバー: 設定 ---
     st.sidebar.header("最適化設定")
 
     st.sidebar.subheader("目的関数の重み")
@@ -488,6 +484,48 @@ def main():
     # アプリケーションバージョンをサイドバーに表示
     st.sidebar.markdown("---")
     st.sidebar.info(f"アプリバージョン: {APP_VERSION}")
+
+    # --- 認証とメインコンテンツの表示制御 ---
+    if 'token' not in st.session_state:
+        st.session_state.token = None # 初期化
+    if 'user_info' not in st.session_state:
+        st.session_state.user_info = None # 初期化
+
+    if not st.session_state.token:
+        st.title("講師割り当てシステムへようこそ")
+        st.write("続行するにはGoogleアカウントでログインしてください。")
+        result = oauth2.authorize_button(
+            name="Googleでログイン",
+            icon="https://www.google.com/favicon.ico",
+            redirect_uri=REDIRECT_URI,
+            scope="email profile openid", # openid を追加してユーザー情報を取得しやすくする
+            key="google_login",
+            extras_params={"prompt": "consent", "access_type": "offline"}
+        )
+        if result and "token" in result:
+            st.session_state.token = result.get("token")
+            # トークンからユーザー情報を取得する (streamlit-oauth は直接ユーザー情報を返さない場合がある)
+            # ここでは簡略化のため、email をユーザー情報として扱う例を示します。
+            # 実際には、トークンを使ってGoogleのユーザー情報エンドポイントに問い合わせる必要があります。
+            # もし oauth2.get_user_info() のようなメソッドがあればそれを使います。
+            # ここでは仮にトークン自体にemailが含まれていると仮定します（実際はIDトークンをデコード）。
+            # 簡単な例として、ログイン成功時に固定のユーザー情報をセットします。
+            # より堅牢な実装では、IDトークンをデコードしてユーザー情報を取得してください。
+            st.session_state.user_info = {"email": "user@example.com"} # 仮のユーザー情報
+            st.rerun()
+    else:
+        # --- ログイン後の表示 ---
+        st.sidebar.markdown("---")
+        st.sidebar.write(f"ログイン中: {st.session_state.user_info.get('email', '不明なユーザー')}")
+        if st.sidebar.button("ログアウト"):
+            st.session_state.token = None
+            st.session_state.user_info = None
+            if "raw_solver_log_for_gca" in st.session_state: del st.session_state.raw_solver_log_for_gca
+            if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
+            if "solution_executed" in st.session_state: del st.session_state.solution_executed
+            st.rerun()
+
+        st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
     # --- メインコンテンツ ---
     st.header("入力データ")
     col1, col2 = st.columns(2)
@@ -519,111 +557,79 @@ def main():
         st.write("頻度優先基本コスト (頻度低いほど低コスト)")
         st.json(DEFAULT_FREQUENCY_PRIORITY_COSTS)
 
-    # 認証状態の確認とログインボタンの表示
-    if 'token' not in st.session_state:
-        result = oauth2.authorize_button(
-            name="Googleでログイン",
-            icon="https://www.google.com/favicon.ico",
-            redirect_uri=REDIRECT_URI,
-            scope="email profile openid",
-            key="google_login",
-            extras_params={"prompt": "consent", "access_type": "offline"}
-        )
-        if result and "token" in result:
-            st.session_state.token = result.get("token")
-            st.rerun() # ログイン後に再描画
+        # ログインしている場合のみ最適化ボタンと結果表示
+        if st.session_state.token and st.session_state.user_info:
+            if st.button("最適割り当てを実行", type="primary"):
+                if "raw_solver_log_for_gca" in st.session_state: # 関連するセッション変数もクリア
+                    del st.session_state.raw_solver_log_for_gca
+                if "gemini_explanation" in st.session_state:
+                    del st.session_state.gemini_explanation
+                if "solution_executed" in st.session_state: # 関連するセッション変数もクリア
+                    del st.session_state.solution_executed
 
-    if st.button("最適割り当てを実行", type="primary"):
-        if "raw_solver_log_for_gca" in st.session_state: # 関連するセッション変数もクリア
-            del st.session_state.raw_solver_log_for_gca
-        if "gemini_explanation" in st.session_state:
-            del st.session_state.gemini_explanation
-        if "solution_executed" in st.session_state: # 関連するセッション変数もクリア
-            del st.session_state.solution_executed
+                st.header("最適化結果")
+                with st.spinner("最適化計算を実行中..."):
+                    solver_result = solve_assignment(
+                        DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
+                        DEFAULT_TRAVEL_COSTS_MATRIX, DEFAULT_AGE_PRIORITY_COSTS, DEFAULT_FREQUENCY_PRIORITY_COSTS,
+                        weight_travel, weight_age, weight_frequency, unassigned_penalty_slider,
+                        option_avoid_last_classroom
+                    )
+                    st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
+                    st.session_state.solution_executed = True
 
-        # ログイン状態を確認
-        if 'token' not in st.session_state:
-            st.warning("最適化を実行するには、まずGoogleアカウントでログインしてください。")
-            st.stop()
+                    log_for_gemini_api = solver_result["raw_solver_log"]
+                    if log_for_gemini_api and GEMINI_API_KEY:
+                        with st.spinner("Gemini API でログを解説中..."):
+                            gemini_explanation_text = get_gemini_explanation(log_for_gemini_api, GEMINI_API_KEY)
+                            st.session_state.gemini_explanation = gemini_explanation_text
+                    elif not GEMINI_API_KEY:
+                        st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
 
-        st.header("最適化結果")
-        with st.spinner("最適化計算を実行中..."):
-            # 既存の solve_assignment 関数呼び出し
-            solver_result = solve_assignment( # 変更: 構造化された結果を受け取る
-                DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
-                DEFAULT_TRAVEL_COSTS_MATRIX, DEFAULT_AGE_PRIORITY_COSTS, DEFAULT_FREQUENCY_PRIORITY_COSTS,
-                weight_travel, weight_age, weight_frequency, unassigned_penalty_slider,
-                option_avoid_last_classroom
-            )
-            # 結果をセッション状態に保存してGCA解説ボタンで使えるようにする
-            st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
-            st.session_state.solution_executed = True # 実行済みフラグ
+                st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
+                if solver_result['objective_value'] is not None:
+                    st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
 
-            # Geminiに送信するログを準備 (生ログ全体)
-            log_for_gemini_api = solver_result["raw_solver_log"] # 生ログ全体を使用
-
-            # Gemini API で解説を取得
-            if log_for_gemini_api and GEMINI_API_KEY:
-                with st.spinner("Gemini API でログを解説中..."):
-                    gemini_explanation_text = get_gemini_explanation(log_for_gemini_api, GEMINI_API_KEY)
-                    st.session_state.gemini_explanation = gemini_explanation_text
-            elif not GEMINI_API_KEY:
-                st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
-
-        st.subheader(f"求解ステータス: {solver_result['solution_status_str']}") # 変更
-        if solver_result['objective_value'] is not None: # 変更
-            st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}") # 変更
-
-        # 変更: solver_result から各値を取得するように修正
-        if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
-            # results_df_data が実際に割り当て結果を含んでいるかを確認
-            actual_assignments_made = bool(solver_result['assignments']) 
-
-            if actual_assignments_made:
-                st.subheader("割り当て結果")
-                results_df = pd.DataFrame(solver_result['assignments'])
-                st.dataframe(results_df)
-
-                assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
-                unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
-
-                if unassigned_courses:
-                    st.subheader("割り当てられなかった講座")
-                    st.dataframe(pd.DataFrame(unassigned_courses))
+                if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
+                    actual_assignments_made = bool(solver_result['assignments'])
+                    if actual_assignments_made:
+                        st.subheader("割り当て結果")
+                        results_df = pd.DataFrame(solver_result['assignments'])
+                        st.dataframe(results_df)
+                        assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
+                        unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
+                        if unassigned_courses:
+                            st.subheader("割り当てられなかった講座")
+                            st.dataframe(pd.DataFrame(unassigned_courses))
+                        else:
+                            st.success("全ての講座が割り当てられました。")
+                    else:
+                        st.error("最適解または実行可能解と判定されましたが、実際の割り当ては行われませんでした。")
+                        st.warning(
+                            "考えられる原因:\n"
+                            "- 導入されたペナルティを考慮しても、全ての講座を割り当てない方が総コストが低いと判断された。\n"
+                            "- または、割り当て可能なペアが元々存在しない (制約が厳しすぎる、データ不適合)。\n"
+                            "**結果として、総コスト 0.00 (何も割り当てない) が最適と判断された可能性があります。**"
+                        )
+                        st.subheader("全ての講座が割り当てられませんでした")
+                        st.dataframe(pd.DataFrame(solver_result['all_courses']))
+                elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE:
+                    st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
                 else:
-                    st.success("全ての講座が割り当てられました。") 
-            else: # 最適解または実行可能解が見つかったが、実際の割り当ては行われなかった場合
-                st.error("最適解または実行可能解と判定されましたが、実際の割り当ては行われませんでした。")
-                st.warning(
-                    "考えられる原因:\n"
-                    "- 導入されたペナルティを考慮しても、全ての講座を割り当てない方が総コストが低いと判断された。\n"
-                    "- または、割り当て可能なペアが元々存在しない (制約が厳しすぎる、データ不適合)。\n"
-                    "**結果として、総コスト 0.00 (何も割り当てない) が最適と判断された可能性があります。**\n"
-                    "コンソールのデバッグ出力を確認してください。\n"
-                    f"  - `Total potential assignments after filtering`: 制約フィルタリング後の割り当て候補数\n"
-                    f"  - `Length of possible_assignments list (with variables)`: OR-Toolsが実際に最適化を試みた候補数\n"
-                    f"  - 各候補のコスト計算結果、およびフィルタリングで除外された理由"
-                )
-                st.subheader("全ての講座が割り当てられませんでした")
-                st.dataframe(pd.DataFrame(solver_result['all_courses']))
-        elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE: # "実行不可能" の場合
-            st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
+                    st.error(solver_result['solution_status_str'])
+
+                if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
+                    with st.expander("Gemini API によるログ解説", expanded=True):
+                        st.markdown(st.session_state.gemini_explanation)
+                if solver_result['explained_log_text']:
+                    with st.expander("処理ログ詳細 (解説付き)"):
+                        st.text_area("Explained Log Output", solver_result['explained_log_text'], height=400)
+                if solver_result['raw_solver_log']:
+                    with st.expander("生ログ詳細 (最適化処理の全出力 - Gemini APIへ送信されたログ)"):
+                        st.text_area("Raw Solver Log (Sent to Gemini API)", solver_result['raw_solver_log'], height=300)
         else:
-            st.error(solver_result['solution_status_str'])
-
-        # Gemini API による解説結果の表示
-        if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
-            with st.expander("Gemini API によるログ解説", expanded=True):
-                st.markdown(st.session_state.gemini_explanation)
-
-        # 解説付きログの表示
-        if solver_result['explained_log_text']: # explained_log があれば表示
-            with st.expander("処理ログ詳細 (解説付き)"):
-                st.text_area("Explained Log Output", solver_result['explained_log_text'], height=400)
-
-        if solver_result['raw_solver_log']: # raw_solver_log があれば表示
-            with st.expander("生ログ詳細 (最適化処理の全出力 - Gemini APIへ送信されたログ)"):
-                st.text_area("Raw Solver Log (Sent to Gemini API)", solver_result['raw_solver_log'], height=300)
+            # ログインしていない場合は、最適化ボタンの代わりにメッセージを表示
+            st.info("最適化機能を利用するには、まずGoogleアカウントでログインしてください。")
 
 if __name__ == "__main__":
     main()
