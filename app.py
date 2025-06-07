@@ -94,7 +94,7 @@ def get_gemini_explanation(log_text: str, api_key: str) -> str:
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-pro-preview-06-05') # 指定されたモデルに変更
+        model = genai.GenerativeModel('gemini-1.5-pro') 
         prompt = f"""以下のシステムログについて、IT専門家でない人にも分かりやすく解説してください。
 ログの各部分が何を示しているのか、全体としてどのような処理が行われているのかを説明してください。
 特に重要な情報、警告、エラーがあれば指摘し、考えられる原因や対処法についても言及してください。
