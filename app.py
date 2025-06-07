@@ -433,10 +433,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             pass
 
     filtered_log_str_for_gemini = "\n".join(filtered_log_for_gemini_lines)
-    # あまりに短い場合は元のログを使うなどの調整 (ただし、トークン数上限に注意)
-    if not filtered_log_str_for_gemini and all_captured_logs:
-        # filtered_log_str_for_gemini = all_captured_logs[:1000000] # トークン上限に近い文字数で切り詰める例
-        pass # 一旦、フィルタリング結果が空なら空のまま渡す（UI側で全ログを使うため）
 
     if all_captured_logs:
         for line in all_captured_logs.splitlines():
@@ -608,7 +604,7 @@ def main():
             st.session_state.solution_executed = True # 実行済みフラグ
 
             # Geminiに送信するログを準備 (フィルタリングされたもの、または全体)
-            log_for_gemini_api = solver_result["filtered_log_for_gemini"] if solver_result["filtered_log_for_gemini"] else solver_result["raw_solver_log"]
+            log_for_gemini_api = solver_result["filtered_log_for_gemini"] # フィルタリングされたログのみを使用
 
             # Gemini API で解説を取得
             if log_for_gemini_api and GEMINI_API_KEY:
