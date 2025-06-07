@@ -386,18 +386,23 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     # Geminiに渡すログをフィルタリングする例 (より関心のある情報に絞る)
     filtered_log_for_gemini_lines = []
     # 提案された抽出条件に基づいてキーワードとパターンを定義
-    # Presolve summary:
-    # Objective value:
-    # 使用されたソルバーワーカー (探索ステップのログから)
 
     for line in all_captured_logs.splitlines():
         stripped_line = line.strip()
-        if stripped_line.startswith("Presolve summary:") or \
-           re.search(r"^\s*- rule '", stripped_line) or \
+        # ソルバーが何を選んだか (最終ステータス、目的値、応答サマリー)
+        if stripped_line.startswith("CpSolverResponse summary:") or \
+           stripped_line.startswith("status:") or \
            stripped_line.startswith("objective:") or \
-           re.search(r"#\d+\s+[\d\.]+s\s+best:[\w\.]+\s+next:\[[^\]]*\]\s+\w+", stripped_line) or \
-           stripped_line.startswith("CpSolverResponse summary:") or \
-           stripped_line.startswith("status:"): # 最終ステータスも有用なので追加
+           # ソルバー内部で使われたツールや選択
+           stripped_line.startswith("Presolve summary:") or \ # Presolve処理の概要
+           re.search(r"Parameters:.*(linear_programming_relaxation|use_lp)", stripped_line, re.IGNORECASE) or \ # LP緩和がパラメータで有効か
+           "LP statistics" in stripped_line or \ # LPソルバーの統計情報
+           re.search(r"Using relaxation:.*linear_programming", stripped_line, re.IGNORECASE) or \ # LP緩和利用の明示的なログ
+           re.search(r"Starting presolve", stripped_line) or \ # Presolve処理の開始
+           re.search(r"Starting search", stripped_line) or \ # 探索処理の開始
+           # 探索ステップのうち、主要なソルバー/戦略の活動を示すもの (ログ量を抑えるため、全ての探索ステップは含めない)
+           # 下記は代表的なソルバー名や戦略名。必要に応じて追加・削除してください。
+           re.search(r"#\d+\s+[\d\.]+s\s+best:[\w\.]+\s+next:\[[^\]]*\]\s+(lp|feasibility_pump|rnd_lns|rins_lns|rens_lns|search_random|search_sequential|probing|max_hs|core|no_lp|fp_lns|graph_lns|shaving|presolve_to_core|pseudo_costs|objective_lb_search|synchronize|enumerate_all)", stripped_line, re.IGNORECASE):
             filtered_log_for_gemini_lines.append(line)
 
     filtered_log_str_for_gemini = "\n".join(filtered_log_for_gemini_lines)
