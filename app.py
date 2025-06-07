@@ -367,10 +367,18 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
 
         solver = cp_model.CpSolver()
         solver.parameters.log_search_progress = True
-        
-        print("--- Solver Log (Captured by app.py) ---") # CP-SATのログ開始を示すマーカー
+
+        # ログコールバック関数を定義
+        # この関数はソルバーからのメッセージを full_log_stream に書き込みます。
+        def cp_sat_log_callback(message):
+            full_log_stream.write(message) # メッセージをそのままストリームに書き込む
+
+        # ソルバーにログコールバックを設定
+        solver.SetLogCallback(cp_sat_log_callback)
+
+        print("--- Solver Log (Captured by app.py via LogCallback) ---") # CP-SATのログ開始を示すマーカー (コールバック経由であることを明示)
         status_code = solver.Solve(model) # status_code を保持
-        print("--- End Solver Log (Captured by app.py) ---") # CP-SATのログ終了を示すマーカー
+        print("--- End Solver Log (Captured by app.py via LogCallback) ---") # CP-SATのログ終了を示すマーカー
 
     # キャプチャ終了
     all_captured_logs = full_log_stream.getvalue()
