@@ -235,7 +235,6 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     solver_raw_status_code: int
     raw_solver_log: str
     explained_log_text: str
-    filtered_log_for_gemini: str # Gemini API送信用にフィルタリングされたログ
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
                      travel_costs_matrix, age_priority_costs, frequency_priority_costs,
@@ -313,8 +312,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             all_lecturers=lecturers_data,
             solver_raw_status_code=cp_model.UNKNOWN, 
             raw_solver_log=all_captured_logs,
-            explained_log_text=explained_log_text,
-            filtered_log_for_gemini=""
+            explained_log_text=explained_log_text
         )
 
     for course_item in courses_data:
@@ -366,8 +364,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             all_lecturers=lecturers_data,
             solver_raw_status_code=cp_model.MODEL_INVALID,
             raw_solver_log=all_captured_logs,
-            explained_log_text=explained_log_text,
-            filtered_log_for_gemini=""
+            explained_log_text=explained_log_text
         )
 
     solver = cp_model.CpSolver()
@@ -387,65 +384,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     print("\n--- BEGIN all_captured_logs (for debugging filter) ---")
     print(all_captured_logs)
     print("--- END all_captured_logs (for debugging filter) ---\n")
-    # END DEBUG
-
-    # Geminiに渡すログをフィルタリングする例 (より関心のある情報に絞る)
-    # ソルバーログのセクションのみを対象とする
-    filtered_log_for_gemini_lines = []
-    in_solver_log_section = False
-
-    for line in all_captured_logs.splitlines():
-        stripped_line = line.strip()
-
-        if stripped_line.startswith("--- Solver Log (Captured by app.py) ---"): # マーカー文字列を完全に一致させる
-            in_solver_log_section = True
-            print(f"[DEBUG_FILTER] Entered solver log section. Line: '{stripped_line}'") # DEBUG
-            filtered_log_for_gemini_lines.append(line) # 開始マーカーは含める
-            continue
-
-        if stripped_line.startswith("--- End Solver Log (Captured by app.py) ---"): # マーカー文字列を完全に一致させる
-            in_solver_log_section = False
-            print(f"[DEBUG_FILTER] Exited solver log section. Line: '{stripped_line}'") # DEBUG
-            filtered_log_for_gemini_lines.append(line) # 終了マーカーは含める
-            continue
-        
-        if in_solver_log_section:
-            # print(f"[DEBUG_FILTER] In solver section, checking line: '{stripped_line}'") # DEBUG (詳細すぎる場合はコメントアウト)
-            # ソルバーログセクション内のログのみをフィルタリング対象とする
-            # ソルバーが何を選んだか (最終ステータス、目的値、応答サマリー)
-            keep_line = False
-            if (stripped_line.startswith("CpSolverResponse summary:") or
-                stripped_line.startswith("status:") or
-                stripped_line.startswith("objective:") or
-               # ソルバー内部で使われたツールや選択
-                stripped_line.startswith("Presolve summary:") or
-                re.search(r"Parameters:.*(linear_programming_relaxation|use_lp|log_search_progress|num_search_workers|max_time_in_seconds)", stripped_line, re.IGNORECASE) or
-                "LP statistics" in stripped_line or
-                re.search(r"Using relaxation:.*linear_programming", stripped_line, re.IGNORECASE) or
-                re.search(r"Starting presolve", stripped_line, re.IGNORECASE) or
-                re.search(r"Starting search", stripped_line, re.IGNORECASE) or
-               # 探索ステップのログは、解の発見や探索完了を示すものに限定
-                (stripped_line.startswith("#") and
-                 (re.search(r"Optimal solution found", stripped_line, re.IGNORECASE) or
-                  re.search(r"Feasible solution found", stripped_line, re.IGNORECASE) or # "Feasible solution" も重要
-                  re.search(r"Done searching", stripped_line, re.IGNORECASE) or
-                  re.search(r"objective value", stripped_line, re.IGNORECASE))) or # 目的値の更新を示すログ
-               # 主要な探索戦略の開始を示すログ (例: LNS worker)
-                re.search(r"Worker \d+ starting.*(LNS|Core|FeasibilityPump|Probing)", stripped_line, re.IGNORECASE)
-            ):
-                keep_line = True
-            
-            if keep_line:
-                print(f"[DEBUG_FILTER]   KEEPING line: '{stripped_line}'") # DEBUG
-                filtered_log_for_gemini_lines.append(line)
-            else:
-                print(f"[DEBUG_FILTER]   EXCLUDING line (in solver section): '{stripped_line}'") # DEBUG
-        else:
-            # ソルバーログセクション外のアプリケーションログは、Geminiへの入力からは除外
-            # (UI表示用の explained_log_text には含まれる)
-            # print(f"[DEBUG_FILTER] Outside solver section, EXCLUDING line: '{stripped_line}'") # DEBUG (詳細すぎる場合はコメントアウト)
-            pass
-    filtered_log_str_for_gemini = "\n".join(filtered_log_for_gemini_lines)
 
     if all_captured_logs:
         for line in all_captured_logs.splitlines():
@@ -496,9 +434,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         all_lecturers=lecturers_data,
         solver_raw_status_code=status_code,
         # Geminiにはフィルタリングしたログを、生ログとしては全体を渡すように変更も可能
-        raw_solver_log=all_captured_logs, # UI表示用には全ログ
-        explained_log_text=explained_log_text,
-        filtered_log_for_gemini=filtered_log_str_for_gemini
+        raw_solver_log=all_captured_logs, 
+        explained_log_text=explained_log_text
     )
 
 # --- 3. Streamlit UI ---
@@ -616,8 +553,8 @@ def main():
             st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
             st.session_state.solution_executed = True # 実行済みフラグ
 
-            # Geminiに送信するログを準備 (フィルタリングされたもの、または全体)
-            log_for_gemini_api = solver_result["filtered_log_for_gemini"] # フィルタリングされたログのみを使用
+            # Geminiに送信するログを準備 (生ログ全体)
+            log_for_gemini_api = solver_result["raw_solver_log"] # 生ログ全体を使用
 
             # Gemini API で解説を取得
             if log_for_gemini_api and GEMINI_API_KEY:
@@ -626,12 +563,6 @@ def main():
                     st.session_state.gemini_explanation = gemini_explanation_text
             elif not GEMINI_API_KEY:
                 st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
-
-            # フィルタリングされたログと生ログの比較表示
-            st.subheader("フィルタリングされたログ (Gemini API へ送信)")
-            st.text_area("Filtered Log", solver_result["filtered_log_for_gemini"], height=300)
-            st.subheader("生ログ (UI に表示)")
-            st.text_area("Raw Log", solver_result["raw_solver_log"], height=300)
 
         st.subheader(f"求解ステータス: {solver_result['solution_status_str']}") # 変更
         if solver_result['objective_value'] is not None: # 変更
@@ -655,22 +586,6 @@ def main():
                     st.dataframe(pd.DataFrame(unassigned_courses))
                 else:
                     st.success("全ての講座が割り当てられました。") 
-                # 講師ごとの割り当て状況（オプション）
-                st.subheader("講師ごとの割り当て状況")
-                lecturer_assignments = {}
-                for l_data in solver_result['all_lecturers']: # Iterate over actual lecturer data
-                    lecturer_assignments[l_data["name"]] = []
-                for res in solver_result['assignments']:
-                    lecturer_name = res.get("講師名", "不明な講師") # 講師名がない場合のフォールバック
-                    if lecturer_name not in lecturer_assignments: # まれに講師データにない名前が結果に含まれる場合への対処
-                        lecturer_assignments[lecturer_name] = []
-                    lecturer_assignments[lecturer_name].append(f"{res['講座名']} ({res['教室ID']}, {res['スケジュール']})")
-
-                for name, assigned_list in lecturer_assignments.items():
-                    if assigned_list:
-                        st.markdown(f"**{name}**: " + ", ".join(assigned_list))
-                    else:
-                        st.markdown(f"**{name}**: 担当なし")
             else: # 最適解または実行可能解が見つかったが、実際の割り当ては行われなかった場合
                 st.error("最適解または実行可能解と判定されましたが、実際の割り当ては行われませんでした。")
                 st.warning(
@@ -701,8 +616,8 @@ def main():
                 st.text_area("Explained Log Output", solver_result['explained_log_text'], height=400)
 
         if solver_result['raw_solver_log']: # raw_solver_log があれば表示
-            with st.expander("生ログ詳細 (最適化処理の全出力)"):
-                st.text_area("Raw Solver Log Output", solver_result['raw_solver_log'], height=300)
+            with st.expander("生ログ詳細 (最適化処理の全出力 - Gemini APIへ送信されたログ)"):
+                st.text_area("Raw Solver Log (Sent to Gemini API)", solver_result['raw_solver_log'], height=300)
 
 if __name__ == "__main__":
     main()
