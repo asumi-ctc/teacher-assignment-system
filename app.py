@@ -9,7 +9,7 @@ from streamlit_oauth import OAuth2Component # OIDC認証用
 import random # データ生成用
 
 # アプリケーションバージョン
-APP_VERSION = "1.1.1" # 例: バージョン番号を定義
+APP_VERSION = "1.1.2" # 例: バージョン番号を定義
 
 # --- 1. データ定義 ---
 
