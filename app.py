@@ -404,23 +404,28 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         if in_solver_log_section:
             # ソルバーログセクション内のログのみをフィルタリング対象とする
             # ソルバーが何を選んだか (最終ステータス、目的値、応答サマリー)
-            if stripped_line.startswith("CpSolverResponse summary:") or \ # 最終応答サマリー
-               stripped_line.startswith("status:") or \ # 最終ステータス
-               stripped_line.startswith("objective:") or \ # 最終目的値
+            keep_line = False
+            if stripped_line.startswith("CpSolverResponse summary:") or \
+               stripped_line.startswith("status:") or \
+               stripped_line.startswith("objective:") or \
                # ソルバー内部で使われたツールや選択
-               stripped_line.startswith("Presolve summary:") or \ # Presolve処理の概要
+               stripped_line.startswith("Presolve summary:") or \
                re.search(r"Parameters:.*(linear_programming_relaxation|use_lp|log_search_progress|num_search_workers|max_time_in_seconds)", stripped_line, re.IGNORECASE) or \
-               "LP statistics" in stripped_line or \ # LPソルバーの統計情報
+               "LP statistics" in stripped_line or \
                re.search(r"Using relaxation:.*linear_programming", stripped_line, re.IGNORECASE) or \
                re.search(r"Starting presolve", stripped_line, re.IGNORECASE) or \
                re.search(r"Starting search", stripped_line, re.IGNORECASE) or \
                # 探索ステップのログは、解の発見や探索完了を示すものに限定
                (stripped_line.startswith("#") and \
                 (re.search(r"Optimal solution found", stripped_line, re.IGNORECASE) or \
-                 re.search(r"Feasible solution found", stripped_line, re.IGNORECASE) or \
-                 re.search(r"Done searching", stripped_line, re.IGNORECASE))) or \
+                 re.search(r"Feasible solution found", stripped_line, re.IGNORECASE) or \ # "Feasible solution" も重要
+                 re.search(r"Done searching", stripped_line, re.IGNORECASE) or \
+                 re.search(r"objective value", stripped_line, re.IGNORECASE))) or \ # 目的値の更新を示すログ
                # 主要な探索戦略の開始を示すログ (例: LNS worker)
                re.search(r"Worker \d+ starting.*(LNS|Core|FeasibilityPump|Probing)", stripped_line, re.IGNORECASE):
+                keep_line = True
+            
+            if keep_line:
                 filtered_log_for_gemini_lines.append(line)
         # else:
             # ソルバーログセクション外のアプリケーションログは、Geminiへの入力からは除外
