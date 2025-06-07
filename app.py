@@ -9,7 +9,7 @@ from streamlit_oauth import OAuth2Component # OIDC認証用
 import random # データ生成用
 
 # アプリケーションバージョン
-APP_VERSION = "1.1.2" # 例: バージョン番号を定義
+APP_VERSION = "1.1.3" # 例: バージョン番号を定義
 
 # --- 1. データ定義 ---
 
@@ -484,7 +484,7 @@ def main():
             redirect_uri=REDIRECT_URI,
             scope="email profile openid", # openid を追加してユーザー情報を取得しやすくする
             key="google_login_main", # 他のボタンとキーが衝突しないように変更
-            extras_params={"prompt": "consent", "access_type": "offline"}
+            extras_params={"access_type": "offline"} # "prompt": "consent" を削除
         )
         if result and "token" in result:
             st.session_state.token = result.get("token")
