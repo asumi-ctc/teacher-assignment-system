@@ -237,7 +237,8 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     all_lecturers: List[dict]
     solver_raw_status_code: int
     raw_solver_log: str
-    explained_log_text: str
+    explained_log_text: str # Detailed log with line-by-line explanation for UI
+    full_application_and_solver_log: str # All logs including detailed app logs for UI's explained_log_text
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
                      travel_costs_matrix, age_priority_costs, frequency_priority_costs,
@@ -315,7 +316,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             all_lecturers=lecturers_data,
             solver_raw_status_code=cp_model.UNKNOWN, 
             raw_solver_log=all_captured_logs,
-            explained_log_text=explained_log_text
+            explained_log_text=explained_log_text,
+            full_application_and_solver_log=all_captured_logs
         )
 
     for course_item in courses_data:
@@ -367,7 +369,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             all_lecturers=lecturers_data,
             solver_raw_status_code=cp_model.MODEL_INVALID,
             raw_solver_log=all_captured_logs,
-            explained_log_text=explained_log_text
+            explained_log_text=explained_log_text,
+            full_application_and_solver_log=all_captured_logs
         )
 
     solver = cp_model.CpSolver()
@@ -381,15 +384,44 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     
     log_to_stream("--- End Solver Log (Captured by app.py) ---")
 
-    all_captured_logs = full_log_stream.getvalue()
+    full_captured_logs = full_log_stream.getvalue()
     
     # DEBUG: キャプチャされた全ログの内容をターミナルに出力して確認
     print("\n--- BEGIN all_captured_logs (for debugging filter) ---")
-    print(all_captured_logs)
+    print(full_captured_logs)
     print("--- END all_captured_logs (for debugging filter) ---\n")
 
-    if all_captured_logs:
-        for line in all_captured_logs.splitlines():
+    # --- Gemini API送信用ログのフィルタリング ---
+    def filter_log_for_gemini(log_content: str) -> str:
+        lines = log_content.splitlines()
+        gemini_log_lines = []
+        in_solver_log_block = False
+        # 除外するアプリケーションログのパターン (詳細な割り当て試行ログ)
+        detailed_app_log_patterns = [
+            r"^\s*\+ Potential assignment:",
+            r"^\s*- Filtered out:",
+            r"^\s*Cost for ",
+        ]
+
+        for line in lines:
+            if "--- Solver Log (Captured by app.py) ---" in line:
+                in_solver_log_block = True
+            
+            if in_solver_log_block: # ソルバーログブロック内は全て含める
+                gemini_log_lines.append(line)
+            elif not any(re.search(pattern, line) for pattern in detailed_app_log_patterns):
+                # ソルバーログブロック外で、詳細パターンにマッチしないもの（サマリーなど）を含める
+                gemini_log_lines.append(line)
+            
+            if "--- End Solver Log (Captured by app.py) ---" in line and in_solver_log_block:
+                in_solver_log_block = False # ブロック終了
+        return "\n".join(gemini_log_lines)
+
+    gemini_api_log = filter_log_for_gemini(full_captured_logs)
+
+    # --- UI表示用の解説付きログ生成 (全ログを使用) ---
+    if full_captured_logs:
+        for line in full_captured_logs.splitlines():
             explanation = _get_log_explanation(line) # このファイル内の関数を使用
             explained_log_output.append(f"ログ: {line.strip()}") # .strip() は元のコードにもあったので維持
             explained_log_output.append(f"解説: {explanation}")
@@ -436,9 +468,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         all_courses=courses_data,
         all_lecturers=lecturers_data,
         solver_raw_status_code=status_code,
-        # Geminiにはフィルタリングしたログを、生ログとしては全体を渡すように変更も可能
-        raw_solver_log=all_captured_logs, 
-        explained_log_text=explained_log_text
+        raw_solver_log=gemini_api_log, # Gemini API に送る削減版ログ
+        explained_log_text=explained_log_text, # UI表示用の解説付き全ログ
+        full_application_and_solver_log=full_captured_logs # 全ログ
     )
 
 # --- 3. Streamlit UI ---
