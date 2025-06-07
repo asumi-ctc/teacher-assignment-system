@@ -377,21 +377,19 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     
     # Geminiに渡すログをフィルタリングする例 (より関心のある情報に絞る)
     filtered_log_for_gemini_lines = []
-    keywords_to_include = [
-        "Presolve summary:", "status:", "objective:", "best_bound:",
-        "Initial optimization model", "Presolved optimization model",
-        "#Bound", "#Done", "CpSolverResponse summary:",
-        "--- Solver Log", "--- End Solver Log" # マーカーは残す
-    ]
-    # Presolveのルール適用状況も有用な場合がある
-    # keywords_to_include.append("- rule '")
+    # 提案された抽出条件に基づいてキーワードとパターンを定義
+    # Presolve summary:
+    # Objective value:
+    # 使用されたソルバーワーカー (探索ステップのログから)
 
     for line in all_captured_logs.splitlines():
-        # フィルタリング条件をここに記述
-        # 例: 特定のキーワードを含む行、または探索ステップのbest値を含む行
-        if any(keyword in line for keyword in keywords_to_include) or \
-           re.search(r"#\d+\s+[\d\.]+s\s+best:", line) or \
-           re.search(r"^\s*- rule '", line): # Presolveルールも追加
+        stripped_line = line.strip()
+        if stripped_line.startswith("Presolve summary:") or \
+           re.search(r"^\s*- rule '", stripped_line) or \
+           stripped_line.startswith("objective:") or \
+           re.search(r"#\d+\s+[\d\.]+s\s+best:[\w\.]+\s+next:\[[^\]]*\]\s+\w+", stripped_line) or \
+           stripped_line.startswith("CpSolverResponse summary:") or \
+           stripped_line.startswith("status:"): # 最終ステータスも有用なので追加
             filtered_log_for_gemini_lines.append(line)
 
     filtered_log_str_for_gemini = "\n".join(filtered_log_for_gemini_lines)
