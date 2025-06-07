@@ -91,7 +91,7 @@ def get_gemini_explanation(log_text: str, api_key: str) -> str:
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash-latest') # または 'gemini-pro' など適切なモデル
+        model = genai.GenerativeModel('gemini-2.5-pro-preview-06-05') # 指定されたモデルに変更
         prompt = f"""以下のシステムログについて、IT専門家でない人にも分かりやすく解説してください。
 ログの各部分が何を示しているのか、全体としてどのような処理が行われているのかを説明してください。
 特に重要な情報、警告、エラーがあれば指摘し、考えられる原因や対処法についても言及してください。
@@ -247,142 +247,148 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     full_log_stream = io.StringIO()
     explained_log_output = [] # 解説付きログを格納するリスト
 
-    with contextlib.redirect_stdout(full_log_stream): # この関数全体の標準出力をキャプチャ
-        print(f"Initial lecturers: {len(lecturers_data)}, Initial courses: {len(courses_data)}")
-        potential_assignment_count = 0
-        possible_assignments = []
+    # アプリケーションログを full_log_stream に直接書き込むように変更
+    def log_to_stream(message):
+        print(message, file=full_log_stream)
+        print(message) # ターミナルにも表示（デバッグ用）
 
-        for lecturer in lecturers_data:
-            for course in courses_data:
-                lecturer_id = lecturer["id"]
-                course_id = course["id"]
+    # --- Main logic for model building and solving ---
+    possible_assignments = []
+    potential_assignment_count = 0
+    log_to_stream(f"Initial lecturers: {len(lecturers_data)}, Initial courses: {len(courses_data)}")
 
-                if lecturer["qualification_rank"] < course["required_rank"]:
-                    print(f"  - Filtered out: {lecturer_id} for {course_id} (Rank failed: L_rank={lecturer['qualification_rank']}, C_req_rank={course['required_rank']})")
-                    continue
-                if course["schedule"] not in lecturer["availability"]:
-                    print(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule failed: Course_schedule={course['schedule']} (type: {type(course['schedule'])}), Lecturer_avail={lecturer['availability']} (type: {type(lecturer['availability'])}, element_type: {type(lecturer['availability'][0]) if lecturer['availability'] else 'N/A'}))")
-                    continue
-                if option_avoid_last_classroom and \
-                   lecturer["last_assigned_classroom_id"] == course["classroom_id"]:
-                    print(f"  - Filtered out: {lecturer_id} for {course_id} (Last classroom failed: L_last_class={lecturer['last_assigned_classroom_id']}, C_class={course['classroom_id']})")
-                    continue
-                
-                potential_assignment_count += 1
-                print(f"  + Potential assignment: {lecturer_id} to {course_id}")
+    for lecturer in lecturers_data:
+        for course in courses_data:
+            lecturer_id = lecturer["id"]
+            course_id = course["id"]
 
-                var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
-                
-                travel_cost = travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999)
-                age_cost = age_priority_costs.get(lecturer["age_category"], 999)
-                frequency_cost = frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999)
-                total_weighted_cost_float = (weight_travel * travel_cost +
-                                             weight_age * age_cost +
-                                             weight_frequency * frequency_cost)
-                total_weighted_cost_int = int(total_weighted_cost_float * 100)
-                print(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, total_weighted_int={total_weighted_cost_int}")
+            if lecturer["qualification_rank"] < course["required_rank"]:
+                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Rank failed: L_rank={lecturer['qualification_rank']}, C_req_rank={course['required_rank']})")
+                continue
+            if course["schedule"] not in lecturer["availability"]:
+                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule failed: Course_schedule={course['schedule']} (type: {type(course['schedule'])}), Lecturer_avail={lecturer['availability']} (type: {type(lecturer['availability'][0]) if lecturer['availability'] else 'N/A'}))")
+                continue
+            if option_avoid_last_classroom and \
+               lecturer["last_assigned_classroom_id"] == course["classroom_id"]:
+                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Last classroom failed: L_last_class={lecturer['last_assigned_classroom_id']}, C_class={course['classroom_id']})")
+                continue
+            
+            potential_assignment_count += 1
+            log_to_stream(f"  + Potential assignment: {lecturer_id} to {course_id}")
 
-                possible_assignments.append({
-                    "lecturer_id": lecturer_id, "course_id": course_id,
-                    "variable": var, "cost": total_weighted_cost_int
-                })
+            var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
+            
+            travel_cost = travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999)
+            age_cost = age_priority_costs.get(lecturer["age_category"], 999)
+            frequency_cost = frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999)
+            total_weighted_cost_float = (weight_travel * travel_cost +
+                                         weight_age * age_cost +
+                                         weight_frequency * frequency_cost)
+            total_weighted_cost_int = int(total_weighted_cost_float * 100)
+            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, total_weighted_int={total_weighted_cost_int}")
 
-        print(f"Total potential assignments after filtering: {potential_assignment_count}")
-        print(f"Length of possible_assignments list (with variables): {len(possible_assignments)}")
+            possible_assignments.append({
+                "lecturer_id": lecturer_id, "course_id": course_id,
+                "variable": var, "cost": total_weighted_cost_int
+            })
 
-        if not possible_assignments:
-            print("No possible assignments found after filtering. Optimization will likely result in no assignments.")
-            # 早期リターンのための準備 (現状のコードでは早期リターンはないが、もし追加する場合)
-            all_captured_logs = full_log_stream.getvalue()
-            if all_captured_logs:
-                for line in all_captured_logs.splitlines():
-                    explanation = _get_log_explanation(line)
-                    explained_log_output.append(f"ログ: {line.strip()}")
-                    explained_log_output.append(f"解説: {explanation}")
-                    explained_log_output.append("-" * 20)
-            explained_log_text = "\n".join(explained_log_output)
-            return SolverOutput(
-                solution_status_str="前提条件エラー (割り当て候補なし)",
-                objective_value=None,
-                assignments=[],
-                all_courses=courses_data,
-                all_lecturers=lecturers_data,
-                solver_raw_status_code=cp_model.UNKNOWN, # 適切なステータスコード
-                raw_solver_log=all_captured_logs,
-                explained_log_text=explained_log_text
-            )
+    log_to_stream(f"Total potential assignments after filtering: {potential_assignment_count}")
+    log_to_stream(f"Length of possible_assignments list (with variables): {len(possible_assignments)}")
 
-        for course_item in courses_data:
-            course_id = course_item["id"]
-            model.Add(sum(pa["variable"] for pa in possible_assignments if pa["course_id"] == course_id) <= 1)
+    if not possible_assignments:
+        log_to_stream("No possible assignments found after filtering. Optimization will likely result in no assignments.")
+        all_captured_logs = full_log_stream.getvalue()
+        if all_captured_logs:
+            for line in all_captured_logs.splitlines():
+                explanation = _get_log_explanation(line)
+                explained_log_output.append(f"ログ: {line.strip()}")
+                explained_log_output.append(f"解説: {explanation}")
+                explained_log_output.append("-" * 20)
+        explained_log_text = "\n".join(explained_log_output)
+        return SolverOutput(
+            solution_status_str="前提条件エラー (割り当て候補なし)",
+            objective_value=None,
+            assignments=[],
+            all_courses=courses_data,
+            all_lecturers=lecturers_data,
+            solver_raw_status_code=cp_model.UNKNOWN, 
+            raw_solver_log=all_captured_logs,
+            explained_log_text=explained_log_text,
+            filtered_log_for_gemini=""
+        )
 
-        courses_dict = {c["id"]: c for c in courses_data}
-        for lecturer_item in lecturers_data:
-            lecturer_id = lecturer_item["id"]
-            lecturer_assigned_schedules = {}
-            for pa in possible_assignments:
-                if pa["lecturer_id"] == lecturer_id:
-                    c_schedule = courses_dict[pa["course_id"]]["schedule"]
-                    if c_schedule not in lecturer_assigned_schedules:
-                        lecturer_assigned_schedules[c_schedule] = []
-                    lecturer_assigned_schedules[c_schedule].append(pa["variable"])
-            for schedule_vars in lecturer_assigned_schedules.values():
-                if len(schedule_vars) > 1:
-                    model.Add(sum(schedule_vars) <= 1)
+    for course_item in courses_data:
+        course_id = course_item["id"]
+        model.Add(sum(pa["variable"] for pa in possible_assignments if pa["course_id"] == course_id) <= 1)
 
-        assignment_costs = [pa["variable"] * pa["cost"] for pa in possible_assignments]
-        penalty_terms = []
-        for course_data_item in courses_data:
-            course_id = course_data_item["id"]
-            possible_assignments_for_course = [pa["variable"] for pa in possible_assignments if pa["course_id"] == course_id]
-            if possible_assignments_for_course:
-                penalty_terms.append((1 - sum(possible_assignments_for_course)) * unassigned_course_penalty_value)
-            else:
-                penalty_terms.append(unassigned_course_penalty_value)
-        
-        objective_terms = assignment_costs + penalty_terms
-        if objective_terms:
-            model.Minimize(sum(objective_terms))
+    courses_dict = {c["id"]: c for c in courses_data}
+    for lecturer_item in lecturers_data:
+        lecturer_id = lecturer_item["id"]
+        lecturer_assigned_schedules = {}
+        for pa in possible_assignments:
+            if pa["lecturer_id"] == lecturer_id:
+                c_schedule = courses_dict[pa["course_id"]]["schedule"]
+                if c_schedule not in lecturer_assigned_schedules:
+                    lecturer_assigned_schedules[c_schedule] = []
+                lecturer_assigned_schedules[c_schedule].append(pa["variable"])
+        for schedule_vars in lecturer_assigned_schedules.values():
+            if len(schedule_vars) > 1:
+                model.Add(sum(schedule_vars) <= 1)
+
+    assignment_costs = [pa["variable"] * pa["cost"] for pa in possible_assignments]
+    penalty_terms = []
+    for course_data_item in courses_data:
+        course_id = course_data_item["id"]
+        possible_assignments_for_course = [pa["variable"] for pa in possible_assignments if pa["course_id"] == course_id]
+        if possible_assignments_for_course:
+            penalty_terms.append((1 - sum(possible_assignments_for_course)) * unassigned_course_penalty_value)
         else:
-            print("Objective terms list is empty. No assignments to optimize.")
-            # 目的項がない場合も早期リターンと同様の処理
-            all_captured_logs = full_log_stream.getvalue()
-            if all_captured_logs:
-                for line in all_captured_logs.splitlines():
-                    explanation = _get_log_explanation(line)
-                    explained_log_output.append(f"ログ: {line.strip()}")
-                    explained_log_output.append(f"解説: {explanation}")
-                    explained_log_output.append("-" * 20)
-            explained_log_text = "\n".join(explained_log_output)
-            return SolverOutput(
-                solution_status_str="目的関数エラー (最適化対象なし)",
-                objective_value=None,
-                assignments=[],
-                all_courses=courses_data,
-                all_lecturers=lecturers_data,
-                solver_raw_status_code=cp_model.MODEL_INVALID, # 適切なステータスコード
-                raw_solver_log=all_captured_logs,
-                explained_log_text=explained_log_text
-            )
+            penalty_terms.append(unassigned_course_penalty_value)
+    
+    objective_terms = assignment_costs + penalty_terms
+    if objective_terms:
+        model.Minimize(sum(objective_terms))
+    else:
+        log_to_stream("Objective terms list is empty. No assignments to optimize.")
+        all_captured_logs = full_log_stream.getvalue()
+        if all_captured_logs:
+            for line in all_captured_logs.splitlines():
+                explanation = _get_log_explanation(line)
+                explained_log_output.append(f"ログ: {line.strip()}")
+                explained_log_output.append(f"解説: {explanation}")
+                explained_log_output.append("-" * 20)
+        explained_log_text = "\n".join(explained_log_output)
+        return SolverOutput(
+            solution_status_str="目的関数エラー (最適化対象なし)",
+            objective_value=None,
+            assignments=[],
+            all_courses=courses_data,
+            all_lecturers=lecturers_data,
+            solver_raw_status_code=cp_model.MODEL_INVALID,
+            raw_solver_log=all_captured_logs,
+            explained_log_text=explained_log_text,
+            filtered_log_for_gemini=""
+        )
 
-        solver = cp_model.CpSolver()
-        solver.parameters.log_search_progress = True
+    solver = cp_model.CpSolver()
+    solver.parameters.log_search_progress = True
 
-        # ログコールバック関数を定義
-        # この関数はソルバーからのメッセージを full_log_stream に書き込みます。
-        def cp_sat_log_callback(message):
-            full_log_stream.write(message) # メッセージをそのままストリームに書き込む
+    log_to_stream("--- Solver Log (Captured by app.py) ---")
+    
+    status_code = cp_model.UNKNOWN # Initialize status_code
+    with contextlib.redirect_stdout(full_log_stream):
+        status_code = solver.Solve(model)
+    
+    log_to_stream("--- End Solver Log (Captured by app.py) ---")
 
-        # ソルバーにログコールバックを設定
-        solver.SetLogCallback(cp_sat_log_callback)
-
-        print("--- Solver Log (Captured by app.py via LogCallback) ---") # CP-SATのログ開始を示すマーカー (コールバック経由であることを明示)
-        status_code = solver.Solve(model) # status_code を保持
-        print("--- End Solver Log (Captured by app.py via LogCallback) ---") # CP-SATのログ終了を示すマーカー
-
-    # キャプチャ終了
     all_captured_logs = full_log_stream.getvalue()
     
+    # DEBUG: キャプチャされた全ログの内容をターミナルに出力して確認
+    print("\n--- BEGIN all_captured_logs (for debugging filter) ---")
+    print(all_captured_logs)
+    print("--- END all_captured_logs (for debugging filter) ---\n")
+    # END DEBUG
+
     # Geminiに渡すログをフィルタリングする例 (より関心のある情報に絞る)
     # ソルバーログのセクションのみを対象とする
     filtered_log_for_gemini_lines = []
@@ -391,13 +397,13 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     for line in all_captured_logs.splitlines():
         stripped_line = line.strip()
 
-        if stripped_line.startswith("--- Solver Log ("):
+        if stripped_line.startswith("--- Solver Log (Captured by app.py) ---"): # マーカー文字列を完全に一致させる
             in_solver_log_section = True
             print(f"[DEBUG_FILTER] Entered solver log section. Line: '{stripped_line}'") # DEBUG
             filtered_log_for_gemini_lines.append(line) # 開始マーカーは含める
             continue
 
-        if stripped_line.startswith("--- End Solver Log ("):
+        if stripped_line.startswith("--- End Solver Log (Captured by app.py) ---"): # マーカー文字列を完全に一致させる
             in_solver_log_section = False
             print(f"[DEBUG_FILTER] Exited solver log section. Line: '{stripped_line}'") # DEBUG
             filtered_log_for_gemini_lines.append(line) # 終了マーカーは含める
@@ -408,24 +414,25 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             # ソルバーログセクション内のログのみをフィルタリング対象とする
             # ソルバーが何を選んだか (最終ステータス、目的値、応答サマリー)
             keep_line = False
-            if stripped_line.startswith("CpSolverResponse summary:") or \
-               stripped_line.startswith("status:") or \
-               stripped_line.startswith("objective:") or \
+            if (stripped_line.startswith("CpSolverResponse summary:") or
+                stripped_line.startswith("status:") or
+                stripped_line.startswith("objective:") or
                # ソルバー内部で使われたツールや選択
-               stripped_line.startswith("Presolve summary:") or \
-               re.search(r"Parameters:.*(linear_programming_relaxation|use_lp|log_search_progress|num_search_workers|max_time_in_seconds)", stripped_line, re.IGNORECASE) or \
-               "LP statistics" in stripped_line or \
-               re.search(r"Using relaxation:.*linear_programming", stripped_line, re.IGNORECASE) or \
-               re.search(r"Starting presolve", stripped_line, re.IGNORECASE) or \
-               re.search(r"Starting search", stripped_line, re.IGNORECASE) or \
+                stripped_line.startswith("Presolve summary:") or
+                re.search(r"Parameters:.*(linear_programming_relaxation|use_lp|log_search_progress|num_search_workers|max_time_in_seconds)", stripped_line, re.IGNORECASE) or
+                "LP statistics" in stripped_line or
+                re.search(r"Using relaxation:.*linear_programming", stripped_line, re.IGNORECASE) or
+                re.search(r"Starting presolve", stripped_line, re.IGNORECASE) or
+                re.search(r"Starting search", stripped_line, re.IGNORECASE) or
                # 探索ステップのログは、解の発見や探索完了を示すものに限定
-               (stripped_line.startswith("#") and \
-                (re.search(r"Optimal solution found", stripped_line, re.IGNORECASE) or \
-                 re.search(r"Feasible solution found", stripped_line, re.IGNORECASE) or \ # "Feasible solution" も重要
-                 re.search(r"Done searching", stripped_line, re.IGNORECASE) or \
-                 re.search(r"objective value", stripped_line, re.IGNORECASE))) or \ # 目的値の更新を示すログ
+                (stripped_line.startswith("#") and
+                 (re.search(r"Optimal solution found", stripped_line, re.IGNORECASE) or
+                  re.search(r"Feasible solution found", stripped_line, re.IGNORECASE) or # "Feasible solution" も重要
+                  re.search(r"Done searching", stripped_line, re.IGNORECASE) or
+                  re.search(r"objective value", stripped_line, re.IGNORECASE))) or # 目的値の更新を示すログ
                # 主要な探索戦略の開始を示すログ (例: LNS worker)
-               re.search(r"Worker \d+ starting.*(LNS|Core|FeasibilityPump|Probing)", stripped_line, re.IGNORECASE):
+                re.search(r"Worker \d+ starting.*(LNS|Core|FeasibilityPump|Probing)", stripped_line, re.IGNORECASE)
+            ):
                 keep_line = True
             
             if keep_line:
@@ -521,26 +528,8 @@ def main():
         revoke_token_endpoint=None, # REVOKE_ENDPOINT,
     )
 
-    if "token" not in st.session_state:
-        result = oauth2.authorize_button(
-            name="Google でログイン",
-            icon="https://www.google.com/favicon.ico",
-            redirect_uri=REDIRECT_URI,
-            scope="openid email profile",
-            key="google_login",
-            use_container_width=True,
-        )
-        if result:
-            st.session_state.token = result.get("token")
-            st.rerun()
-        return # 認証が完了するまでメインコンテンツは表示しない
-    else:
-        # token = st.session_state.token # 必要であればトークン情報を使用
-        if st.sidebar.button("ログアウト"):
-            del st.session_state.token
-            st.rerun()
-
     st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
+    st.write("Googleアカウントでログインしてください。") # ログインを促すメッセージ
 
     # --- サイドバー: 設定 ---
     st.sidebar.header("最適化設定")
@@ -587,6 +576,19 @@ def main():
         st.write("頻度優先基本コスト (頻度低いほど低コスト)")
         st.json(DEFAULT_FREQUENCY_PRIORITY_COSTS)
 
+    # 認証状態の確認とログインボタンの表示
+    if 'token' not in st.session_state:
+        result = oauth2.authorize_button(
+            name="Googleでログイン",
+            icon="https://www.google.com/favicon.ico",
+            redirect_uri=REDIRECT_URI,
+            scope="email profile openid",
+            key="google_login",
+            extras_params={"prompt": "consent", "access_type": "offline"}
+        )
+        if result and "token" in result:
+            st.session_state.token = result.get("token")
+            st.rerun() # ログイン後に再描画
 
     if st.button("最適割り当てを実行", type="primary"):
         if "raw_solver_log_for_gca" in st.session_state: # 関連するセッション変数もクリア
@@ -595,6 +597,11 @@ def main():
             del st.session_state.gemini_explanation
         if "solution_executed" in st.session_state: # 関連するセッション変数もクリア
             del st.session_state.solution_executed
+
+        # ログイン状態を確認
+        if 'token' not in st.session_state:
+            st.warning("最適化を実行するには、まずGoogleアカウントでログインしてください。")
+            st.stop()
 
         st.header("最適化結果")
         with st.spinner("最適化計算を実行中..."):
@@ -619,6 +626,12 @@ def main():
                     st.session_state.gemini_explanation = gemini_explanation_text
             elif not GEMINI_API_KEY:
                 st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
+
+            # フィルタリングされたログと生ログの比較表示
+            st.subheader("フィルタリングされたログ (Gemini API へ送信)")
+            st.text_area("Filtered Log", solver_result["filtered_log_for_gemini"], height=300)
+            st.subheader("生ログ (UI に表示)")
+            st.text_area("Raw Log", solver_result["raw_solver_log"], height=300)
 
         st.subheader(f"求解ステータス: {solver_result['solution_status_str']}") # 変更
         if solver_result['objective_value'] is not None: # 変更
