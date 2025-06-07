@@ -408,15 +408,18 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                stripped_line.startswith("status:") or \
                stripped_line.startswith("objective:") or \
                # ソルバー内部で使われたツールや選択
-               stripped_line.startswith("Presolve summary:") or \ # Presolve処理の概要のみ
+               stripped_line.startswith("Presolve summary:") or \
                re.search(r"Parameters:.*(linear_programming_relaxation|use_lp|log_search_progress|num_search_workers|max_time_in_seconds)", stripped_line, re.IGNORECASE) or \
                "LP statistics" in stripped_line or \
                re.search(r"Using relaxation:.*linear_programming", stripped_line, re.IGNORECASE) or \
                re.search(r"Starting presolve", stripped_line, re.IGNORECASE) or \
                re.search(r"Starting search", stripped_line, re.IGNORECASE) or \
-               # 探索ステップのログは、"Done" または "Optimal" が含まれる最終的なものに近いログ、
-               # または "objective" が更新されたことを示すログに絞り込むことを試みる
-               (re.search(r"#\d+\s+[\d\.]+s\s+best:[\w\.]+", stripped_line) and ("Done" in stripped_line or "Optimal" in stripped_line or "objective" in stripped_line.lower())) or \
+               # 探索ステップのログは、"Done" または "Optimal" が含まれる最終的なもの、
+               # または "objective" が更新されたことを示すログ、
+               # または探索の最初と最後の数行（例：最初の5行と最後の5行）に絞り込むことを検討。
+               # ここでは、よりシンプルに "best:" を含み、かつ特定のキーワードを含む行に絞る。
+               (re.search(r"#\d+\s+[\d\.]+s\s+best:[\w\.]+", stripped_line) and \
+                any(kw in stripped_line for kw in ["Done", "Optimal", "objective", " LNS ", " Core ", " LP ", " FeasibilityPump", " Probing"])) or \
                # 主要な探索戦略の開始を示すログ (例: LNS worker)
                re.search(r"Worker \d+ starting.*(LNS|Core|FeasibilityPump|Probing)", stripped_line, re.IGNORECASE):
                 filtered_log_for_gemini_lines.append(line)
