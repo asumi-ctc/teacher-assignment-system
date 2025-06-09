@@ -214,6 +214,10 @@ for c_from in ALL_CLASSROOM_IDS_COMBINED:
 
 from typing import TypedDict, List, Optional, Any, Tuple # 追加
 
+# スケジュール違反に対する固定ペナルティ (floatで定義し、他の重み付けコストと合算)
+# この値は、スケジュール違反を許容する場合に、他のコスト要因よりも優先度が低くなるように十分に大きく設定します。
+BASE_PENALTY_SCHEDULE_VIOLATION = 1000000.0  # 例: 100万
+
 # --- 2. OR-Tools 最適化ロジック ---
 class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型定義
     solution_status_str: str
@@ -228,8 +232,9 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
                      travel_costs_matrix, # frequency_priority_costs を削除
-                     weight_past_assignment_recency, weight_qualification, weight_schedule_violation, # スケジュール違反の重みを追加
-                     weight_travel, weight_age, weight_frequency) -> SolverOutput: # unassigned_course_penalty_value を削除
+                     weight_past_assignment_recency, weight_qualification, 
+                     ignore_schedule_constraint: bool, # スケジュール制約を無視するかのフラグ
+                     weight_travel, weight_age, weight_frequency) -> SolverOutput:
     model = cp_model.CpModel()
     # solve_assignment 内の print 文も解説対象に含めるために、
     # ここで stdout のキャプチャを開始する
@@ -259,13 +264,20 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                 log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Rank insufficient: Lecturer_rank={lecturer['qualification_rank']} (higher number is lower rank), Course_required_rank={course['required_rank']} (lecturer rank must be <= this number))")
                 continue
             
-            # スケジュールチェックを変更: 違反を許容し、コストで表現
-            is_schedule_violation = course["schedule"] not in lecturer["availability"]
-            if is_schedule_violation:
-                log_to_stream(f"  - Schedule mismatch (but allowed with penalty): {lecturer_id} for {course_id} (Course_schedule={course['schedule']}, Lecturer_avail={lecturer['availability']})")
-            # else: # スケジュールOKの場合のログは冗長なのでコメントアウトまたは削除
-                # log_to_stream(f"  + Schedule OK: {lecturer_id} for {course_id}")
-            
+            # スケジュールチェック
+            schedule_available = course["schedule"] in lecturer["availability"]
+            actual_schedule_violation_occurred = not schedule_available # 最終的な結果表示用
+            schedule_violation_penalty = 0.0
+
+            if not schedule_available: # スケジュールが合わない場合
+                if ignore_schedule_constraint: # スケジュール制約を無視する設定の場合
+                    schedule_violation_penalty = BASE_PENALTY_SCHEDULE_VIOLATION
+                    log_to_stream(f"  - Schedule mismatch (constraint ignored, penalty {schedule_violation_penalty} applied): {lecturer_id} for {course_id} (Course_schedule={course['schedule']}, Lecturer_avail={lecturer['availability']})")
+                else: # スケジュール制約を無視しない設定の場合 -> 割り当て不可
+                    log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable and constraint NOT ignored: Course_schedule={course['schedule']}, Lecturer_avail={lecturer['availability']})")
+                    continue
+            # else: スケジュールが合う場合はペナルティなし
+
             potential_assignment_count += 1
             log_to_stream(f"  + Potential assignment: {lecturer_id} to {course_id}")
             var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
@@ -275,7 +287,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             # 実際の過去の総割り当て回数を頻度コストとする (少ないほど良い)
             frequency_cost = len(lecturer.get("past_assignments", []))
             qualification_cost = lecturer["qualification_rank"] # ランク値が小さいほど高資格
-            schedule_violation_cost_component = 1 if is_schedule_violation else 0
 
             # 過去割り当ての近さによるコスト計算
             past_assignment_recency_cost = 0
@@ -305,17 +316,17 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             total_weighted_cost_float = (weight_travel * travel_cost +
                                          weight_age * age_cost +
                                          weight_frequency * frequency_cost +
-                                         weight_qualification * qualification_cost +
-                                         weight_past_assignment_recency * past_assignment_recency_cost +
-                                         weight_schedule_violation * schedule_violation_cost_component) # スケジュール違反コストを追加
+                                         weight_qualification * qualification_cost + # 資格コストを追加
+                                         weight_past_assignment_recency * past_assignment_recency_cost
+                                        ) + schedule_violation_penalty # スケジュール違反ペナルティを加算
             total_weighted_cost_int = int(total_weighted_cost_float * 100)
-            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol={schedule_violation_cost_component}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={'N/A' if days_since_last_assignment_to_classroom == float('inf') else days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
+            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol_penalty={schedule_violation_penalty}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={'N/A' if days_since_last_assignment_to_classroom == float('inf') else days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             # 上記ログの days_since_last_assignment_to_classroom の表示を修正
-            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol={schedule_violation_cost_component}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
+            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol_penalty={schedule_violation_penalty}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             possible_assignments.append({
                 "lecturer_id": lecturer_id, "course_id": course_id,
                 "variable": var, "cost": total_weighted_cost_int, 
-                "qualification_cost_raw": qualification_cost, "is_schedule_violation": is_schedule_violation,
+                "qualification_cost_raw": qualification_cost, "is_schedule_violation": actual_schedule_violation_occurred,
                 "debug_past_assignment_recency_cost": past_assignment_recency_cost, # デバッグ/結果表示用
                 "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
             })
@@ -618,11 +629,12 @@ def main():
     weight_age = st.sidebar.slider("年齢の若さの重要度 (若い人を優先)", 0.0, 1.0, 0.3, 0.05, help="高いほど実年齢が若い講師の割り当てを優先します。実年齢がコストとして評価されます。")
     weight_frequency = st.sidebar.slider("割り当て頻度の低さの重要度 (頻度少を優先)", 0.0, 1.0, 0.2, 0.05, help="高いほど過去の総割り当て回数が少ない講師を優先します。実際の総割り当て回数がコストとして評価されます。")
     weight_qualification_slider = st.sidebar.slider("講師資格が高いものを優先する重要度", 0.0, 1.0, 0.25, 0.05, help="高いほど資格ランクが高い(数値が小さい)講師を優先します。講師の資格ランク値がコストとして評価されます。")
-    weight_schedule_violation_slider = st.sidebar.slider("スケジュール違反の重要度", 0.0, 1.0, 0.7, 0.05, help="高いほどスケジュール違反を避けます。0にするとスケジュール違反のペナルティなし。")
+    # weight_schedule_violation_slider = st.sidebar.slider("スケジュール違反の重要度", 0.0, 1.0, 0.7, 0.05, help="高いほどスケジュール違反を避けます。0にするとスケジュール違反のペナルティなし。") # チェックボックスに変更
     weight_past_assignment_recency_slider = st.sidebar.slider("同教室への前回割り当てからの経過日数が長い者或いは未割り当ての者を優先する重要度", 0.0, 1.0, 0.4, 0.05, help="低くすると、過去に割り当て実績があっても選ばれる可能性が高くなり、高くすると選ばれない可能性が高くなります。")
 
-    st.sidebar.subheader("ペナルティ設定")
-    # unassigned_penalty_slider = st.sidebar.slider("未割り当て講座1件あたりのペナルティ", 0, 200000, 100000, 1000, help="値を大きくするほど、全ての講座を割り当てることを強く優先します。0にするとペナルティなし。") # 廃止
+    st.sidebar.subheader("スケジュール制約")
+    ignore_schedule_constraint_checkbox = st.sidebar.checkbox("完全割り当てのために講師の空きスケジュールを無視する", value=True, help="チェックを外すと割り当て結果が得られないことがあります。その場合は、講師の空きスケジュールが合わない場合が想定されます。")
+    # st.sidebar.subheader("ペナルティ設定") # 削除
     # past_assignment_penalty_value_slider = st.sidebar.slider("直近教室への割り当てペナルティ基本値", 0, 1000, 200, 50, help="直近で割り当てた教室と同じ教室に割り当てる場合の基本ペナルティコスト。この値に上記の「直近教室ペナルティの重要度」が乗算されます。") # 廃止
 
     # ログインユーザー情報とログアウトボタン
@@ -691,8 +703,9 @@ def main():
             solver_result = solve_assignment(
                 DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
                 DEFAULT_TRAVEL_COSTS_MATRIX, # DEFAULT_FREQUENCY_PRIORITY_COSTS を削除
-                weight_past_assignment_recency_slider, weight_qualification_slider, weight_schedule_violation_slider,
-                weight_travel, weight_age, weight_frequency # unassigned_penalty_slider を削除
+                weight_past_assignment_recency_slider, weight_qualification_slider, 
+                ignore_schedule_constraint_checkbox, # 新しいチェックボックスの値を渡す
+                weight_travel, weight_age, weight_frequency
             )
             st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
             st.session_state.solution_executed = True
