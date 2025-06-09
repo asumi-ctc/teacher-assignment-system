@@ -638,7 +638,13 @@ def main():
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("講師データ")
-        st.dataframe(pd.DataFrame(DEFAULT_LECTURERS_DATA), height=200)
+        # past_assignments を表示用に整形
+        df_lecturers = pd.DataFrame(DEFAULT_LECTURERS_DATA)
+        if 'past_assignments' in df_lecturers.columns:
+            df_lecturers['past_assignments'] = df_lecturers['past_assignments'].apply(
+                lambda assignments: ", ".join([f"{a['classroom_id']} ({a['date']})" for a in assignments]) if isinstance(assignments, list) and assignments else "履歴なし"
+            )
+        st.dataframe(df_lecturers, height=200)
     with col2:
         st.subheader("講座データ")
         st.dataframe(pd.DataFrame(DEFAULT_COURSES_DATA), height=200)
