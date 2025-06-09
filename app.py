@@ -250,7 +250,7 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
                      travel_costs_matrix, # frequency_priority_costs を削除
-                     weight_past_assignment_recency, # 変更: 直近割り当ての近さへのペナルティ重み
+                     weight_past_assignment_recency, weight_qualification, # 変更: 直近割り当ての近さへのペナルティ重み, 資格ランクの重み
                      weight_travel, weight_age, weight_frequency, unassigned_course_penalty_value) -> SolverOutput:
     model = cp_model.CpModel()
     # solve_assignment 内の print 文も解説対象に含めるために、
@@ -292,6 +292,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             age_cost = lecturer.get("age", 99) # 実年齢をコストとして使用。未設定の場合は大きな値。
             # 実際の過去の総割り当て回数を頻度コストとする (少ないほど良い)
             frequency_cost = len(lecturer.get("past_assignments", []))
+            qualification_cost = lecturer["qualification_rank"] # ランク値が小さいほど高資格
 
             # 過去割り当ての近さによるコスト計算
             past_assignment_recency_cost = 0
@@ -321,14 +322,15 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             total_weighted_cost_float = (weight_travel * travel_cost +
                                          weight_age * age_cost +
                                          weight_frequency * frequency_cost +
+                                         weight_qualification * qualification_cost + # 資格コストを追加
                                          weight_past_assignment_recency * past_assignment_recency_cost) # 新しい重みとコスト
             total_weighted_cost_int = int(total_weighted_cost_float * 100)
-            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={'N/A' if days_since_last_assignment_to_classroom == float('inf') else days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
+            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={'N/A' if days_since_last_assignment_to_classroom == float('inf') else days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             # 上記ログの days_since_last_assignment_to_classroom の表示を修正
-            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
+            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             possible_assignments.append({
                 "lecturer_id": lecturer_id, "course_id": course_id,
-                "variable": var, "cost": total_weighted_cost_int,
+                "variable": var, "cost": total_weighted_cost_int, "qualification_cost_raw": qualification_cost,
                 "debug_past_assignment_recency_cost": past_assignment_recency_cost, # デバッグ/結果表示用
                 "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
             })
@@ -522,6 +524,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                     "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
                     "年齢コスト(元)": lecturer.get("age", 99),
                     "頻度コスト(元)": len(lecturer.get("past_assignments", [])), # 実際の総割り当て回数
+                    "資格コスト(元)": pa.get("qualification_cost_raw"), # 講師の資格ランク
                     "当該教室最終割当日からの日数": pa.get("debug_days_since_last_assignment") # "該当なし" のフォールバックを削除し、格納された値を直接使用
                 })
     elif status_code == cp_model.INFEASIBLE:
@@ -617,6 +620,7 @@ def main():
     weight_travel = st.sidebar.slider("移動コストの重要度", 0.0, 1.0, 0.5, 0.05, help="高いほど移動コストを重視します。")
     weight_age = st.sidebar.slider("年齢の若さの重要度 (若い人を優先)", 0.0, 1.0, 0.3, 0.05, help="高いほど実年齢が若い講師の割り当てを優先します。実年齢がコストとして評価されます。")
     weight_frequency = st.sidebar.slider("割り当て頻度の低さの重要度 (頻度少を優先)", 0.0, 1.0, 0.2, 0.05, help="高いほど過去の総割り当て回数が少ない講師を優先します。実際の総割り当て回数がコストとして評価されます。")
+    weight_qualification_slider = st.sidebar.slider("講師資格が高いものを優先する重要度", 0.0, 1.0, 0.25, 0.05, help="高いほど資格ランクが高い(数値が小さい)講師を優先します。講師の資格ランク値がコストとして評価されます。")
     weight_past_assignment_recency_slider = st.sidebar.slider("同教室への前回割り当てからの経過日数が長い者或いは未割り当ての者を優先する重要度", 0.0, 1.0, 0.4, 0.05, help="低くすると、過去に割り当て実績があっても選ばれる可能性が高くなり、高くすると選ばれない可能性が高くなります。")
 
     st.sidebar.subheader("ペナルティ設定")
@@ -689,7 +693,7 @@ def main():
             solver_result = solve_assignment(
                 DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
                 DEFAULT_TRAVEL_COSTS_MATRIX, # DEFAULT_FREQUENCY_PRIORITY_COSTS を削除
-                weight_past_assignment_recency_slider,
+                weight_past_assignment_recency_slider, weight_qualification_slider,
                 weight_travel, weight_age, weight_frequency, unassigned_penalty_slider
             )
             st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
