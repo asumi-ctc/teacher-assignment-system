@@ -625,7 +625,7 @@ def main():
     weight_travel = st.sidebar.slider("移動コストの重要度", 0.0, 1.0, 0.5, 0.05, help="高いほど移動コストを重視します。")
     weight_age = st.sidebar.slider("年齢の若さの重要度 (若い人を優先)", 0.0, 1.0, 0.3, 0.05, help="高いほど若い講師の割り当てを優先します。")
     weight_frequency = st.sidebar.slider("割り当て頻度の低さの重要度 (頻度少を優先)", 0.0, 1.0, 0.2, 0.05, help="高いほど割り当て頻度の低い講師を優先します。")
-    weight_past_assignment_recency_slider = st.sidebar.slider("同教室への直近割り当て回避の重要度", 0.0, 1.0, 0.4, 0.05, help="高いほど、講師が特定の教室に直近で割り当てられた場合に課されるペナルティを重視します（＝より過去の割り当てを優先）。")
+    weight_past_assignment_recency_slider = st.sidebar.slider("同教室への前回割り当てからの経過日数が長い者或いは未割り当ての者を優先する重要度", 0.0, 1.0, 0.4, 0.05, help="低くすると、過去に割り当て実績があっても選ばれる可能性が高くなり、高くすると選ばれない可能性が高くなります。")
 
     st.sidebar.subheader("ペナルティ設定")
     unassigned_penalty_slider = st.sidebar.slider("未割り当て講座1件あたりのペナルティ", 0, 200000, 100000, 1000, help="値を大きくするほど、全ての講座を割り当てることを強く優先します。0にするとペナルティなし。")
