@@ -180,14 +180,14 @@ for i in range(1, 301): # 講師数を100人から300人に変更
     })
 
 # 講座データ生成 (47都道府県 × 7種類の講座)
+# 講座種別を3種類に変更
 BASE_COURSE_DEFINITIONS = [
-    {"id_suffix": "S1", "name": "初級プログラミング", "required_rank": 1, "schedule": ("Mon", "AM")},
-    {"id_suffix": "S2", "name": "中級データ分析", "required_rank": 2, "schedule": ("Tue", "PM")},
-    {"id_suffix": "S3", "name": "上級機械学習", "required_rank": 3, "schedule": ("Mon", "PM")},
-    {"id_suffix": "S4", "name": "初級ウェブデザイン", "required_rank": 1, "schedule": ("Wed", "AM")},
-    {"id_suffix": "S5", "name": "中級プログラミング", "required_rank": 2, "schedule": ("Thu", "AM")},
-    {"id_suffix": "S6", "name": "Python入門", "required_rank": 1, "schedule": ("Fri", "PM")},
-    {"id_suffix": "S7", "name": "データベース基礎", "required_rank": 2, "schedule": ("Tue", "AM")}
+    {"id_suffix": "C1", "name": "初級コース", "required_rank": 3, "schedule": ("Mon", "AM")}, # ランク3,2,1が担当可能
+    {"id_suffix": "C2", "name": "中級コース", "required_rank": 2, "schedule": ("Tue", "PM")}, # ランク2,1が担当可能
+    {"id_suffix": "C3", "name": "上級コース", "required_rank": 1, "schedule": ("Wed", "AM")}, # ランク1のみ担当可能
+    # スケジュールのバリエーションを増やすため、同じコース種別で異なる時間帯も定義可能
+    {"id_suffix": "C4", "name": "初級コース", "required_rank": 3, "schedule": ("Thu", "PM")},
+    {"id_suffix": "C5", "name": "中級コース", "required_rank": 2, "schedule": ("Fri", "AM")},
 ]
 
 DEFAULT_COURSES_DATA = []
@@ -276,8 +276,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             lecturer_id = lecturer["id"]
             course_id = course["id"]
 
-            if lecturer["qualification_rank"] < course["required_rank"]:
-                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Rank failed: L_rank={lecturer['qualification_rank']}, C_req_rank={course['required_rank']})")
+            # 資格ランクチェック: 講師のランクが講座の要求ランクより低い(数値が大きい)場合は除外
+            if lecturer["qualification_rank"] > course["required_rank"]:
+                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Rank insufficient: Lecturer_rank={lecturer['qualification_rank']} (higher number is lower rank), Course_required_rank={course['required_rank']} (lecturer rank must be <= this number))")
                 continue
             
             # スケジュールチェックを変更: 違反を許容し、コストで表現
