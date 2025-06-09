@@ -143,7 +143,7 @@ DEFAULT_LECTURERS_DATA = []
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 TIMES = ["AM", "PM"]
 ALL_SLOTS = [(day, time) for day in DAYS for time in TIMES]
-AGE_CATEGORIES = ["low", "middle", "high"]
+# AGE_CATEGORIES = ["low", "middle", "high"] # 実年齢を使用するため廃止
 QUALIFICATION_RANKS = [1, 2, 3]
 FREQ_CATEGORIES = ["low", "middle", "high"]
 
@@ -170,8 +170,9 @@ for i in range(1, 101):
     DEFAULT_LECTURERS_DATA.append({
         "id": f"L{i}",
         "name": f"講師{i:03d}",
+        "age": random.randint(22, 65), # 実年齢を追加 (例: 22歳から65歳)
         "home_classroom_id": random.choice(PREFECTURE_CLASSROOM_IDS), # 本拠地は都道府県のいずれか
-        "age_category": random.choice(AGE_CATEGORIES),
+        # "age_category": random.choice(AGE_CATEGORIES), # 廃止
         "qualification_rank": random.choice(QUALIFICATION_RANKS),
         "availability": availability,
         "assignment_frequency_category": random.choice(FREQ_CATEGORIES),
@@ -229,12 +230,7 @@ for c_from in ALL_CLASSROOM_IDS_COMBINED:
                 cost = 100 
             DEFAULT_TRAVEL_COSTS_MATRIX[(c_from, c_to)] = cost
 
-# 年齢カテゴリ別基本コスト (若いほど低コスト = 優先度高)
-DEFAULT_AGE_PRIORITY_COSTS = {
-    "low": 1,     # 若手
-    "middle": 5,  # 中堅
-    "high": 10    # ベテラン
-}
+# DEFAULT_AGE_PRIORITY_COSTS は実年齢を使用するため廃止
 
 # 割り当て頻度カテゴリ別基本コスト (頻度が低いほど低コスト = 優先度高)
 DEFAULT_FREQUENCY_PRIORITY_COSTS = {
@@ -258,7 +254,7 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     full_application_and_solver_log: str # All logs including detailed app logs for UI's explained_log_text
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
-                     travel_costs_matrix, age_priority_costs, frequency_priority_costs,
+                     travel_costs_matrix, frequency_priority_costs, # age_priority_costs を削除
                      weight_past_assignment_recency, # 変更: 直近割り当ての近さへのペナルティ重み
                      weight_travel, weight_age, weight_frequency, unassigned_course_penalty_value) -> SolverOutput:
     model = cp_model.CpModel()
@@ -298,7 +294,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
             
             travel_cost = travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999)
-            age_cost = age_priority_costs.get(lecturer["age_category"], 999)
+            age_cost = lecturer.get("age", 99) # 実年齢をコストとして使用。未設定の場合は大きな値。
             frequency_cost = frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999)
 
             # 過去割り当ての近さによるコスト計算
@@ -528,7 +524,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                     "スケジュール": f"{course['schedule'][0]} {course['schedule'][1]}",
                     "算出コスト(x100)": pa["cost"], # pa["cost"] は重み付け後の整数コスト
                     "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
-                    "年齢コスト(元)": age_priority_costs.get(lecturer["age_category"], 999),
+                    "年齢コスト(元)": lecturer.get("age", 99), # 表示も実年齢に
                     "頻度コスト(元)": frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999),
                     "当該教室最終割当日からの日数": pa.get("debug_days_since_last_assignment") # "該当なし" のフォールバックを削除し、格納された値を直接使用
                 })
@@ -623,7 +619,7 @@ def main():
 
     st.sidebar.subheader("目的関数の重み")
     weight_travel = st.sidebar.slider("移動コストの重要度", 0.0, 1.0, 0.5, 0.05, help="高いほど移動コストを重視します。")
-    weight_age = st.sidebar.slider("年齢の若さの重要度 (若い人を優先)", 0.0, 1.0, 0.3, 0.05, help="高いほど若い講師の割り当てを優先します。")
+    weight_age = st.sidebar.slider("年齢の若さの重要度 (若い人を優先)", 0.0, 1.0, 0.3, 0.05, help="高いほど実年齢が若い講師の割り当てを優先します。実年齢がコストとして評価されます。")
     weight_frequency = st.sidebar.slider("割り当て頻度の低さの重要度 (頻度少を優先)", 0.0, 1.0, 0.2, 0.05, help="高いほど割り当て頻度の低い講師を優先します。")
     weight_past_assignment_recency_slider = st.sidebar.slider("同教室への前回割り当てからの経過日数が長い者或いは未割り当ての者を優先する重要度", 0.0, 1.0, 0.4, 0.05, help="低くすると、過去に割り当て実績があっても選ばれる可能性が高くなり、高くすると選ばれない可能性が高くなります。")
 
@@ -679,10 +675,10 @@ def main():
         st.dataframe(df_travel_costs)
 
     st.subheader("基本コスト設定")
-    col5, col6 = st.columns(2)
-    with col5:
-        st.write("年齢優先基本コスト (若いほど低コスト)")
-        st.json(DEFAULT_AGE_PRIORITY_COSTS)
+    # col5, col6 = st.columns(2) # 年齢コストの表示がなくなるため、レイアウト調整
+    # with col5: # 廃止
+        # st.write("年齢優先基本コスト (若いほど低コスト)") # 廃止
+        # st.json(DEFAULT_AGE_PRIORITY_COSTS) # 廃止
     with col6:
         st.write("頻度優先基本コスト (頻度低いほど低コスト)")
         st.json(DEFAULT_FREQUENCY_PRIORITY_COSTS)
@@ -698,7 +694,7 @@ def main():
         with st.spinner("最適化計算を実行中..."):
             solver_result = solve_assignment(
                 DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
-                DEFAULT_TRAVEL_COSTS_MATRIX, DEFAULT_AGE_PRIORITY_COSTS, DEFAULT_FREQUENCY_PRIORITY_COSTS,
+                DEFAULT_TRAVEL_COSTS_MATRIX, DEFAULT_FREQUENCY_PRIORITY_COSTS, # DEFAULT_AGE_PRIORITY_COSTS を削除
                 weight_past_assignment_recency_slider,
                 weight_travel, weight_age, weight_frequency, unassigned_penalty_slider
             )
