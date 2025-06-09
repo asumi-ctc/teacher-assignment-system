@@ -196,17 +196,85 @@ for i, pref_classroom_id in enumerate(PREFECTURE_CLASSROOM_IDS):
             "schedule": base_course["schedule"]
         })
 
+# --- 移動コスト生成のための地域定義 ---
+REGIONS = {
+    "Hokkaido": ["北海道"],
+    "Tohoku": ["青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県"],
+    "Kanto": ["茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県"],
+    "Chubu": ["新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県"],
+    "Kinki": ["三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県"],
+    "Chugoku": ["鳥取県", "島根県", "岡山県", "広島県", "山口県"],
+    "Shikoku": ["徳島県", "香川県", "愛媛県", "高知県"],
+    "Kyushu_Okinawa": ["福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"]
+}
+
+PREFECTURE_TO_REGION = {pref: region for region, prefs in REGIONS.items() for pref in prefs}
+
+REGION_GRAPH = { # 地域間の隣接関係グラフ (ホップ数計算用)
+    "Hokkaido": {"Tohoku"},
+    "Tohoku": {"Hokkaido", "Kanto", "Chubu"},
+    "Kanto": {"Tohoku", "Chubu"},
+    "Chubu": {"Tohoku", "Kanto", "Kinki"},
+    "Kinki": {"Chubu", "Chugoku", "Shikoku"},
+    "Chugoku": {"Kinki", "Shikoku", "Kyushu_Okinawa"},
+    "Shikoku": {"Kinki", "Chugoku", "Kyushu_Okinawa"},
+    "Kyushu_Okinawa": {"Chugoku", "Shikoku"}
+}
+
+def get_region_hops(region1, region2, graph):
+    """地域間のホップ数（隣接度）を計算する"""
+    if region1 == region2:
+        return 0
+    
+    queue = [(region1, 0)]
+    visited = {region1}
+    
+    while queue:
+        current_region, dist = queue.pop(0)
+        if current_region == region2:
+            return dist
+        
+        for neighbor in graph.get(current_region, set()):
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append((neighbor, dist + 1))
+    return float('inf') # 到達不能 (通常は発生しない)
+
+# 教室IDから都道府県名へのマッピングを作成
+CLASSROOM_ID_TO_PREF_NAME = {item["id"]: item["location"] for item in DEFAULT_CLASSROOMS_DATA}
+
 # 移動コスト行列生成 (全教室間)
 DEFAULT_TRAVEL_COSTS_MATRIX = {}
 
 for c_from in ALL_CLASSROOM_IDS_COMBINED:
     for c_to in ALL_CLASSROOM_IDS_COMBINED:
         if c_from == c_to:
-            DEFAULT_TRAVEL_COSTS_MATRIX[(c_from, c_to)] = 0
+            base_cost = 0
         else:
-            # 異なる都道府県教室間のコストはランダム (例: 10-150)
-            cost = random.randint(10, 150)
-            DEFAULT_TRAVEL_COSTS_MATRIX[(c_from, c_to)] = cost
+            pref_from = CLASSROOM_ID_TO_PREF_NAME[c_from]
+            pref_to = CLASSROOM_ID_TO_PREF_NAME[c_to]
+            
+            region_from = PREFECTURE_TO_REGION[pref_from]
+            region_to = PREFECTURE_TO_REGION[pref_to]
+
+            # 沖縄県と本土間の特別処理
+            is_okinawa_involved = (pref_from == "沖縄県" and pref_to != "沖縄県") or \
+                                  (pref_to == "沖縄県" and pref_from != "沖縄県")
+
+            if is_okinawa_involved:
+                base_cost = random.randint(80000, 120000) # 沖縄は高コスト帯 (円単位のイメージ)
+            elif region_from == region_to: # 同一地域内
+                base_cost = random.randint(5000, 15000)   # 低コスト帯
+            else:
+                hops = get_region_hops(region_from, region_to, REGION_GRAPH)
+                if hops == 1: # 隣接地域
+                    base_cost = random.randint(15000, 30000) # 中コスト帯
+                elif hops == 2: # 1つ地域を挟む
+                    base_cost = random.randint(35000, 60000) # やや高コスト帯
+                else: # 2つ以上地域を挟む、または到達不能(get_region_hopsがinfの場合)
+                    base_cost = random.randint(70000, 100000) # 高コスト帯
+            
+        DEFAULT_TRAVEL_COSTS_MATRIX[(c_from, c_to)] = base_cost
 
 # DEFAULT_AGE_PRIORITY_COSTS は実年齢を使用するため廃止
 
@@ -740,27 +808,29 @@ def main():
         if solver_result['assignments']:
             results_df = pd.DataFrame(solver_result['assignments'])
             st.subheader("割り当て結果サマリー")
+            
+            summary_data = []
 
             # スケジュール状況
             schedule_compatible_count = results_df[results_df["スケジュール状況"] == "適合"].shape[0]
             schedule_incompatible_count = results_df[results_df["スケジュール状況"] == "不適合"].shape[0]
-            st.markdown(f"**スケジュール**")
-            st.markdown(f"　適合：{schedule_compatible_count}人")
-            st.markdown(f"　不適合：（講師の空きスケジュールに不適合） {schedule_incompatible_count}人")
+            summary_data.append(("**スケジュール**", ""))
+            summary_data.append(("　適合", f"{schedule_compatible_count}人"))
+            summary_data.append(("　不適合（講師の空きスケジュールに不適合）", f"{schedule_incompatible_count}人"))
 
             # 移動コストの合計値
             total_travel_cost = results_df["移動コスト(元)"].sum()
-            st.markdown(f"**移動コストの合計値**: {total_travel_cost}")
+            summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
 
             # 平均年齢と平均頻度 (割り当てられた講師の元データから計算)
             assigned_lecturer_ids = results_df["講師ID"].unique()
             temp_assigned_lecturers = [l for l in DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
             
             if temp_assigned_lecturers:
-                avg_age = sum(l.get("age",0) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
-                st.markdown(f"**平均年齢**: {avg_age:.1f}才")
-                avg_frequency = sum(len(l.get("past_assignments",[])) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
-                st.markdown(f"**平均頻度**: {avg_frequency:.1f}回")
+                avg_age = sum(l.get("age", 0) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
+                summary_data.append(("**平均年齢**", f"{avg_age:.1f}才"))
+                avg_frequency = sum(len(l.get("past_assignments", [])) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
+                summary_data.append(("**平均頻度**", f"{avg_frequency:.1f}回"))
 
                 # 資格別割り当て状況
                 lecturer_rank_total_counts = {1: 0, 2: 0, 3: 0}
@@ -768,22 +838,27 @@ def main():
                     rank = lecturer.get("qualification_rank")
                     if rank in lecturer_rank_total_counts:
                         lecturer_rank_total_counts[rank] += 1
-                
-                assigned_rank_counts = {1:0, 2:0, 3:0}
+                summary_data.append(("**資格別割り当て状況**", ""))
+                assigned_rank_counts = {1: 0, 2: 0, 3: 0}
                 for l_assigned in temp_assigned_lecturers:
                     rank = l_assigned.get("qualification_rank")
                     if rank in assigned_rank_counts:
-                        assigned_rank_counts[rank] +=1
-                st.markdown(f"**資格別割り当て状況**")
+                        assigned_rank_counts[rank] += 1
                 for rank_num in [1, 2, 3]:
-                    st.markdown(f"　ランク{rank_num}：{assigned_rank_counts.get(rank_num, 0)}人 / {lecturer_rank_total_counts.get(rank_num, 0)}人中")
+                    summary_data.append((f"　ランク{rank_num}", f"{assigned_rank_counts.get(rank_num, 0)}人 / {lecturer_rank_total_counts.get(rank_num, 0)}人中"))
 
             # 同教室への過去の割り当て
             past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0]
             past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
-            st.markdown(f"**同教室への過去の割り当て**")
-            st.markdown(f"　新規：{past_assignment_new_count}人")
-            st.markdown(f"　割当て実績あり：{past_assignment_existing_count}人")
+            summary_data.append(("**同教室への過去の割り当て**", ""))
+            summary_data.append(("　新規", f"{past_assignment_new_count}人"))
+            summary_data.append(("　割当て実績あり", f"{past_assignment_existing_count}人"))
+
+            # Markdownテーブルとして表示
+            markdown_table = "| 項目 | 値 |\n| :---- | :---- |\n"
+            for item, value in summary_data:
+                markdown_table += f"| {item} | {value} |\n"
+            st.markdown(markdown_table)
             st.markdown("---") # サマリーの区切り
 
         if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
