@@ -679,9 +679,8 @@ def main():
     # with col5: # 廃止
         # st.write("年齢優先基本コスト (若いほど低コスト)") # 廃止
         # st.json(DEFAULT_AGE_PRIORITY_COSTS) # 廃止
-    with col6:
-        st.write("頻度優先基本コスト (頻度低いほど低コスト)")
-        st.json(DEFAULT_FREQUENCY_PRIORITY_COSTS)
+    st.write("頻度優先基本コスト (頻度低いほど低コスト)")
+    st.json(DEFAULT_FREQUENCY_PRIORITY_COSTS)
 
     # 最適化ボタンと結果表示 (この部分は認証済みの場合のみ実行される)
     if st.button("最適割り当てを実行", type="primary"):
