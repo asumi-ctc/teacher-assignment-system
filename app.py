@@ -622,20 +622,42 @@ def main():
     # --- 認証済みの場合: メインアプリケーションUI表示 ---
     # このブロックは st.session_state.token が存在する場合のみ実行されます
 
-    st.sidebar.header("最適化設定")
+    # st.sidebar.header("最適化設定") # より詳細な構成に変更
 
-    st.sidebar.subheader("目的関数の重み")
-    weight_travel = st.sidebar.slider("移動コストの重要度", 0.0, 1.0, 0.5, 0.05, help="高いほど移動コストを重視します。")
-    weight_age = st.sidebar.slider("年齢の若さの重要度 (若い人を優先)", 0.0, 1.0, 0.3, 0.05, help="高いほど実年齢が若い講師の割り当てを優先します。実年齢がコストとして評価されます。")
-    weight_frequency = st.sidebar.slider("割り当て頻度の低さの重要度 (頻度少を優先)", 0.0, 1.0, 0.2, 0.05, help="高いほど過去の総割り当て回数が少ない講師を優先します。実際の総割り当て回数がコストとして評価されます。")
-    weight_qualification_slider = st.sidebar.slider("講師資格が高いものを優先する重要度", 0.0, 1.0, 0.25, 0.05, help="高いほど資格ランクが高い(数値が小さい)講師を優先します。講師の資格ランク値がコストとして評価されます。")
-    # weight_schedule_violation_slider = st.sidebar.slider("スケジュール違反の重要度", 0.0, 1.0, 0.7, 0.05, help="高いほどスケジュール違反を避けます。0にするとスケジュール違反のペナルティなし。") # チェックボックスに変更
-    weight_past_assignment_recency_slider = st.sidebar.slider("同教室への前回割り当てからの経過日数が長い者或いは未割り当ての者を優先する重要度", 0.0, 1.0, 0.4, 0.05, help="低くすると、過去に割り当て実績があっても選ばれる可能性が高くなり、高くすると選ばれない可能性が高くなります。")
+    st.sidebar.markdown(
+        "以下の制約の中で、目的に対する最適化を実行します。"
+        "目的に重み付けすることでシミュレーションしながら最適解を探索することができます。"
+    )
+    st.sidebar.markdown("---")
 
-    st.sidebar.subheader("スケジュール制約")
-    ignore_schedule_constraint_checkbox = st.sidebar.checkbox("完全割り当てのために講師の空きスケジュールを無視する", value=True, help="チェックを外すと割り当て結果が得られないことがあります。その場合は、講師の空きスケジュールが合わない場合が想定されます。")
-    # st.sidebar.subheader("ペナルティ設定") # 削除
-    # past_assignment_penalty_value_slider = st.sidebar.slider("直近教室への割り当てペナルティ基本値", 0, 1000, 200, 50, help="直近で割り当てた教室と同じ教室に割り当てる場合の基本ペナルティコスト。この値に上記の「直近教室ペナルティの重要度」が乗算されます。") # 廃止
+    st.sidebar.subheader("【制約】")
+    st.sidebar.markdown("**ハード制約（絶対固定）**")
+    st.sidebar.markdown("- 講師は資格ランクに応じた講座しか割り当てできません。")
+    st.sidebar.markdown("- 講師は1つの時間帯に複数の講座を同時に担当できません。") # 表現をより正確に
+
+    st.sidebar.markdown("**ソフト制約（割り当てできない場合に許容できる）**")
+    st.sidebar.markdown(
+        "講師の空きスケジュールに応じた講座しか割り当てできないことが原則ですが、"
+        "完全割り当てのために以下のことを許容できます。"
+    )
+    ignore_schedule_constraint_checkbox = st.sidebar.checkbox(
+        "講師の空きスケジュールを無視する", 
+        value=True, 
+        help="チェックを外すと割り当て結果が得られないことがあります。その場合は、講師の空きスケジュールが合わない場合が想定されます。"
+    )
+    st.sidebar.markdown("---")
+
+    st.sidebar.subheader("【最適化目的と重み付け】")
+    st.sidebar.markdown("**移動コストが低い人を優先**")
+    weight_travel = st.sidebar.slider("重要度", 0.0, 1.0, 0.5, 0.05, help="高いほど移動コストが低い人を重視します。", key="weight_travel")
+    st.sidebar.markdown("**年齢の若い人を優先**")
+    weight_age = st.sidebar.slider("重要度", 0.0, 1.0, 0.3, 0.05, help="高いほど年齢が若い人を重視します。", key="weight_age")
+    st.sidebar.markdown("**割り当て頻度の少ない人を優先**")
+    weight_frequency = st.sidebar.slider("重要度", 0.0, 1.0, 0.2, 0.05, help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency")
+    st.sidebar.markdown("**講師資格が高い人を優先**")
+    weight_qualification_slider = st.sidebar.slider("重要度", 0.0, 1.0, 0.25, 0.05, help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification")
+    st.sidebar.markdown("**同教室への割り当てが過去に無い人を優先**")
+    weight_past_assignment_recency_slider = st.sidebar.slider("重要度", 0.0, 1.0, 0.4, 0.05, help="高いほど同教室への割り当て実績人が無い人或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment")
 
     # ログインユーザー情報とログアウトボタン
     user_email = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
