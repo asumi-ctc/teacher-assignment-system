@@ -272,6 +272,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         print(message, file=full_log_stream)
         print(message) # ターミナルにも表示（デバッグ用）
 
+    # 過去の割り当てがない、または日付パース不能な場合に設定するデフォルトの経過日数 (ペナルティ計算上、十分に大きい値)
+    DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 100000
+
     # --- Main logic for model building and solving ---
     possible_assignments = []
     potential_assignment_count = 0
@@ -300,7 +303,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
 
             # 過去割り当ての近さによるペナルティ計算
             actual_recency_penalty = 0
-            days_since_last_assignment_to_classroom = float('inf') # 初期値は無限大（該当教室への割り当てなし）
+            days_since_last_assignment_to_classroom = DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT
 
             if lecturer.get("past_assignments"):
                 relevant_past_assignments_to_this_classroom = [
@@ -322,7 +325,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                         actual_recency_penalty = raw_penalty_value
                     except ValueError:
                         log_to_stream(f"    Warning: Could not parse date '{latest_assignment_date_str}' for {lecturer_id} and classroom {course['classroom_id']}")
-                        days_since_last_assignment_to_classroom = float('inf') # パース失敗時はペナルティなし扱い
+                        days_since_last_assignment_to_classroom = DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # パース失敗時
             
             total_weighted_cost_float = (weight_travel * travel_cost +
                                          weight_age * age_cost +
@@ -330,12 +333,13 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                                          weight_past_assignment_recency * actual_recency_penalty) # 新しい重みとペナルティ
             total_weighted_cost_int = int(total_weighted_cost_float * 100)
             log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, recency_penalty_raw={actual_recency_penalty} (days_since_last_on_this_classroom={'N/A' if days_since_last_assignment_to_classroom == float('inf') else days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
-
+            # 上記ログの days_since_last_assignment_to_classroom の表示を修正
+            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, recency_penalty_raw={actual_recency_penalty} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             possible_assignments.append({
                 "lecturer_id": lecturer_id, "course_id": course_id,
                 "variable": var, "cost": total_weighted_cost_int,
                 "debug_recency_penalty_applied": actual_recency_penalty, # デバッグ/結果表示用
-                "debug_days_since_last_assignment": days_since_last_assignment_to_classroom if days_since_last_assignment_to_classroom != float('inf') else None
+                "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
             })
 
     log_to_stream(f"Total potential assignments after filtering: {potential_assignment_count}")
@@ -528,7 +532,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                     "年齢コスト(元)": age_priority_costs.get(lecturer["age_category"], 999),
                     "頻度コスト(元)": frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999),
                     "過去割当近接ペナルティ(元)": pa.get("debug_recency_penalty_applied", 0),
-                    "当該教室最終割当日からの日数": pa.get("debug_days_since_last_assignment", "該当なし")
+                    "当該教室最終割当日からの日数": pa.get("debug_days_since_last_assignment") # "該当なし" のフォールバックを削除し、格納された値を直接使用
                 })
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
