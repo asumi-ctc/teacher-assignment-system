@@ -364,20 +364,12 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         if possible_assignments_for_course: # 担当可能な講師候補がいる場合のみ制約を追加
             model.Add(sum(possible_assignments_for_course) == 1)
             
-
-    courses_dict = {c["id"]: c for c in courses_data}
+    # 各講師は、割り当て期間全体を通して最大1つの講座のみ担当可能
     for lecturer_item in lecturers_data:
         lecturer_id = lecturer_item["id"]
-        lecturer_assigned_schedules = {}
-        for pa in possible_assignments:
-            if pa["lecturer_id"] == lecturer_id:
-                c_schedule = courses_dict[pa["course_id"]]["schedule"]
-                if c_schedule not in lecturer_assigned_schedules:
-                    lecturer_assigned_schedules[c_schedule] = []
-                lecturer_assigned_schedules[c_schedule].append(pa["variable"])
-        for schedule_vars in lecturer_assigned_schedules.values():
-            if len(schedule_vars) > 1:
-                model.Add(sum(schedule_vars) <= 1)
+        assignments_for_lecturer = [pa["variable"] for pa in possible_assignments if pa["lecturer_id"] == lecturer_id]
+        if assignments_for_lecturer:
+            model.Add(sum(assignments_for_lecturer) <= 1)
 
     assignment_costs = [pa["variable"] * pa["cost"] for pa in possible_assignments]
     # 未割り当てペナルティ (penalty_terms) を削除
@@ -633,7 +625,7 @@ def main():
     st.sidebar.subheader("【制約】")
     st.sidebar.markdown("**ハード制約（絶対固定）**")
     st.sidebar.markdown("- 講師は資格ランクに応じた講座しか割り当てできません。")
-    st.sidebar.markdown("- 講師は1つの時間帯に複数の講座を同時に担当できません。") # 表現をより正確に
+    st.sidebar.markdown("- 講師は（今回の割り当てでは）1つの講座しか担当できません。")
 
     st.sidebar.markdown("**ソフト制約（割り当てできない場合に許容できる）**")
     st.sidebar.markdown(
