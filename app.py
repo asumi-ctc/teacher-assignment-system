@@ -122,21 +122,15 @@ PREFECTURES = [
     "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"
 ]
 
-# 既存の教室ID
-EXISTING_CLASSROOM_IDS = ["C1", "C2", "C3"]
-EXISTING_CLASSROOM_LOCATIONS = {"C1": "東京拠点", "C2": "大阪拠点", "C3": "名古屋拠点"}
-
 # 都道府県教室ID (P1 - P47)
 PREFECTURE_CLASSROOM_IDS = [f"P{i+1}" for i in range(len(PREFECTURES))]
 
 # 全教室データ生成
 DEFAULT_CLASSROOMS_DATA = []
-for cid in EXISTING_CLASSROOM_IDS:
-    DEFAULT_CLASSROOMS_DATA.append({"id": cid, "location": EXISTING_CLASSROOM_LOCATIONS[cid]})
 for i, pref_name in enumerate(PREFECTURES):
     DEFAULT_CLASSROOMS_DATA.append({"id": PREFECTURE_CLASSROOM_IDS[i], "location": pref_name})
 
-ALL_CLASSROOM_IDS_COMBINED = EXISTING_CLASSROOM_IDS + PREFECTURE_CLASSROOM_IDS
+ALL_CLASSROOM_IDS_COMBINED = PREFECTURE_CLASSROOM_IDS # 拠点という概念をなくし、都道府県教室のみとする
 
 # 講師データ生成 (100人)
 DEFAULT_LECTURERS_DATA = []
@@ -205,29 +199,13 @@ for i, pref_classroom_id in enumerate(PREFECTURE_CLASSROOM_IDS):
 # 移動コスト行列生成 (全教室間)
 DEFAULT_TRAVEL_COSTS_MATRIX = {}
 
-# 既存のC1,C2,C3間のコスト
-EXISTING_C_TRAVEL_COSTS = {
-    ("C1", "C1"): 0, ("C1", "C2"): 20, ("C1", "C3"): 30,
-    ("C2", "C1"): 20, ("C2", "C2"): 0, ("C2", "C3"): 25,
-    ("C3", "C1"): 30, ("C3", "C2"): 25, ("C3", "C3"): 0,
-}
-
 for c_from in ALL_CLASSROOM_IDS_COMBINED:
     for c_to in ALL_CLASSROOM_IDS_COMBINED:
         if c_from == c_to:
             DEFAULT_TRAVEL_COSTS_MATRIX[(c_from, c_to)] = 0
-        elif c_from in EXISTING_CLASSROOM_IDS and c_to in EXISTING_CLASSROOM_IDS:
-            DEFAULT_TRAVEL_COSTS_MATRIX[(c_from, c_to)] = EXISTING_C_TRAVEL_COSTS.get((c_from, c_to), 50) # フォールバック
         else:
-            # 都道府県間、または都道府県と既存拠点C1-C3間はランダムコスト (例: 10-150)
-            # ここでは簡略化のため、異なる都道府県/拠点間は比較的高めのコストとする
-            if c_from.startswith("P") and c_to.startswith("P"): # 都道府県間
-                cost = random.randint(10, 80) if c_from != c_to else 0
-            elif (c_from.startswith("P") and c_to.startswith("C")) or \
-                 (c_from.startswith("C") and c_to.startswith("P")): # 都道府県とC拠点間
-                cost = random.randint(30, 150)
-            else: # 予期せぬケース (基本的には上記でカバーされるはず)
-                cost = 100 
+            # 異なる都道府県教室間のコストはランダム (例: 10-150)
+            cost = random.randint(10, 150)
             DEFAULT_TRAVEL_COSTS_MATRIX[(c_from, c_to)] = cost
 
 # DEFAULT_AGE_PRIORITY_COSTS は実年齢を使用するため廃止
