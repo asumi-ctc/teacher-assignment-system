@@ -317,11 +317,10 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                         latest_assignment_date = datetime.datetime.strptime(latest_assignment_date_str, "%Y-%m-%d").date()
                         days_since_last_assignment_to_classroom = (TODAY - latest_assignment_date).days
 
-                        # ペナルティ計算: 経過日数が少ないほど高いペナルティ
-                        # 例: 365日を基準とし、それより最近の割り当てにペナルティ
-                        # 0日経過 (今日割り当てと仮定) なら 365、365日以上経過なら 0
-                        MAX_RECENCY_PENALTY_BASE_DAYS = 365 # この値は調整可能
-                        raw_penalty_value = max(0, MAX_RECENCY_PENALTY_BASE_DAYS - days_since_last_assignment_to_classroom)
+                        # コスト計算: 経過日数が少ないほど高いコスト
+                        # (DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT - 経過日数)
+                        # 経過日数が DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT の場合、コストは0
+                        raw_penalty_value = DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT - days_since_last_assignment_to_classroom
                         actual_recency_penalty = raw_penalty_value
                     except ValueError:
                         log_to_stream(f"    Warning: Could not parse date '{latest_assignment_date_str}' for {lecturer_id} and classroom {course['classroom_id']}")
