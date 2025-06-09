@@ -477,27 +477,39 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         
         gemini_log_lines_final.extend(app_summary_lines)
 
-        MAX_FIRST_N_DETAIL_LINES = 10
-        MAX_LAST_N_DETAIL_LINES = 10
-        if len(app_detailed_lines_collected) > (MAX_FIRST_N_DETAIL_LINES + MAX_LAST_N_DETAIL_LINES):
-            gemini_log_lines_final.extend(app_detailed_lines_collected[:MAX_FIRST_N_DETAIL_LINES])
-            omitted_count = len(app_detailed_lines_collected) - (MAX_FIRST_N_DETAIL_LINES + MAX_LAST_N_DETAIL_LINES)
+        # 詳細アプリケーションログの最大表示行数を調整
+        MAX_APP_DETAIL_FIRST_N_LINES = 5 # 先頭から表示する最大行数
+        MAX_APP_DETAIL_LAST_N_LINES = 5  # 末尾から表示する最大行数
+        if len(app_detailed_lines_collected) > (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES):
+            gemini_log_lines_final.extend(app_detailed_lines_collected[:MAX_APP_DETAIL_FIRST_N_LINES])
+            omitted_count = len(app_detailed_lines_collected) - (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES)
             gemini_log_lines_final.append(f"\n[... {omitted_count} 件の詳細なアプリケーションログ（個々の割り当てチェック等）は簡潔さのため省略されました ...]\n")
-            gemini_log_lines_final.extend(app_detailed_lines_collected[-MAX_LAST_N_DETAIL_LINES:])
+            gemini_log_lines_final.extend(app_detailed_lines_collected[-MAX_APP_DETAIL_LAST_N_LINES:])
         else:
             gemini_log_lines_final.extend(app_detailed_lines_collected)
             
-        gemini_log_lines_final.extend(solver_log_block)
+        # ソルバーログの最大表示行数を調整
+        MAX_SOLVER_LOG_FIRST_N_LINES = 70 # ソルバーログの先頭から表示する最大行数
+        MAX_SOLVER_LOG_LAST_N_LINES = 70  # ソルバーログの末尾から表示する最大行数
+        if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
+            truncated_solver_log = solver_log_block[:MAX_SOLVER_LOG_FIRST_N_LINES]
+            omitted_solver_lines = len(solver_log_block) - (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES)
+            truncated_solver_log.append(f"\n[... {omitted_solver_lines} 件のソルバーログ中間行は簡潔さのため省略されました ...]\n")
+            truncated_solver_log.extend(solver_log_block[-MAX_SOLVER_LOG_LAST_N_LINES:])
+            gemini_log_lines_final.extend(truncated_solver_log)
+        else:
+            gemini_log_lines_final.extend(solver_log_block)
         
         return "\n".join(gemini_log_lines_final)
 
     gemini_api_log = filter_log_for_gemini(full_captured_logs)
 
     # --- UI表示用の解説付きログ生成 (全ログを使用) ---
+    # explained_log_output は既に solve_assignment の冒頭で初期化されている
     if full_captured_logs:
         for line in full_captured_logs.splitlines():
             explanation = _get_log_explanation(line) # このファイル内の関数を使用
-            explained_log_output.append(f"ログ: {line.strip()}") # .strip() は元のコードにもあったので維持
+            explained_log_output.append(f"ログ: {line.strip()}")
             explained_log_output.append(f"解説: {explanation}")
             explained_log_output.append("-" * 20) # 区切り線
     
