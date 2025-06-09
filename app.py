@@ -478,8 +478,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         gemini_log_lines_final.extend(app_summary_lines)
 
         # 詳細アプリケーションログの最大表示行数を調整
-        MAX_APP_DETAIL_FIRST_N_LINES = 5 # 先頭から表示する最大行数
-        MAX_APP_DETAIL_LAST_N_LINES = 5  # 末尾から表示する最大行数
+        MAX_APP_DETAIL_FIRST_N_LINES = 3 # 先頭から表示する最大行数をさらに削減
+        MAX_APP_DETAIL_LAST_N_LINES = 3  # 末尾から表示する最大行数をさらに削減
         if len(app_detailed_lines_collected) > (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES):
             gemini_log_lines_final.extend(app_detailed_lines_collected[:MAX_APP_DETAIL_FIRST_N_LINES])
             omitted_count = len(app_detailed_lines_collected) - (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES)
@@ -487,10 +487,10 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             gemini_log_lines_final.extend(app_detailed_lines_collected[-MAX_APP_DETAIL_LAST_N_LINES:])
         else:
             gemini_log_lines_final.extend(app_detailed_lines_collected)
-            
+
         # ソルバーログの最大表示行数を調整
-        MAX_SOLVER_LOG_FIRST_N_LINES = 70 # ソルバーログの先頭から表示する最大行数
-        MAX_SOLVER_LOG_LAST_N_LINES = 70  # ソルバーログの末尾から表示する最大行数
+        MAX_SOLVER_LOG_FIRST_N_LINES = 30 # ソルバーログの先頭から表示する最大行数をさらに削減
+        MAX_SOLVER_LOG_LAST_N_LINES = 30  # ソルバーログの末尾から表示する最大行数をさらに削減
         if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
             truncated_solver_log = solver_log_block[:MAX_SOLVER_LOG_FIRST_N_LINES]
             omitted_solver_lines = len(solver_log_block) - (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES)
