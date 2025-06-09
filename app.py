@@ -218,6 +218,10 @@ from typing import TypedDict, List, Optional, Any, Tuple # 追加
 # この値は、スケジュール違反を許容する場合に、他のコスト要因よりも優先度が低くなるように十分に大きく設定します。
 BASE_PENALTY_SCHEDULE_VIOLATION = 1000000.0  # 例: 100万
 
+# 過去の割り当てがない、または日付パース不能な場合に設定するデフォルトの経過日数 (ペナルティ計算上、十分に大きい値)
+# サマリー表示でも使用するためグローバルスコープに移動
+DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 100000
+
 # --- 2. OR-Tools 最適化ロジック ---
 class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型定義
     solution_status_str: str
@@ -246,9 +250,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         print(message, file=full_log_stream)
         print(message) # ターミナルにも表示（デバッグ用）
 
-    # 過去の割り当てがない、または日付パース不能な場合に設定するデフォルトの経過日数 (ペナルティ計算上、十分に大きい値)
-    DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 100000
-
     # --- Main logic for model building and solving ---
     possible_assignments = []
     potential_assignment_count = 0
@@ -266,13 +267,13 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             
             # スケジュールチェック
             schedule_available = course["schedule"] in lecturer["availability"]
-            actual_schedule_violation_occurred = not schedule_available # 最終的な結果表示用
+            actual_schedule_incompatibility_occurred = not schedule_available # 最終的な結果表示用
             schedule_violation_penalty = 0.0
 
             if not schedule_available: # スケジュールが合わない場合
                 if ignore_schedule_constraint: # スケジュール制約を無視する設定の場合
                     schedule_violation_penalty = BASE_PENALTY_SCHEDULE_VIOLATION
-                    log_to_stream(f"  - Schedule mismatch (constraint ignored, penalty {schedule_violation_penalty} applied): {lecturer_id} for {course_id} (Course_schedule={course['schedule']}, Lecturer_avail={lecturer['availability']})")
+                    log_to_stream(f"  - Schedule incompatible (constraint ignored, penalty {schedule_violation_penalty} applied): {lecturer_id} for {course_id} (Course_schedule={course['schedule']}, Lecturer_avail={lecturer['availability']})")
                 else: # スケジュール制約を無視しない設定の場合 -> 割り当て不可
                     log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable and constraint NOT ignored: Course_schedule={course['schedule']}, Lecturer_avail={lecturer['availability']})")
                     continue
@@ -325,8 +326,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol_penalty={schedule_violation_penalty}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             possible_assignments.append({
                 "lecturer_id": lecturer_id, "course_id": course_id,
-                "variable": var, "cost": total_weighted_cost_int, 
-                "qualification_cost_raw": qualification_cost, "is_schedule_violation": actual_schedule_violation_occurred,
+                "variable": var, "cost": total_weighted_cost_int,
+                "qualification_cost_raw": qualification_cost, "is_schedule_incompatible": actual_schedule_incompatibility_occurred, # キー名を is_schedule_violation から変更
                 "debug_past_assignment_recency_cost": past_assignment_recency_cost, # デバッグ/結果表示用
                 "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
             })
@@ -432,7 +433,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             r"^\s*\+ Potential assignment:",
             r"^\s*- Filtered out:", # 資格ランクや過去教室の重複による除外
             r"^\s*Cost for ",
-            r"^\s*- Schedule mismatch", # スケジュール不一致 (許容されるがログは出る)
+            r"^\s*- Schedule incompatible", # スケジュール不一致 (許容されるがログは出る)
             r"^\s*    Warning: Could not parse date", # 日付パースエラー
         ]
         
@@ -523,7 +524,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                     "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
                     "年齢コスト(元)": lecturer.get("age", 99),
                     "頻度コスト(元)": len(lecturer.get("past_assignments", [])), # 実際の総割り当て回数
-                    "スケジュール状況": "違反あり" if pa.get("is_schedule_violation") else "適合",
+                    "スケジュール状況": "不適合" if pa.get("is_schedule_incompatible") else "適合", # "不適合" に変更
                     "資格コスト(元)": pa.get("qualification_cost_raw"), # 講師の資格ランク
                     "当該教室最終割当日からの日数": pa.get("debug_days_since_last_assignment") # "該当なし" のフォールバックを削除し、格納された値を直接使用
                 })
@@ -702,12 +703,7 @@ def main():
         ])
         st.dataframe(df_travel_costs)
 
-    st.subheader("基本コスト設定")
-    # col5, col6 = st.columns(2) # 年齢コストの表示がなくなるため、レイアウト調整
-    # with col5: # 廃止
-        # st.write("年齢優先基本コスト (若いほど低コスト)") # 廃止
-    # st.write("頻度優先基本コスト (頻度低いほど低コスト)") # 廃止 (実際の割り当て回数を使用)
-    # st.json(DEFAULT_FREQUENCY_PRIORITY_COSTS) # 廃止
+    # 「基本コスト設定」セクションを削除
 
     # 最適化ボタンと結果表示 (この部分は認証済みの場合のみ実行される)
     if st.button("最適割り当てを実行", type="primary"):
@@ -740,11 +736,60 @@ def main():
         if solver_result['objective_value'] is not None:
             st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
 
+        # --- サマリー情報表示 ---
+        if solver_result['assignments']:
+            results_df = pd.DataFrame(solver_result['assignments'])
+            st.subheader("割り当て結果サマリー")
+
+            # スケジュール状況
+            schedule_compatible_count = results_df[results_df["スケジュール状況"] == "適合"].shape[0]
+            schedule_incompatible_count = results_df[results_df["スケジュール状況"] == "不適合"].shape[0]
+            st.markdown(f"**スケジュール**")
+            st.markdown(f"　適合：{schedule_compatible_count}人")
+            st.markdown(f"　不適合：（講師の空きスケジュールに不適合） {schedule_incompatible_count}人")
+
+            # 移動コストの合計値
+            total_travel_cost = results_df["移動コスト(元)"].sum()
+            st.markdown(f"**移動コストの合計値**: {total_travel_cost}")
+
+            # 平均年齢と平均頻度 (割り当てられた講師の元データから計算)
+            assigned_lecturer_ids = results_df["講師ID"].unique()
+            temp_assigned_lecturers = [l for l in DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
+            
+            if temp_assigned_lecturers:
+                avg_age = sum(l.get("age",0) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
+                st.markdown(f"**平均年齢**: {avg_age:.1f}才")
+                avg_frequency = sum(len(l.get("past_assignments",[])) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
+                st.markdown(f"**平均頻度**: {avg_frequency:.1f}回")
+
+                # 資格別割り当て状況
+                lecturer_rank_total_counts = {1: 0, 2: 0, 3: 0}
+                for lecturer in DEFAULT_LECTURERS_DATA: # 全講師データから各ランクの総数をカウント
+                    rank = lecturer.get("qualification_rank")
+                    if rank in lecturer_rank_total_counts:
+                        lecturer_rank_total_counts[rank] += 1
+                
+                assigned_rank_counts = {1:0, 2:0, 3:0}
+                for l_assigned in temp_assigned_lecturers:
+                    rank = l_assigned.get("qualification_rank")
+                    if rank in assigned_rank_counts:
+                        assigned_rank_counts[rank] +=1
+                st.markdown(f"**資格別割り当て状況**")
+                for rank_num in [1, 2, 3]:
+                    st.markdown(f"　ランク{rank_num}：{assigned_rank_counts.get(rank_num, 0)}人 / {lecturer_rank_total_counts.get(rank_num, 0)}人中")
+
+            # 同教室への過去の割り当て
+            past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0]
+            past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
+            st.markdown(f"**同教室への過去の割り当て**")
+            st.markdown(f"　新規：{past_assignment_new_count}人")
+            st.markdown(f"　割当て実績あり：{past_assignment_existing_count}人")
+            st.markdown("---") # サマリーの区切り
+
         if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
             actual_assignments_made = bool(solver_result['assignments'])
             if actual_assignments_made:
                 st.subheader("割り当て結果")
-                results_df = pd.DataFrame(solver_result['assignments'])
                 st.dataframe(results_df)
                 assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
                 unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
