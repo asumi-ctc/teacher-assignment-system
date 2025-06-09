@@ -448,8 +448,10 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         # 除外するアプリケーションログのパターン (詳細な割り当て試行ログ)
         detailed_app_log_patterns = [
             r"^\s*\+ Potential assignment:",
-            r"^\s*- Filtered out:",
+            r"^\s*- Filtered out:", # 資格ランクや過去教室の重複による除外
             r"^\s*Cost for ",
+            r"^\s*- Schedule mismatch", # スケジュール不一致 (許容されるがログは出る)
+            r"^\s*    Warning: Could not parse date", # 日付パースエラー
         ]
         
         solver_log_start_marker = "--- Solver Log (Captured by app.py) ---"
