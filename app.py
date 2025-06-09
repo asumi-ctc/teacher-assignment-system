@@ -368,7 +368,12 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
 
     for course_item in courses_data:
         course_id = course_item["id"]
-        model.Add(sum(pa["variable"] for pa in possible_assignments if pa["course_id"] == course_id) <= 1)
+        # 各講座は、担当可能な講師候補が存在する場合に限り、必ず1名割り当てる。
+        # 資格ランクなどのハード制約により候補がいない場合は、この強制割り当ての対象外とする。
+        possible_assignments_for_course = [pa["variable"] for pa in possible_assignments if pa["course_id"] == course_id]
+        if possible_assignments_for_course: # 担当可能な講師候補がいる場合のみ制約を追加
+            model.Add(sum(possible_assignments_for_course) == 1)
+            
 
     courses_dict = {c["id"]: c for c in courses_data}
     for lecturer_item in lecturers_data:
