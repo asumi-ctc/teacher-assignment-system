@@ -259,8 +259,8 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
                      travel_costs_matrix, age_priority_costs, frequency_priority_costs,
-                     past_assignment_penalty_config, # 追加: {"penalty_value": int, "weight": float}
-                     weight_travel, weight_age, weight_frequency, unassigned_course_penalty_value) -> SolverOutput: # 戻り値の型ヒントを変更
+                     weight_past_assignment_recency, # 変更: 直近割り当ての近さへのペナルティ重み
+                     weight_travel, weight_age, weight_frequency, unassigned_course_penalty_value) -> SolverOutput:
     model = cp_model.CpModel()
     # solve_assignment 内の print 文も解説対象に含めるために、
     # ここで stdout のキャプチャを開始する
@@ -298,27 +298,44 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             age_cost = age_priority_costs.get(lecturer["age_category"], 999)
             frequency_cost = frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999)
 
-            # 直近の割り当て教室ペナルティ計算
-            actual_past_assignment_penalty = 0
-            is_recent_assignment_conflict = False
-            if lecturer.get("past_assignments") and lecturer["past_assignments"]: # 過去の割り当てがあり、空でない場合
-                # past_assignments は日付の降順でソートされている想定 (最新が0番目)
-                latest_past_assignment = lecturer["past_assignments"][0]
-                if latest_past_assignment["classroom_id"] == course["classroom_id"]:
-                    actual_past_assignment_penalty = past_assignment_penalty_config["penalty_value"]
-                    is_recent_assignment_conflict = True
+            # 過去割り当ての近さによるペナルティ計算
+            actual_recency_penalty = 0
+            days_since_last_assignment_to_classroom = float('inf') # 初期値は無限大（該当教室への割り当てなし）
+
+            if lecturer.get("past_assignments"):
+                relevant_past_assignments_to_this_classroom = [
+                    pa for pa in lecturer["past_assignments"]
+                    if pa["classroom_id"] == course["classroom_id"]
+                ]
+                if relevant_past_assignments_to_this_classroom:
+                    # past_assignments は日付降順ソート済みなので、リストの最初のものが最新の割り当て
+                    latest_assignment_date_str = relevant_past_assignments_to_this_classroom[0]["date"]
+                    try:
+                        latest_assignment_date = datetime.datetime.strptime(latest_assignment_date_str, "%Y-%m-%d").date()
+                        days_since_last_assignment_to_classroom = (TODAY - latest_assignment_date).days
+
+                        # ペナルティ計算: 経過日数が少ないほど高いペナルティ
+                        # 例: 365日を基準とし、それより最近の割り当てにペナルティ
+                        # 0日経過 (今日割り当てと仮定) なら 365、365日以上経過なら 0
+                        MAX_RECENCY_PENALTY_BASE_DAYS = 365 # この値は調整可能
+                        raw_penalty_value = max(0, MAX_RECENCY_PENALTY_BASE_DAYS - days_since_last_assignment_to_classroom)
+                        actual_recency_penalty = raw_penalty_value
+                    except ValueError:
+                        log_to_stream(f"    Warning: Could not parse date '{latest_assignment_date_str}' for {lecturer_id} and classroom {course['classroom_id']}")
+                        days_since_last_assignment_to_classroom = float('inf') # パース失敗時はペナルティなし扱い
             
             total_weighted_cost_float = (weight_travel * travel_cost +
                                          weight_age * age_cost +
                                          weight_frequency * frequency_cost +
-                                         past_assignment_penalty_config["weight"] * actual_past_assignment_penalty)
+                                         weight_past_assignment_recency * actual_recency_penalty) # 新しい重みとペナルティ
             total_weighted_cost_int = int(total_weighted_cost_float * 100)
-            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, past_assign_penalty_raw={actual_past_assignment_penalty} (conflict: {is_recent_assignment_conflict}), total_weighted_int={total_weighted_cost_int}")
+            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, recency_penalty_raw={actual_recency_penalty} (days_since_last_on_this_classroom={'N/A' if days_since_last_assignment_to_classroom == float('inf') else days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
 
             possible_assignments.append({
                 "lecturer_id": lecturer_id, "course_id": course_id,
                 "variable": var, "cost": total_weighted_cost_int,
-                "debug_past_assignment_penalty_applied": actual_past_assignment_penalty # デバッグ/結果表示用
+                "debug_recency_penalty_applied": actual_recency_penalty, # デバッグ/結果表示用
+                "debug_days_since_last_assignment": days_since_last_assignment_to_classroom if days_since_last_assignment_to_classroom != float('inf') else None
             })
 
     log_to_stream(f"Total potential assignments after filtering: {potential_assignment_count}")
@@ -510,7 +527,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                     "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
                     "年齢コスト(元)": age_priority_costs.get(lecturer["age_category"], 999),
                     "頻度コスト(元)": frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999),
-                    "直近教室ペナルティ(元)": pa.get("debug_past_assignment_penalty_applied", 0) # 追加
+                    "過去割当近接ペナルティ(元)": pa.get("debug_recency_penalty_applied", 0),
+                    "当該教室最終割当日からの日数": pa.get("debug_days_since_last_assignment", "該当なし")
                 })
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
@@ -605,14 +623,11 @@ def main():
     weight_travel = st.sidebar.slider("移動コストの重要度", 0.0, 1.0, 0.5, 0.05, help="高いほど移動コストを重視します。")
     weight_age = st.sidebar.slider("年齢の若さの重要度 (若い人を優先)", 0.0, 1.0, 0.3, 0.05, help="高いほど若い講師の割り当てを優先します。")
     weight_frequency = st.sidebar.slider("割り当て頻度の低さの重要度 (頻度少を優先)", 0.0, 1.0, 0.2, 0.05, help="高いほど割り当て頻度の低い講師を優先します。")
-    weight_past_assignment = st.sidebar.slider("直近教室ペナルティの重要度", 0.0, 1.0, 0.4, 0.05, help="高いほど、直近で割り当てた教室と同じ教室への割り当てを避けます。")
-
-    # st.sidebar.subheader("オプション制約") # 廃止
-    # option_avoid_last_classroom = st.sidebar.checkbox("前回割り当てた教室には割り当てない", value=True) # 廃止
+    weight_past_assignment_recency_slider = st.sidebar.slider("同教室への直近割り当て回避の重要度", 0.0, 1.0, 0.4, 0.05, help="高いほど、講師が特定の教室に直近で割り当てられた場合に課されるペナルティを重視します（＝より過去の割り当てを優先）。")
 
     st.sidebar.subheader("ペナルティ設定")
     unassigned_penalty_slider = st.sidebar.slider("未割り当て講座1件あたりのペナルティ", 0, 200000, 100000, 1000, help="値を大きくするほど、全ての講座を割り当てることを強く優先します。0にするとペナルティなし。")
-    past_assignment_penalty_value_slider = st.sidebar.slider("直近教室への割り当てペナルティ基本値", 0, 1000, 200, 50, help="直近で割り当てた教室と同じ教室に割り当てる場合の基本ペナルティコスト。この値に上記の「直近教室ペナルティの重要度」が乗算されます。")
+    # past_assignment_penalty_value_slider = st.sidebar.slider("直近教室への割り当てペナルティ基本値", 0, 1000, 200, 50, help="直近で割り当てた教室と同じ教室に割り当てる場合の基本ペナルティコスト。この値に上記の「直近教室ペナルティの重要度」が乗算されます。") # 廃止
 
     # ログインユーザー情報とログアウトボタン
     user_email = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
@@ -677,16 +692,12 @@ def main():
         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
         if "solution_executed" in st.session_state: del st.session_state.solution_executed
 
-        past_assignment_penalty_config_dict = {
-            "penalty_value": past_assignment_penalty_value_slider,
-            "weight": weight_past_assignment
-        }
         st.header("最適化結果")
         with st.spinner("最適化計算を実行中..."):
             solver_result = solve_assignment(
                 DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
                 DEFAULT_TRAVEL_COSTS_MATRIX, DEFAULT_AGE_PRIORITY_COSTS, DEFAULT_FREQUENCY_PRIORITY_COSTS,
-                past_assignment_penalty_config_dict,
+                weight_past_assignment_recency_slider,
                 weight_travel, weight_age, weight_frequency, unassigned_penalty_slider
             )
             st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
