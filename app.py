@@ -4,6 +4,7 @@ import pandas as pd
 import io
 import contextlib
 import re # 正規表現モジュール
+import datetime # 日付処理用に追加
 import google.generativeai as genai # Gemini API 用
 from streamlit_oauth import OAuth2Component # OIDC認証用
 import random # データ生成用
@@ -34,7 +35,6 @@ LOG_EXPLANATIONS = {
     r"^\s*\+ Potential assignment: (\w+) to (\w+)": "講師 \\1 をコース \\2 へ割り当てる可能性があります。",
     r"^\s*Cost for (\w+) to (\w+):.*total_weighted_int=(\d+)": "講師 \\1 からコース \\2 への割り当てコスト (重み付け合計): \\3",
     r"^\s*- Filtered out: (\w+) for (\w+) \(Last classroom failed: L_last_class=(\w+), C_class=(\w+)\)": "講師 \\1 のコース \\2 への割り当ては除外されました (理由: 最終教室の重複 L_last_class=\\3, C_class=\\4)。",
-    r"^\s*- Filtered out: (\w+) for (\w+) \(Rank failed: L_rank=(\d+), C_req_rank=(\d+)\)": "講師 \\1 のコース \\2 への割り当ては除外されました (理由: ランク不一致 L_rank=\\3, C_req_rank=\\4)。",
     r"^\s*- Filtered out: (\w+) for (\w+) \(Schedule failed: Course_schedule=\(.*\), Lecturer_avail=\[.*\]\)": "講師 \\1 のコース \\2 への割り当ては除外されました (理由: スケジュール不一致)。",
     r"Total potential assignments after filtering: (\d+)": "フィルタリング後の潜在的な割り当て総数: \\1",
     r"Parameters: (.*)": "CP-SAT ソルバーパラメータ: \\1",
@@ -147,9 +147,26 @@ AGE_CATEGORIES = ["low", "middle", "high"]
 QUALIFICATION_RANKS = [1, 2, 3]
 FREQ_CATEGORIES = ["low", "middle", "high"]
 
+# 過去の割り当て日付生成用
+TODAY = datetime.date.today()
+
 for i in range(1, 101):
     num_available_slots = random.randint(3, 7)
     availability = random.sample(ALL_SLOTS, num_available_slots)
+
+    # 過去の割り当て履歴を生成 (約10件)
+    num_past_assignments = random.randint(8, 12) # 8から12件の間でランダム
+    past_assignments = []
+    for _ in range(num_past_assignments):
+        days_ago = random.randint(1, 730) # 過去2年以内のランダムな日付
+        assignment_date = TODAY - datetime.timedelta(days=days_ago)
+        past_assignments.append({
+            "classroom_id": random.choice(ALL_CLASSROOM_IDS_COMBINED),
+            "date": assignment_date.strftime("%Y-%m-%d")
+        })
+    # 日付で降順ソート (最新が先頭)
+    past_assignments.sort(key=lambda x: x["date"], reverse=True)
+
     DEFAULT_LECTURERS_DATA.append({
         "id": f"L{i}",
         "name": f"講師{i:03d}",
@@ -158,7 +175,7 @@ for i in range(1, 101):
         "qualification_rank": random.choice(QUALIFICATION_RANKS),
         "availability": availability,
         "assignment_frequency_category": random.choice(FREQ_CATEGORIES),
-        "last_assigned_classroom_id": random.choice(ALL_CLASSROOM_IDS_COMBINED + [None]) # 前回割り当ては全教室またはNone
+        "past_assignments": past_assignments # 過去の割り当て履歴
     })
 
 # 講座データ生成 (47都道府県 × 7種類の講座)
@@ -242,8 +259,8 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
                      travel_costs_matrix, age_priority_costs, frequency_priority_costs,
-                     weight_travel, weight_age, weight_frequency, unassigned_course_penalty_value,
-                     option_avoid_last_classroom) -> SolverOutput: # 戻り値の型ヒントを変更
+                     past_assignment_penalty_config, # 追加: {"penalty_value": int, "weight": float}
+                     weight_travel, weight_age, weight_frequency, unassigned_course_penalty_value) -> SolverOutput: # 戻り値の型ヒントを変更
     model = cp_model.CpModel()
     # solve_assignment 内の print 文も解説対象に含めるために、
     # ここで stdout のキャプチャを開始する
@@ -271,10 +288,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             if course["schedule"] not in lecturer["availability"]:
                 log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule failed: Course_schedule={course['schedule']} (type: {type(course['schedule'])}), Lecturer_avail={lecturer['availability']} (type: {type(lecturer['availability'][0]) if lecturer['availability'] else 'N/A'}))")
                 continue
-            if option_avoid_last_classroom and \
-               lecturer["last_assigned_classroom_id"] == course["classroom_id"]:
-                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Last classroom failed: L_last_class={lecturer['last_assigned_classroom_id']}, C_class={course['classroom_id']})")
-                continue
             
             potential_assignment_count += 1
             log_to_stream(f"  + Potential assignment: {lecturer_id} to {course_id}")
@@ -284,15 +297,28 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             travel_cost = travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999)
             age_cost = age_priority_costs.get(lecturer["age_category"], 999)
             frequency_cost = frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999)
+
+            # 直近の割り当て教室ペナルティ計算
+            actual_past_assignment_penalty = 0
+            is_recent_assignment_conflict = False
+            if lecturer.get("past_assignments") and lecturer["past_assignments"]: # 過去の割り当てがあり、空でない場合
+                # past_assignments は日付の降順でソートされている想定 (最新が0番目)
+                latest_past_assignment = lecturer["past_assignments"][0]
+                if latest_past_assignment["classroom_id"] == course["classroom_id"]:
+                    actual_past_assignment_penalty = past_assignment_penalty_config["penalty_value"]
+                    is_recent_assignment_conflict = True
+            
             total_weighted_cost_float = (weight_travel * travel_cost +
                                          weight_age * age_cost +
-                                         weight_frequency * frequency_cost)
+                                         weight_frequency * frequency_cost +
+                                         past_assignment_penalty_config["weight"] * actual_past_assignment_penalty)
             total_weighted_cost_int = int(total_weighted_cost_float * 100)
-            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, total_weighted_int={total_weighted_cost_int}")
+            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, past_assign_penalty_raw={actual_past_assignment_penalty} (conflict: {is_recent_assignment_conflict}), total_weighted_int={total_weighted_cost_int}")
 
             possible_assignments.append({
                 "lecturer_id": lecturer_id, "course_id": course_id,
-                "variable": var, "cost": total_weighted_cost_int
+                "variable": var, "cost": total_weighted_cost_int,
+                "debug_past_assignment_penalty_applied": actual_past_assignment_penalty # デバッグ/結果表示用
             })
 
     log_to_stream(f"Total potential assignments after filtering: {potential_assignment_count}")
@@ -481,11 +507,10 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                     "教室ID": course["classroom_id"],
                     "スケジュール": f"{course['schedule'][0]} {course['schedule'][1]}",
                     "算出コスト(x100)": pa["cost"], # pa["cost"] は重み付け後の整数コスト
-                    # デバッグ用に個別のコストも追加してみる (重み付け前)
                     "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
                     "年齢コスト(元)": age_priority_costs.get(lecturer["age_category"], 999),
-                    "頻度コスト(元)": frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999)
-
+                    "頻度コスト(元)": frequency_priority_costs.get(lecturer["assignment_frequency_category"], 999),
+                    "直近教室ペナルティ(元)": pa.get("debug_past_assignment_penalty_applied", 0) # 追加
                 })
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
@@ -580,12 +605,14 @@ def main():
     weight_travel = st.sidebar.slider("移動コストの重要度", 0.0, 1.0, 0.5, 0.05, help="高いほど移動コストを重視します。")
     weight_age = st.sidebar.slider("年齢の若さの重要度 (若い人を優先)", 0.0, 1.0, 0.3, 0.05, help="高いほど若い講師の割り当てを優先します。")
     weight_frequency = st.sidebar.slider("割り当て頻度の低さの重要度 (頻度少を優先)", 0.0, 1.0, 0.2, 0.05, help="高いほど割り当て頻度の低い講師を優先します。")
+    weight_past_assignment = st.sidebar.slider("直近教室ペナルティの重要度", 0.0, 1.0, 0.4, 0.05, help="高いほど、直近で割り当てた教室と同じ教室への割り当てを避けます。")
 
-    st.sidebar.subheader("オプション制約")
-    option_avoid_last_classroom = st.sidebar.checkbox("前回割り当てた教室には割り当てない", value=True)
+    # st.sidebar.subheader("オプション制約") # 廃止
+    # option_avoid_last_classroom = st.sidebar.checkbox("前回割り当てた教室には割り当てない", value=True) # 廃止
 
-    st.sidebar.subheader("未割り当て講座ペナルティ")
-    unassigned_penalty_slider = st.sidebar.slider("未割り当て講座1件あたりのペナルティの大きさ", 0, 200000, 100000, 1000, help="値を大きくするほど、全ての講座を割り当てることを強く優先します。0にするとペナルティなし。")
+    st.sidebar.subheader("ペナルティ設定")
+    unassigned_penalty_slider = st.sidebar.slider("未割り当て講座1件あたりのペナルティ", 0, 200000, 100000, 1000, help="値を大きくするほど、全ての講座を割り当てることを強く優先します。0にするとペナルティなし。")
+    past_assignment_penalty_value_slider = st.sidebar.slider("直近教室への割り当てペナルティ基本値", 0, 1000, 200, 50, help="直近で割り当てた教室と同じ教室に割り当てる場合の基本ペナルティコスト。この値に上記の「直近教室ペナルティの重要度」が乗算されます。")
 
     # ログインユーザー情報とログアウトボタン
     user_email = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
@@ -644,13 +671,17 @@ def main():
         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
         if "solution_executed" in st.session_state: del st.session_state.solution_executed
 
+        past_assignment_penalty_config_dict = {
+            "penalty_value": past_assignment_penalty_value_slider,
+            "weight": weight_past_assignment
+        }
         st.header("最適化結果")
         with st.spinner("最適化計算を実行中..."):
             solver_result = solve_assignment(
                 DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
                 DEFAULT_TRAVEL_COSTS_MATRIX, DEFAULT_AGE_PRIORITY_COSTS, DEFAULT_FREQUENCY_PRIORITY_COSTS,
-                weight_travel, weight_age, weight_frequency, unassigned_penalty_slider,
-                option_avoid_last_classroom
+                past_assignment_penalty_config_dict,
+                weight_travel, weight_age, weight_frequency, unassigned_penalty_slider
             )
             st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
             st.session_state.solution_executed = True
