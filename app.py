@@ -640,6 +640,10 @@ def main():
     st.sidebar.markdown("---")
 
     st.sidebar.subheader("【最適化目的と重み付け】")
+    st.sidebar.caption(
+        "【重要度について】不要な場合は、重要度をゼロしてください。（最適化要素に加味されなくなります。）"
+        "また、各々の重要度は相対的なものなので、全部0.1と全部1.00は同じ結果となります。"
+    )
     st.sidebar.markdown("**移動コストが低い人を優先**")
     weight_travel = st.sidebar.slider("重要度", 0.0, 1.0, 0.5, 0.05, help="高いほど移動コストが低い人を重視します。", key="weight_travel")
     st.sidebar.markdown("**年齢の若い人を優先**")
