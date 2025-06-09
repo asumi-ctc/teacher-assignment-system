@@ -150,7 +150,7 @@ QUALIFICATION_RANKS = [1, 2, 3]
 # 過去の割り当て日付生成用
 TODAY = datetime.date.today()
 
-for i in range(1, 101):
+for i in range(1, 301): # 講師数を100人から300人に変更
     num_available_slots = random.randint(3, 7)
     availability = random.sample(ALL_SLOTS, num_available_slots)
 
