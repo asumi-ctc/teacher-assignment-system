@@ -906,11 +906,6 @@ def main():
                     st.session_state.gemini_explanation = gemini_explanation_text
                     # st.rerun() # 解説取得後に再実行して表示を更新
 
-        # 「生ログ詳細」はフィルタリング前の全ログを表示するように変更
-        if solver_result.get('full_application_and_solver_log'): 
-            with st.expander("生ログ詳細 (最適化処理の全出力 - フィルタリング前の全ログ)"):
-                st.text_area("Full Application and Solver Log (Pre-filtering)", solver_result['full_application_and_solver_log'], height=300)
-        
         if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation: # 解説があれば表示
             with st.expander("Gemini API によるログ解説", expanded=True):
                 st.markdown(st.session_state.gemini_explanation)
