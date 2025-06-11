@@ -736,7 +736,8 @@ def main():
             "raw_solver_log_for_gca", 
             "gemini_explanation", 
             "solution_executed", 
-            "solver_result_cache" # 追加
+            "solver_result_cache",
+            "gemini_api_requested" # Gemini API実行フラグ
         ]
         for key_to_clear in keys_to_clear:
             if key_to_clear in st.session_state:
@@ -749,6 +750,7 @@ def main():
         if "solver_result_cache" in st.session_state: del st.session_state.solver_result_cache
         if "raw_solver_log_for_gca" in st.session_state: del st.session_state.raw_solver_log_for_gca
         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
+        if "gemini_api_requested" in st.session_state: del st.session_state.gemini_api_requested # クリア
         st.session_state.solution_executed = True # 実行フラグを立てる
         st.rerun() # 再実行してメインエリアで処理と表示を行う
 
@@ -792,7 +794,7 @@ def main():
 
         # 計算結果がキャッシュにない場合のみ計算を実行
         if "solver_result_cache" not in st.session_state:
-            with st.spinner("最適化計算とログ解説を実行中..."): # メッセージを調整
+            with st.spinner("最適化計算を実行中..."): # メッセージ変更
                 solver_output = solve_assignment(
                     DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
                     DEFAULT_TRAVEL_COSTS_MATRIX,
@@ -801,15 +803,8 @@ def main():
                     weight_travel, weight_age, weight_frequency
                 )
                 st.session_state.solver_result_cache = solver_output # 結果をキャッシュ
-                st.session_state.raw_solver_log_for_gca = solver_output["raw_solver_log"]
-
-                log_for_gemini_api = solver_output["raw_solver_log"]
-                if log_for_gemini_api and GEMINI_API_KEY:
-                    # ネストされたスピナーを削除し、メインのスピナーでカバーする
-                    gemini_explanation_text = get_gemini_explanation(log_for_gemini_api, GEMINI_API_KEY)
-                    st.session_state.gemini_explanation = gemini_explanation_text
-                elif not GEMINI_API_KEY:
-                    st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
+                st.session_state.raw_solver_log_for_gca = solver_output["raw_solver_log"] # Gemini送信用ログを保存
+                # ここではGemini API呼び出しは行わない
         
         # キャッシュされた結果（または計算直後の結果）を取得
         solver_result = st.session_state.solver_result_cache
@@ -892,10 +887,27 @@ def main():
         if solver_result.get('explained_log_text'): # キーが存在するか確認
             with st.expander("処理ログ詳細 (解説付き)"):
                 st.text_area("Explained Log Output", solver_result['explained_log_text'], height=400)
+            
+            # 「Gemini API によるログ解説を実行」ボタンを「処理ログ詳細」の直下に配置
+            if GEMINI_API_KEY and "raw_solver_log_for_gca" in st.session_state and st.session_state.raw_solver_log_for_gca:
+                if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation"):
+                    st.session_state.gemini_api_requested = True # 実行フラグ
+                    # 既存の解説があればクリア
+                    if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
+                    # st.rerun() # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
+
+            if st.session_state.get("gemini_api_requested") and "gemini_explanation" not in st.session_state:
+                 with st.spinner("Gemini API でログを解説中..."):
+                    log_for_gemini = st.session_state.raw_solver_log_for_gca
+                    gemini_explanation_text = get_gemini_explanation(log_for_gemini, GEMINI_API_KEY)
+                    st.session_state.gemini_explanation = gemini_explanation_text
+                    # st.rerun() # 解説取得後に再実行して表示を更新
+
         if solver_result.get('raw_solver_log'): # キーが存在するか確認 (Gemini API送信ログ)
             with st.expander("生ログ詳細 (最適化処理の全出力 - Gemini APIへ送信されたログ)"):
                 st.text_area("Raw Solver Log (Sent to Gemini API)", solver_result['raw_solver_log'], height=300)
-        if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
+        
+        if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation: # 解説があれば表示
             with st.expander("Gemini API によるログ解説", expanded=True):
                 st.markdown(st.session_state.gemini_explanation)
 
