@@ -12,9 +12,6 @@ from google.auth.transport import requests as google_requests # IDトークン�
 import random # データ生成用
 from typing import TypedDict, List, Optional, Any, Tuple # 他のimport文と合わせて先頭に移動
 
-# アプリケーションバージョン
-APP_VERSION = "1.1.3" # 例: バージョン番号を定義
-
 # --- 1. データ定義 (LOG_EXPLANATIONS と _get_log_explanation は削除) ---
 
 # --- Gemini API送信用ログのフィルタリング関数 (グローバルスコープに移動) ---
@@ -655,15 +652,15 @@ def main():
             "また、相対的な値なので、全部0.1と全部1.0は同じ結果となります。"
         )
         st.markdown("**移動コストが低い人を優先**")
-        weight_travel = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp") # キーを重複しないように変更
+        weight_travel = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp")
         st.markdown("**年齢の若い人を優先**")
-        weight_age = st.slider("重み", 0.0, 1.0, 0.3, 0.1, help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
+        weight_age = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
         st.markdown("**割り当て頻度の少ない人を優先**")
-        weight_frequency = st.slider("重み", 0.0, 1.0, 0.2, 0.1, help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
+        weight_frequency = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
         st.markdown("**講師資格が高い人を優先**")
-        weight_qualification_slider = st.slider("重み", 0.0, 1.0, 0.3, 0.1, help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp") # 0.25 -> 0.3
+        weight_qualification_slider = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
         st.markdown("**同教室への割り当て実績が無い人を優先**")
-        weight_past_assignment_recency_slider = st.slider("重み", 0.0, 1.0, 0.4, 0.1, help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
+        weight_past_assignment_recency_slider = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
 
     # ログインユーザー情報とログアウトボタン
     user_email = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
@@ -686,9 +683,6 @@ def main():
                 del st.session_state[key_to_clear]
         st.rerun()
 
-    # アプリケーションバージョンをサイドバーに表示
-    st.sidebar.markdown("---")
-    st.sidebar.info(f"アプリバージョン: {APP_VERSION}")
     st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
     # --- メインコンテンツ (認証済みの場合のみ表示) ---
     st.header("入力データ")
