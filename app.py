@@ -79,6 +79,80 @@ def _get_log_explanation(log_line: str) -> str:
             return explanation
     return "(このログメッセージに対する定義済みの解説はありません)"
 
+# --- Gemini API送信用ログのフィルタリング関数 (グローバルスコープに移動) ---
+def filter_log_for_gemini(log_content: str) -> str:
+    lines = log_content.splitlines()
+    gemini_log_lines_final = []
+    
+    solver_log_block = []
+    app_summary_lines = [] # 詳細パターンに一致しない、かつソルバーブロック外のアプリログ
+    app_detailed_lines_collected = [] # 詳細パターンに一致するアプリログ
+
+    in_solver_log_block = False
+    
+    # 除外するアプリケーションログのパターン (詳細な割り当て試行ログ)
+    detailed_app_log_patterns = [
+        r"^\s*\+ Potential assignment:",
+        r"^\s*- Filtered out:", # 資格ランクや過去教室の重複による除外
+        r"^\s*Cost for ",
+        r"^\s*- Schedule incompatible", # スケジュール不一致 (許容されるがログは出る)
+        r"^\s*    Warning: Could not parse date", # 日付パースエラー
+    ]
+    
+    solver_log_start_marker = "--- Solver Log (Captured by app.py) ---"
+    solver_log_end_marker = "--- End Solver Log (Captured by app.py) ---"
+
+    for line in lines:
+        if solver_log_start_marker in line:
+            in_solver_log_block = True
+            solver_log_block.append(line)
+            continue 
+        
+        if solver_log_end_marker in line: 
+            solver_log_block.append(line)
+            in_solver_log_block = False
+            continue
+
+        if in_solver_log_block:
+            solver_log_block.append(line)
+        else: # Application log
+            is_detailed = any(re.search(pattern, line) for pattern in detailed_app_log_patterns)
+            if is_detailed:
+                app_detailed_lines_collected.append(line)
+            else:
+                app_summary_lines.append(line)
+    
+    gemini_log_lines_final.extend(app_summary_lines)
+
+    # (フィルタリングと省略ロジックは変更なし - ここでは省略)
+    # ... (元の filter_log_for_gemini の残りのロジック) ...
+    # この部分は元の関数のままなので、diffでは省略されていますが、実際にはここに元のロジック全体が入ります。
+    # 簡単のため、ここでは主要な構造のみを示し、詳細な省略ロジックは元の関数を参照してください。
+    # For brevity, the detailed line omission logic from the original filter_log_for_gemini is not repeated here.
+    # Assume the full logic for app_detailed_lines_collected and solver_log_block truncation is present.
+    MAX_APP_DETAIL_FIRST_N_LINES = 3 
+    MAX_APP_DETAIL_LAST_N_LINES = 3  
+    if len(app_detailed_lines_collected) > (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES):
+        gemini_log_lines_final.extend(app_detailed_lines_collected[:MAX_APP_DETAIL_FIRST_N_LINES])
+        omitted_count = len(app_detailed_lines_collected) - (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES)
+        gemini_log_lines_final.append(f"\n[... {omitted_count} 件の詳細なアプリケーションログ（個々の割り当てチェック等）は簡潔さのため省略されました ...]\n")
+        gemini_log_lines_final.extend(app_detailed_lines_collected[-MAX_APP_DETAIL_LAST_N_LINES:])
+    else:
+        gemini_log_lines_final.extend(app_detailed_lines_collected)
+
+    MAX_SOLVER_LOG_FIRST_N_LINES = 30 
+    MAX_SOLVER_LOG_LAST_N_LINES = 30  
+    if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
+        truncated_solver_log = solver_log_block[:MAX_SOLVER_LOG_FIRST_N_LINES]
+        omitted_solver_lines = len(solver_log_block) - (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES)
+        truncated_solver_log.append(f"\n[... {omitted_solver_lines} 件のソルバーログ中間行は簡潔さのため省略されました ...]\n")
+        truncated_solver_log.extend(solver_log_block[-MAX_SOLVER_LOG_LAST_N_LINES:])
+        gemini_log_lines_final.extend(truncated_solver_log)
+    else:
+        gemini_log_lines_final.extend(solver_log_block)
+    
+    return "\n".join(gemini_log_lines_final)
+
 # --- 大規模データ生成 ---
 # (変更なし)
 
@@ -298,7 +372,6 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     all_courses: List[dict]
     all_lecturers: List[dict]
     solver_raw_status_code: int
-    raw_solver_log: str
     explained_log_text: str # Detailed log with line-by-line explanation for UI
     full_application_and_solver_log: str # All logs including detailed app logs for UI's explained_log_text
 
@@ -420,7 +493,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             all_courses=courses_data,
             all_lecturers=lecturers_data,
             solver_raw_status_code=cp_model.UNKNOWN, 
-            raw_solver_log=all_captured_logs,
             explained_log_text=explained_log_text,
             full_application_and_solver_log=all_captured_logs
         )
@@ -462,7 +534,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             all_courses=courses_data,
             all_lecturers=lecturers_data,
             solver_raw_status_code=cp_model.MODEL_INVALID,
-            raw_solver_log=all_captured_logs,
             explained_log_text=explained_log_text,
             full_application_and_solver_log=all_captured_logs
         )
@@ -484,78 +555,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     print("\n--- BEGIN all_captured_logs (for debugging filter) ---")
     print(full_captured_logs)
     print("--- END all_captured_logs (for debugging filter) ---\n")
-
-    # --- Gemini API送信用ログのフィルタリング ---
-    def filter_log_for_gemini(log_content: str) -> str:
-        lines = log_content.splitlines()
-        gemini_log_lines_final = []
-        
-        solver_log_block = []
-        app_summary_lines = [] # 詳細パターンに一致しない、かつソルバーブロック外のアプリログ
-        app_detailed_lines_collected = [] # 詳細パターンに一致するアプリログ
-
-        in_solver_log_block = False
-        
-        # 除外するアプリケーションログのパターン (詳細な割り当て試行ログ)
-        detailed_app_log_patterns = [
-            r"^\s*\+ Potential assignment:",
-            r"^\s*- Filtered out:", # 資格ランクや過去教室の重複による除外
-            r"^\s*Cost for ",
-            r"^\s*- Schedule incompatible", # スケジュール不一致 (許容されるがログは出る)
-            r"^\s*    Warning: Could not parse date", # 日付パースエラー
-        ]
-        
-        solver_log_start_marker = "--- Solver Log (Captured by app.py) ---"
-        solver_log_end_marker = "--- End Solver Log (Captured by app.py) ---"
-
-        for line in lines:
-            if solver_log_start_marker in line:
-                in_solver_log_block = True
-                solver_log_block.append(line)
-                continue 
-            
-            if solver_log_end_marker in line: # solver_log_end_marker が先に来ることはないはずだが念のため
-                solver_log_block.append(line)
-                in_solver_log_block = False
-                continue
-
-            if in_solver_log_block:
-                solver_log_block.append(line)
-            else: # Application log
-                is_detailed = any(re.search(pattern, line) for pattern in detailed_app_log_patterns)
-                if is_detailed:
-                    app_detailed_lines_collected.append(line)
-                else:
-                    app_summary_lines.append(line)
-        
-        gemini_log_lines_final.extend(app_summary_lines)
-
-        # 詳細アプリケーションログの最大表示行数を調整
-        MAX_APP_DETAIL_FIRST_N_LINES = 3 # 先頭から表示する最大行数をさらに削減
-        MAX_APP_DETAIL_LAST_N_LINES = 3  # 末尾から表示する最大行数をさらに削減
-        if len(app_detailed_lines_collected) > (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES):
-            gemini_log_lines_final.extend(app_detailed_lines_collected[:MAX_APP_DETAIL_FIRST_N_LINES])
-            omitted_count = len(app_detailed_lines_collected) - (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES)
-            gemini_log_lines_final.append(f"\n[... {omitted_count} 件の詳細なアプリケーションログ（個々の割り当てチェック等）は簡潔さのため省略されました ...]\n")
-            gemini_log_lines_final.extend(app_detailed_lines_collected[-MAX_APP_DETAIL_LAST_N_LINES:])
-        else:
-            gemini_log_lines_final.extend(app_detailed_lines_collected)
-
-        # ソルバーログの最大表示行数を調整
-        MAX_SOLVER_LOG_FIRST_N_LINES = 30 # ソルバーログの先頭から表示する最大行数をさらに削減
-        MAX_SOLVER_LOG_LAST_N_LINES = 30  # ソルバーログの末尾から表示する最大行数をさらに削減
-        if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
-            truncated_solver_log = solver_log_block[:MAX_SOLVER_LOG_FIRST_N_LINES]
-            omitted_solver_lines = len(solver_log_block) - (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES)
-            truncated_solver_log.append(f"\n[... {omitted_solver_lines} 件のソルバーログ中間行は簡潔さのため省略されました ...]\n")
-            truncated_solver_log.extend(solver_log_block[-MAX_SOLVER_LOG_LAST_N_LINES:])
-            gemini_log_lines_final.extend(truncated_solver_log)
-        else:
-            gemini_log_lines_final.extend(solver_log_block)
-        
-        return "\n".join(gemini_log_lines_final)
-
-    gemini_api_log = filter_log_for_gemini(full_captured_logs)
 
     # --- UI表示用の解説付きログ生成 (全ログを使用) ---
     # explained_log_output は既に solve_assignment の冒頭で初期化されている
@@ -608,7 +607,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         all_courses=courses_data,
         all_lecturers=lecturers_data,
         solver_raw_status_code=status_code,
-        raw_solver_log=gemini_api_log, # Gemini API に送る削減版ログ
         explained_log_text=explained_log_text, # UI表示用の解説付き全ログ
         full_application_and_solver_log=full_captured_logs # 全ログ
     )
@@ -733,10 +731,10 @@ def main():
         st.session_state.user_info = None
         # 関連するセッションステートもクリア (最適化結果キャッシュも含む)
         keys_to_clear = [
-            "raw_solver_log_for_gca", 
             "gemini_explanation", 
             "solution_executed", 
             "solver_result_cache",
+            "full_log_for_filtering", # Geminiフィルタリング用全ログ
             "gemini_api_requested" # Gemini API実行フラグ
         ]
         for key_to_clear in keys_to_clear:
@@ -748,7 +746,7 @@ def main():
     if st.sidebar.button("最適割り当てを実行", type="primary"):
         # 既存のセッション変数をクリア (特に計算結果キャッシュ)
         if "solver_result_cache" in st.session_state: del st.session_state.solver_result_cache
-        if "raw_solver_log_for_gca" in st.session_state: del st.session_state.raw_solver_log_for_gca
+        if "full_log_for_filtering" in st.session_state: del st.session_state.full_log_for_filtering
         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
         if "gemini_api_requested" in st.session_state: del st.session_state.gemini_api_requested # クリア
         st.session_state.solution_executed = True # 実行フラグを立てる
@@ -803,7 +801,7 @@ def main():
                     weight_travel, weight_age, weight_frequency
                 )
                 st.session_state.solver_result_cache = solver_output # 結果をキャッシュ
-                st.session_state.raw_solver_log_for_gca = solver_output["raw_solver_log"] # Gemini送信用ログを保存
+                st.session_state.full_log_for_filtering = solver_output["full_application_and_solver_log"] # Geminiフィルタリング用の全ログを保存
                 # ここではGemini API呼び出しは行わない
         
         # キャッシュされた結果（または計算直後の結果）を取得
@@ -889,23 +887,27 @@ def main():
                 st.text_area("Explained Log Output", solver_result['explained_log_text'], height=400)
             
             # 「Gemini API によるログ解説を実行」ボタンを「処理ログ詳細」の直下に配置
-            if GEMINI_API_KEY and "raw_solver_log_for_gca" in st.session_state and st.session_state.raw_solver_log_for_gca:
+            if GEMINI_API_KEY and "full_log_for_filtering" in st.session_state and st.session_state.full_log_for_filtering:
                 if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation"):
                     st.session_state.gemini_api_requested = True # 実行フラグ
                     # 既存の解説があればクリア
                     if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
-                    # st.rerun() # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
+                    # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
+                    # st.rerun() # ここでrerunするとスピナー表示前に画面がクリアされる可能性があるのでコメントアウト
 
             if st.session_state.get("gemini_api_requested") and "gemini_explanation" not in st.session_state:
                  with st.spinner("Gemini API でログを解説中..."):
-                    log_for_gemini = st.session_state.raw_solver_log_for_gca
-                    gemini_explanation_text = get_gemini_explanation(log_for_gemini, GEMINI_API_KEY)
+                    full_log_to_filter = st.session_state.full_log_for_filtering
+                    # ここでフィルタリングを実行
+                    filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
+                    gemini_explanation_text = get_gemini_explanation(filtered_log_for_gemini, GEMINI_API_KEY)
                     st.session_state.gemini_explanation = gemini_explanation_text
                     # st.rerun() # 解説取得後に再実行して表示を更新
 
-        if solver_result.get('raw_solver_log'): # キーが存在するか確認 (Gemini API送信ログ)
-            with st.expander("生ログ詳細 (最適化処理の全出力 - Gemini APIへ送信されたログ)"):
-                st.text_area("Raw Solver Log (Sent to Gemini API)", solver_result['raw_solver_log'], height=300)
+        # 「生ログ詳細」はフィルタリング前の全ログを表示するように変更
+        if solver_result.get('full_application_and_solver_log'): 
+            with st.expander("生ログ詳細 (最適化処理の全出力 - フィルタリング前の全ログ)"):
+                st.text_area("Full Application and Solver Log (Pre-filtering)", solver_result['full_application_and_solver_log'], height=300)
         
         if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation: # 解説があれば表示
             with st.expander("Gemini API によるログ解説", expanded=True):
