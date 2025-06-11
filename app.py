@@ -889,15 +889,15 @@ def main():
         else: # UNKNOWN, MODEL_INVALID など
             st.error(solver_result['solution_status_str'])
 
-        if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
-            with st.expander("Gemini API によるログ解説", expanded=True):
-                st.markdown(st.session_state.gemini_explanation)
         if solver_result.get('explained_log_text'): # キーが存在するか確認
             with st.expander("処理ログ詳細 (解説付き)"):
                 st.text_area("Explained Log Output", solver_result['explained_log_text'], height=400)
         if solver_result.get('raw_solver_log'): # キーが存在するか確認 (Gemini API送信ログ)
             with st.expander("生ログ詳細 (最適化処理の全出力 - Gemini APIへ送信されたログ)"):
                 st.text_area("Raw Solver Log (Sent to Gemini API)", solver_result['raw_solver_log'], height=300)
+        if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
+            with st.expander("Gemini API によるログ解説", expanded=True):
+                st.markdown(st.session_state.gemini_explanation)
 
 if __name__ == "__main__":
     main()
