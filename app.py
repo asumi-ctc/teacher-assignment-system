@@ -12,72 +12,7 @@ import random # データ生成用
 # アプリケーションバージョン
 APP_VERSION = "1.1.3" # 例: バージョン番号を定義
 
-# --- 1. データ定義 ---
-
-# ログパターンと解説の対応辞書 (log_explainer.py から移動)
-LOG_EXPLANATIONS = {
-    # 例: "Error Code 404: File not found" のようなログに対応
-    r"Error Code (\d+): File not found": "指定されたファイルが見つかりませんでした。(エラーコード: \\1)",
-    # 例: "Warning: Low disk space" のようなログに対応
-    r"Warning: Low disk space": "ディスクの空き容量が少なくなっています。不要なファイルを削除してください。",
-    # 例: "INFO: User 'admin' logged in" のようなログに対応
-    r"INFO: User '(\w+)' logged in": "ユーザー「\\1」がログインしました。",
-    # 例: "DEBUG: Connection established to example.com:8080" のようなログに対応
-    r"DEBUG: Connection established to ([\w.:-]+)": "サーバー「\\1」への接続が確立されました。",
-    r"Failed to process task ID (\w+-\w+)": "タスクID「\\1」の処理に失敗しました。詳細を確認してください。",
-    r"Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.": "Streamlit が利用状況統計を収集しています。無効化するには browser.gatherUsageStats を false に設定します。",
-    r"You can now view your Streamlit app in your browser.": "Streamlit アプリがブラウザで表示可能になりました。",
-    r"Local URL: (http://localhost:\d+)": "ローカルURL: \\1 (開発用マシンからアクセス)",
-    r"Network URL: (http://[\d\.]+:\d+)": "ネットワークURL: \\1 (同一ネットワーク内の他のデバイスからアクセス可能)",
-    r"External URL: (http://[\d\.]+:\d+)": "外部URL: \\1 (インターネット経由でアクセス可能 - 注意して使用)",
-    r"Initial lecturers: (\d+), Initial courses: (\d+)": "初期講師数: \\1, 初期コース数: \\2",
-    r"Length of possible_assignments list \(with variables\): (\d+)": "変数を含む割り当て候補リストの長さ: \\1",
-    r"^\s*\+ Potential assignment: (\w+) to (\w+)": "講師 \\1 をコース \\2 へ割り当てる可能性があります。",
-    r"^\s*Cost for (\w+) to (\w+):.*total_weighted_int=(\d+)": "講師 \\1 からコース \\2 への割り当てコスト (重み付け合計): \\3",
-    r"^\s*- Filtered out: (\w+) for (\w+) \(Last classroom failed: L_last_class=(\w+), C_class=(\w+)\)": "講師 \\1 のコース \\2 への割り当ては除外されました (理由: 最終教室の重複 L_last_class=\\3, C_class=\\4)。",
-    r"^\s*- Filtered out: (\w+) for (\w+) \(Schedule failed: Course_schedule=\(.*\), Lecturer_avail=\[.*\]\)": "講師 \\1 のコース \\2 への割り当ては除外されました (理由: スケジュール不一致)。",
-    r"Total potential assignments after filtering: (\d+)": "フィルタリング後の潜在的な割り当て総数: \\1",
-    r"Parameters: (.*)": "CP-SAT ソルバーパラメータ: \\1",
-    r"Setting number of workers to (\d+)": "CP-SAT ワーカースレッド数を \\1 に設定。",
-    r"Initial optimization model .*: \(model_fingerprint: ([\w\d]+)\)": "初期最適化モデル (フィンガープリント: \\1)",
-    r"#Variables: (\d+) \(#bools: (\d+) in objective\)": "変数総数: \\1 (うち目的関数内のブール変数: \\2)",
-    r"Starting presolve at ([\d\.]+)s": "Presolve (前処理) を \\1 秒で開始。",
-    r"Starting CP-SAT solver v([\d\.]+)": "CP-SAT ソルバー (バージョン \\1) を開始します。",
-    r"Presolved optimization model .*: \(model_fingerprint: ([\w\d]+)\)": "Presolve後の最適化モデル (フィンガープリント: \\1)",
-    r"Preloading model.": "モデルをプリロード中。",
-    r"#Bound\s+[\d\.]+s\s+best:([\w\.]+)\s+next:\[([^\]]+)\]\s+(\w+)": "境界値情報: 最良値=\\1, 次候補=\\2, 状態=\\3",
-    r"The solution hint is complete and is feasible. Its objective value is ([\d\.]+).": "提供された解ヒントは完全かつ実行可能です。目的値: \\1",
-    r"Starting search at ([\d\.]+)s with (\d+) workers.": "\\2 個のワーカーで \\1 秒に探索を開始。",
-    r"#(\d+)\s+[\d\.]+s\s+best:([\w\.]+)\s+next:\[([^\]]*)\]\s+(\w+)": "探索ステップ #\\1: 最良値=\\2, 次候補=\\3, ソルバー=\\4",
-    r"#Done\s+[\d\.]+s\s+(\w+)": "探索完了: ソルバー=\\1",
-    r"CpSolverResponse summary:": "CP-SAT ソルバー応答サマリー:",
-    r"status: (\w+)": "ソルバーの最終ステータス: \\1",
-    r"objective: ([\d\.]+)": "ソルバーの目的値: \\1",
-    r"best_bound: ([\d\.]+)": "最適解の下界 (Best Bound): \\1",
-    r"Presolve summary:": "Presolve (前処理) の要約:",
-    r"^\s*- rule '([^']*)' was applied (\d+) time": "Presolve ルール「\\1」が \\2 回適用されました。",
-    r"walltime: ([\d\.]+)": "実行時間 (Wall Time): \\1 秒",
-    r"usertime: ([\d\.]+)": "ユーザー時間 (User Time): \\1 秒",
-    r"deterministic_time: ([\d\.e\+\-]+)": "決定論的時間 (Deterministic Time): \\1",
-    r"--- Solver Log \(Captured by app.py\) ---": "--- ソルバーログ (キャプチャ区間開始) ---", # app.py でキャプチャすることを示すように変更
-    r"--- End Solver Log \(Captured by app.py\) ---": "--- ソルバーログ (キャプチャ区間終了) ---", # app.py でキャプチャすることを示すように変更
-}
-
-def _get_log_explanation(log_line: str) -> str:
-    """
-    ログ行をチェックし、定義されたパターンに一致する場合、解説文字列を返します。
-    一致しない場合は、デフォルトのメッセージを返します。
-    (log_explainer.py の get_log_explanation 関数を移動)
-    """
-    stripped_log_line = log_line.strip()
-    for pattern, explanation_template in LOG_EXPLANATIONS.items():
-        match = re.search(pattern, stripped_log_line)
-        if match:
-            explanation = explanation_template
-            for i, group_val in enumerate(match.groups()):
-                explanation = explanation.replace(f"\\{i+1}", str(group_val))
-            return explanation
-    return "(このログメッセージに対する定義済みの解説はありません)"
+# --- 1. データ定義 (LOG_EXPLANATIONS と _get_log_explanation は削除) ---
 
 # --- Gemini API送信用ログのフィルタリング関数 (グローバルスコープに移動) ---
 def filter_log_for_gemini(log_content: str) -> str:
@@ -706,8 +641,7 @@ def main():
             "solver_result_cache",
             "raw_log_on_server",    # サーバー側で保持する生ログ
             "gemini_api_requested", # Gemini API実行フラグ
-            "gemini_api_error",      # Gemini APIエラーメッセージ
-            "explained_log_cache"   # 解説付きログのキャッシュ
+            "gemini_api_error"      # Gemini APIエラーメッセージ
         ]
         for key_to_clear in keys_to_clear:
             if key_to_clear in st.session_state:
@@ -722,7 +656,6 @@ def main():
         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
         if "gemini_api_requested" in st.session_state: del st.session_state.gemini_api_requested # クリア
         if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error # クリア
-        if "explained_log_cache" in st.session_state: del st.session_state.explained_log_cache # 解説ログキャッシュもクリア
         st.session_state.solution_executed = True # 実行フラグを立てる
         st.rerun() # 再実行してメインエリアで処理と表示を行う
 
@@ -866,36 +799,8 @@ def main():
         else: # UNKNOWN, MODEL_INVALID など
             st.error(solver_result['solution_status_str'])
 
-        # 「処理ログ詳細 (解説付き)」の表示ロジック変更
-        if "raw_log_on_server" in st.session_state: # サーバーに生ログがあれば表示の準備
-            expander_cache_key = "explained_log_cache"
-            with st.expander("処理ログ詳細 (解説付き)", expanded=True): # 初期状態で開いておくが、内容はボタン押下まで表示しない
-                if st.button("解説付きログを生成・表示", key="generate_explained_log_button"):
-                    current_log_hash = hash(st.session_state.raw_log_on_server)
-                    # 既存のキャッシュがあればクリアして再生成を促す
-                    if expander_cache_key in st.session_state:
-                        del st.session_state[expander_cache_key]
-                    if expander_cache_key + "_source_log_hash" in st.session_state:
-                        del st.session_state[expander_cache_key + "_source_log_hash"]
+        # 「処理ログ詳細 (解説付き)」は廃止
 
-                    with st.spinner("解説付きログを生成中..."):
-                        full_log = st.session_state.raw_log_on_server
-                        explained_log_output_for_ui = []
-                        if full_log:
-                            for line in full_log.splitlines():
-                                explanation = _get_log_explanation(line)
-                                explained_log_output_for_ui.append(f"ログ: {line.strip()}\n解説: {explanation}\n{'-'*20}")
-                        st.session_state[expander_cache_key] = "\n".join(explained_log_output_for_ui)
-                        st.session_state[expander_cache_key + "_source_log_hash"] = current_log_hash
-                        st.rerun() # 生成後にUIを更新して表示させる
-
-                if expander_cache_key in st.session_state and \
-                   st.session_state.get(expander_cache_key + "_source_log_hash") == hash(st.session_state.raw_log_on_server):
-                    explained_log_content = st.session_state[expander_cache_key]
-                    st.text_area("Explained Log Output", explained_log_content, height=400)
-                else:
-                    st.info("上の「解説付きログを生成・表示」ボタンを押してください。")
-            
             # 「Gemini API によるログ解説を実行」ボタン
             if GEMINI_API_KEY and "raw_log_on_server" in st.session_state:
                 if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation_button"):
@@ -904,6 +809,16 @@ def main():
                     if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
                     if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
                     st.rerun() # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
+
+                # 生ログダウンロードボタン (Gemini APIボタンの下)
+                st.download_button(
+                    label="ログのダウンロード",
+                    data=st.session_state.raw_log_on_server,
+                    file_name="assignment_log.txt",
+                    mime="text/plain",
+                    key="download_raw_log_button"
+                )
+
 
             # Gemini API 呼び出しと結果表示 (ボタン押下後に実行される)
             if st.session_state.get("gemini_api_requested") and \
