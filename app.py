@@ -801,46 +801,47 @@ def main():
 
         # 「処理ログ詳細 (解説付き)」は廃止
 
-            # 「Gemini API によるログ解説を実行」ボタン
-            if GEMINI_API_KEY and "raw_log_on_server" in st.session_state:
-                if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation_button"):
-                    st.session_state.gemini_api_requested = True # 実行フラグ
-                    # 既存の解説があればクリア
-                    if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
-                    if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
-                    st.rerun() # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
+        # 「Gemini API によるログ解説を実行」ボタン
+        if GEMINI_API_KEY and "raw_log_on_server" in st.session_state and st.session_state.raw_log_on_server is not None:
+            if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation_button"):
+                st.session_state.gemini_api_requested = True # 実行フラグ
+                # 既存の解説があればクリア
+                if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
+                if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
+                st.rerun() # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
 
-                # 生ログダウンロードボタン (Gemini APIボタンの下)
-                st.download_button(
-                    label="ログのダウンロード",
-                    data=st.session_state.raw_log_on_server,
-                    file_name="assignment_log.txt",
-                    mime="text/plain",
-                    key="download_raw_log_button"
-                )
+            # 生ログダウンロードボタン (Gemini APIボタンの下)
+            st.download_button(
+                label="ログのダウンロード",
+                data=st.session_state.raw_log_on_server,
+                file_name="assignment_log.txt",
+                mime="text/plain",
+                key="download_raw_log_button"
+            )
+        elif st.session_state.get("solution_executed"): # ボタンが表示されない場合のヒント (最適化実行後)
+            if not GEMINI_API_KEY:
+                st.info("Gemini APIキーが設定されていません。ログ関連機能を利用するには設定が必要です。")
+            elif "raw_log_on_server" not in st.session_state or st.session_state.raw_log_on_server is None:
+                st.warning("ログデータが利用できないため、ログ関連機能は表示されません。最適化処理が完了していないか、ログ取得に失敗した可能性があります。")
 
-
-            # Gemini API 呼び出しと結果表示 (ボタン押下後に実行される)
-            if st.session_state.get("gemini_api_requested") and \
-               "gemini_explanation" not in st.session_state and \
-               "gemini_api_error" not in st.session_state:
-                 with st.spinner("Gemini API でログを解説中..."):
-                    full_log_to_filter = st.session_state.raw_log_on_server # サーバー側の生ログを使用
-                    # ここでフィルタリングを実行
-                    filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
-                    gemini_explanation_text = get_gemini_explanation(filtered_log_for_gemini, GEMINI_API_KEY)
+        # Gemini API 呼び出しと結果表示 (ボタン押下後に実行される)
+        if st.session_state.get("gemini_api_requested") and \
+            "gemini_explanation" not in st.session_state and \
+            "gemini_api_error" not in st.session_state:
+                with st.spinner("Gemini API でログを解説中..."):
+                full_log_to_filter = st.session_state.raw_log_on_server # サーバー側の生ログを使用
+                filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
+                gemini_explanation_text = get_gemini_explanation(filtered_log_for_gemini, GEMINI_API_KEY)
+                if gemini_explanation_text.startswith("Gemini APIエラー:"):
+                    st.session_state.gemini_api_error = gemini_explanation_text
+                else:
                     st.session_state.gemini_explanation = gemini_explanation_text
-                    # st.rerun() # 解説取得後に再実行して表示を更新
-                    if gemini_explanation_text.startswith("Gemini APIエラー:"):
-                        st.session_state.gemini_api_error = gemini_explanation_text
-                    else:
-                        st.session_state.gemini_explanation = gemini_explanation_text
-                        if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
-                 st.session_state.gemini_api_requested = False # 処理完了したのでフラグをリセット
-                 st.rerun() # 結果を表示するために再実行
+                    if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
+                st.session_state.gemini_api_requested = False # 処理完了したのでフラグをリセット
+                st.rerun() # 結果を表示するために再実行
 
-        if "gemini_api_error" in st.session_state and st.session_state.gemini_api_error:
-            st.error(f"Gemini API エラー: {st.session_state.gemini_api_error}")
+        if "gemini_api_error" in st.session_state and st.session_state.gemini_api_error: # エラーがあれば表示
+            st.error(st.session_state.gemini_api_error)
         elif "gemini_explanation" in st.session_state and st.session_state.gemini_explanation: # 解説があれば表示
             with st.expander("Gemini API によるログ解説", expanded=True):
                 st.markdown(st.session_state.gemini_explanation)
