@@ -8,6 +8,7 @@ import datetime # 日付処理用に追加
 import google.generativeai as genai # Gemini API 用
 from streamlit_oauth import OAuth2Component # OIDC認証用
 import random # データ生成用
+from typing import TypedDict, List, Optional, Any, Tuple # 他のimport文と合わせて先頭に移動
 
 # アプリケーションバージョン
 APP_VERSION = "1.1.3" # 例: バージョン番号を定義
@@ -315,8 +316,6 @@ for c_from in ALL_CLASSROOM_IDS_COMBINED:
 # DEFAULT_AGE_PRIORITY_COSTS は実年齢を使用するため廃止
 
 # DEFAULT_FREQUENCY_PRIORITY_COSTS は実際の割り当て回数を使用するため廃止
-
-from typing import TypedDict, List, Optional, Any, Tuple # Optional を追加
 
 # スケジュール違反に対する固定ペナルティ (floatで定義し、他の重み付けコストと合算)
 # この値は、スケジュール違反を許容する場合に、他のコスト要因よりも優先度が低くなるように十分に大きく設定します。
