@@ -64,9 +64,9 @@ def filter_log_for_gemini(log_content: str) -> str:
     # この部分は元の関数のままなので、diffでは省略されていますが、実際にはここに元のロジック全体が入ります。
     # 簡単のため、ここでは主要な構造のみを示し、詳細な省略ロジックは元の関数を参照してください。
     # For brevity, the detailed line omission logic from the original filter_log_for_gemini is not repeated here.
-    # Assume the full logic for app_detailed_lines_collected and solver_log_block truncation is present.
-    MAX_APP_DETAIL_FIRST_N_LINES = 3 
-    MAX_APP_DETAIL_LAST_N_LINES = 3  
+    # Assume the full logic for app_detailed_lines_collected and solver_log_block truncation is present. 
+    MAX_APP_DETAIL_FIRST_N_LINES = 50 # 詳細アプリログの先頭行数を増やす (例: 3 -> 50)
+    MAX_APP_DETAIL_LAST_N_LINES = 50  # 詳細アプリログの末尾行数を増やす (例: 3 -> 50)
     if len(app_detailed_lines_collected) > (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES):
         gemini_log_lines_final.extend(app_detailed_lines_collected[:MAX_APP_DETAIL_FIRST_N_LINES])
         omitted_count = len(app_detailed_lines_collected) - (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_LAST_N_LINES)
@@ -74,9 +74,9 @@ def filter_log_for_gemini(log_content: str) -> str:
         gemini_log_lines_final.extend(app_detailed_lines_collected[-MAX_APP_DETAIL_LAST_N_LINES:])
     else:
         gemini_log_lines_final.extend(app_detailed_lines_collected)
-
-    MAX_SOLVER_LOG_FIRST_N_LINES = 30 
-    MAX_SOLVER_LOG_LAST_N_LINES = 30  
+    
+    MAX_SOLVER_LOG_FIRST_N_LINES = 200 # ソルバーログの先頭行数を増やす (例: 30 -> 200)
+    MAX_SOLVER_LOG_LAST_N_LINES = 200  # ソルバーログの末尾行数を増やす (例: 30 -> 200)
     if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
         truncated_solver_log = solver_log_block[:MAX_SOLVER_LOG_FIRST_N_LINES]
         omitted_solver_lines = len(solver_log_block) - (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES)
