@@ -7,6 +7,8 @@ import re # 正規表現モジュール
 import datetime # 日付処理用に追加
 import google.generativeai as genai # Gemini API 用
 from streamlit_oauth import OAuth2Component # OIDC認証用
+from google.oauth2 import id_token # IDトークン検証用
+from google.auth.transport import requests as google_requests # IDトークン検証用
 import random # データ生成用
 from typing import TypedDict, List, Optional, Any, Tuple # 他のimport文と合わせて先頭に移動
 
@@ -587,20 +589,22 @@ def main():
         )
         if result and "token" in result:
             st.session_state.token = result.get("token")
-            # トークンからユーザー情報を取得する (streamlit-oauth は直接ユーザー情報を返さない場合がある)
-            # ここでは簡略化のため、email をユーザー情報として扱う例を示します。
-            # 実際には、トークンを使ってGoogleのユーザー情報エンドポイントに問い合わせる必要があります。
-            # もし oauth2.get_user_info() のようなメソッドがあればそれを使います。
-            # ここでは仮にトークン自体にemailが含まれていると仮定します（実際はIDトークンをデコード）。
-            # 簡単な例として、ログイン成功時に固定のユーザー情報をセットします。
-            # 実際のアプリケーションでは、IDトークンを検証し、そこからemailやnameを取得すべきです。
-            # (例: from google.oauth2 import id_token; from google.auth.transport import requests;
-            #      id_info = id_token.verify_oauth2_token(st.session_state.token['id_token'], requests.Request(), GOOGLE_CLIENT_ID)
-            #      st.session_state.user_info = {"email": id_info.get("email"), "name": id_info.get("name")} )
             try:
-                # ここでは簡略化のため、固定のユーザー情報を設定します。
-                # 実際にはIDトークンからユーザー情報を抽出・検証してください。
-                st.session_state.user_info = {"email": "user@example.com", "name": "Test User"}
+                # IDトークンを取得して検証
+                id_token_str = st.session_state.token.get("id_token")
+                if id_token_str:
+                    id_info = id_token.verify_oauth2_token(
+                        id_token_str,
+                        google_requests.Request(),
+                        GOOGLE_CLIENT_ID
+                    )
+                    st.session_state.user_info = {
+                        "email": id_info.get("email"),
+                        "name": id_info.get("name")
+                    }
+                else:
+                    st.error("IDトークンが取得できませんでした。")
+                    st.session_state.user_info = {"email": "error@example.com", "name": "Unknown User"}
             except Exception as e:
                 st.error(f"ユーザー情報の取得/設定中にエラー: {e}")
                 st.session_state.user_info = {"email": "error@example.com"}
