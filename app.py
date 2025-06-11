@@ -420,9 +420,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                                          weight_qualification * qualification_cost + # 資格コストを追加
                                          weight_past_assignment_recency * past_assignment_recency_cost
                                         ) + schedule_violation_penalty # スケジュール違反ペナルティを加算
-            total_weighted_cost_int = int(total_weighted_cost_float * 100)
-            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol_penalty={schedule_violation_penalty}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={'N/A' if days_since_last_assignment_to_classroom == float('inf') else days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
-            # 上記ログの days_since_last_assignment_to_classroom の表示を修正
+            total_weighted_cost_int = int(total_weighted_cost_float * 100) # コストを整数にスケーリング
             log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol_penalty={schedule_violation_penalty}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             possible_assignments.append({
                 "lecturer_id": lecturer_id, "course_id": course_id,
