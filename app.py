@@ -104,14 +104,16 @@ def filter_log_for_gemini(log_content: str) -> str:
 # (変更なし)
 
 # --- Gemini API 連携 ---
-def get_gemini_explanation(log_text: str, api_key: str) -> str:
+def get_gemini_explanation(log_text: str,
+                           api_key: str,
+                           solver_status: str,
+                           objective_value: Optional[float],
+                           assignments_summary: Optional[pd.DataFrame]) -> str:
     """
-    指定されたログテキストを Gemini API に送信し、解説を取得します。
+    指定されたログテキストと最適化結果を Gemini API に送信し、解説を取得します。
     """
     if not api_key:
         return "エラー: Gemini API キーが設定されていません。"
-    if not log_text:
-        return "解説対象のログがありません。"
 
     try:
         genai.configure(api_key=api_key)
@@ -119,7 +121,20 @@ def get_gemini_explanation(log_text: str, api_key: str) -> str:
         prompt = f"""以下のシステムログについて、IT専門家でない人にも分かりやすく解説してください。
 ログの各部分が何を示しているのか、全体としてどのような処理が行われているのかを説明してください。
 特に重要な情報、警告、エラーがあれば指摘し、考えられる原因や対処法についても言及してください。
+最適化結果とログの内容を関連付けて解説してください。
 
+## 最適化結果のサマリー
+- 求解ステータス: {solver_status}
+- 目的値: {objective_value if objective_value is not None else 'N/A'}
+"""
+        if assignments_summary is not None and not assignments_summary.empty:
+            prompt += f"- 割り当て件数: {len(assignments_summary)} 件\n"
+            # 必要に応じて、assignments_summary からさらに情報を抜粋してプロンプトに追加できます。
+            # 例: prompt += f"- 主な割り当て講師（上位3名）: ... \n"
+        else:
+            prompt += "- 割り当て: なし\n"
+
+        prompt += f"""
 ログ本文:
 ```text
 {log_text}
