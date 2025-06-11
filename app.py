@@ -704,7 +704,7 @@ def main():
             "gemini_explanation", 
             "solution_executed", 
             "solver_result_cache",
-            "full_log_for_filtering", # Geminiフィルタリング用全ログ
+            "raw_log_on_server",    # サーバー側で保持する生ログ
             "gemini_api_requested", # Gemini API実行フラグ
             "gemini_api_error",      # Gemini APIエラーメッセージ
             "explained_log_cache"   # 解説付きログのキャッシュ
@@ -718,7 +718,7 @@ def main():
     if st.sidebar.button("最適割り当てを実行", type="primary"):
         # 既存のセッション変数をクリア (特に計算結果キャッシュ)
         if "solver_result_cache" in st.session_state: del st.session_state.solver_result_cache
-        if "full_log_for_filtering" in st.session_state: del st.session_state.full_log_for_filtering
+        if "raw_log_on_server" in st.session_state: del st.session_state.raw_log_on_server
         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
         if "gemini_api_requested" in st.session_state: del st.session_state.gemini_api_requested # クリア
         if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error # クリア
@@ -774,8 +774,18 @@ def main():
                     ignore_schedule_constraint_checkbox,
                     weight_travel, weight_age, weight_frequency
                 )
-                st.session_state.solver_result_cache = solver_output # 結果をキャッシュ
-                st.session_state.full_log_for_filtering = solver_output["full_application_and_solver_log"] # Geminiフィルタリング用の全ログを保存
+                # 生ログは別のセッションステートに保存し、結果キャッシュには含めない
+                st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
+                
+                # 結果キャッシュにはログ以外の情報を格納
+                st.session_state.solver_result_cache = {
+                    "solution_status_str": solver_output["solution_status_str"],
+                    "objective_value": solver_output["objective_value"],
+                    "assignments": solver_output["assignments"],
+                    "all_courses": solver_output["all_courses"],
+                    "all_lecturers": solver_output["all_lecturers"],
+                    "solver_raw_status_code": solver_output["solver_raw_status_code"],
+                }
                 # ここではGemini API呼び出しは行わない
         
         # キャッシュされた結果（または計算直後の結果）を取得
@@ -857,7 +867,7 @@ def main():
             st.error(solver_result['solution_status_str'])
 
         # 「処理ログ詳細 (解説付き)」の表示ロジック変更
-        if solver_result.get('full_application_and_solver_log'):
+        if "raw_log_on_server" in st.session_state: # サーバーに生ログがあれば表示の準備
             expander_cache_key = "explained_log_cache"
             # st.expanderの返り値はbool (開いているか)だが、ここでは直接使わず、
             # expanderが開かれた後のブロックでキャッシュの有無を確認する。
@@ -865,13 +875,13 @@ def main():
             with st.expander("処理ログ詳細 (解説付き)", expanded=False):
                 # キャッシュのキーに元のログのハッシュ値も加えることで、
                 # 最適化が再実行されて元のログが変わった場合にキャッシュを無効化する。
-                current_log_hash = hash(solver_result['full_application_and_solver_log'])
+                current_log_hash = hash(st.session_state.raw_log_on_server)
                 cache_valid = (expander_cache_key in st.session_state and
                                st.session_state.get(expander_cache_key + "_source_log_hash") == current_log_hash)
 
                 if not cache_valid:
                     with st.spinner("解説付きログを生成中..."):
-                        full_log = solver_result['full_application_and_solver_log']
+                        full_log = st.session_state.raw_log_on_server # サーバー側の生ログを使用
                         explained_log_output_for_ui = []
                         if full_log:
                             for line in full_log.splitlines():
@@ -883,7 +893,7 @@ def main():
                 st.text_area("Explained Log Output", st.session_state.get(expander_cache_key, "ログがありません。"), height=400)
             
             # 「Gemini API によるログ解説を実行」ボタンを「処理ログ詳細」の直下に配置
-            if GEMINI_API_KEY and "full_log_for_filtering" in st.session_state and st.session_state.full_log_for_filtering:
+            if GEMINI_API_KEY and "raw_log_on_server" in st.session_state:
                 if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation"):
                     st.session_state.gemini_api_requested = True # 実行フラグ
                     # 既存の解説があればクリア
@@ -893,7 +903,7 @@ def main():
 
             if st.session_state.get("gemini_api_requested") and "gemini_explanation" not in st.session_state:
                  with st.spinner("Gemini API でログを解説中..."):
-                    full_log_to_filter = st.session_state.full_log_for_filtering
+                    full_log_to_filter = st.session_state.raw_log_on_server # サーバー側の生ログを使用
                     # ここでフィルタリングを実行
                     filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
                     gemini_explanation_text = get_gemini_explanation(filtered_log_for_gemini, GEMINI_API_KEY)
