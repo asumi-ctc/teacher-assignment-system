@@ -183,8 +183,8 @@ def get_gemini_explanation(log_text: str, api_key: str) -> str:
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        st.error(f"Gemini API での解説中にエラーが発生しました: {e}")
-        return f"Gemini API での解説中にエラーが発生しました: {str(e)[:500]}..." # エラーメッセージを短縮して表示
+        # st.error を直接呼ばず、エラーメッセージ文字列を返す
+        return f"Gemini APIエラー: {str(e)[:500]}..."
 
 PREFECTURES = [
     "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
@@ -735,7 +735,8 @@ def main():
             "solution_executed", 
             "solver_result_cache",
             "full_log_for_filtering", # Geminiフィルタリング用全ログ
-            "gemini_api_requested" # Gemini API実行フラグ
+            "gemini_api_requested", # Gemini API実行フラグ
+            "gemini_api_error"      # Gemini APIエラーメッセージ
         ]
         for key_to_clear in keys_to_clear:
             if key_to_clear in st.session_state:
@@ -749,6 +750,7 @@ def main():
         if "full_log_for_filtering" in st.session_state: del st.session_state.full_log_for_filtering
         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
         if "gemini_api_requested" in st.session_state: del st.session_state.gemini_api_requested # クリア
+        if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error # クリア
         st.session_state.solution_executed = True # 実行フラグを立てる
         st.rerun() # 再実行してメインエリアで処理と表示を行う
 
