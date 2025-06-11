@@ -731,17 +731,30 @@ def main():
     if st.sidebar.button("ログアウト"):
         st.session_state.token = None
         st.session_state.user_info = None
-        # 関連するセッションステートもクリア
-        keys_to_clear = ["raw_solver_log_for_gca", "gemini_explanation", "solution_executed"]
+        # 関連するセッションステートもクリア (最適化結果キャッシュも含む)
+        keys_to_clear = [
+            "raw_solver_log_for_gca", 
+            "gemini_explanation", 
+            "solution_executed", 
+            "solver_result_cache" # 追加
+        ]
         for key_to_clear in keys_to_clear:
             if key_to_clear in st.session_state:
                 del st.session_state[key_to_clear]
         st.rerun()
 
+    # 「最適割り当てを実行」ボタンをサイドバーに移動
+    if st.sidebar.button("最適割り当てを実行", type="primary"):
+        # 既存のセッション変数をクリア (特に計算結果キャッシュ)
+        if "solver_result_cache" in st.session_state: del st.session_state.solver_result_cache
+        if "raw_solver_log_for_gca" in st.session_state: del st.session_state.raw_solver_log_for_gca
+        if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
+        st.session_state.solution_executed = True # 実行フラグを立てる
+        st.rerun() # 再実行してメインエリアで処理と表示を行う
+
     # アプリケーションバージョンをサイドバーに表示
     st.sidebar.markdown("---")
     st.sidebar.info(f"アプリバージョン: {APP_VERSION}")
-
     st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
     # --- メインコンテンツ (認証済みの場合のみ表示) ---
     st.header("入力データ")
@@ -773,68 +786,60 @@ def main():
 
     # 「基本コスト設定」セクションを削除
 
-    # 最適化ボタンと結果表示 (この部分は認証済みの場合のみ実行される)
-    if st.button("最適割り当てを実行", type="primary"):
-        # 既存のセッション変数をクリア
-        if "raw_solver_log_for_gca" in st.session_state: del st.session_state.raw_solver_log_for_gca
-        if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
-        if "solution_executed" in st.session_state: del st.session_state.solution_executed
+    # 最適化実行フラグに基づいて結果を表示
+    if st.session_state.get("solution_executed", False):
+        st.header("最適化結果") # ヘッダーは計算前に表示
 
-        st.header("最適化結果")
-        with st.spinner("最適化計算を実行中..."):
-            solver_result = solve_assignment(
-                DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
-                DEFAULT_TRAVEL_COSTS_MATRIX, # DEFAULT_FREQUENCY_PRIORITY_COSTS を削除
-                weight_past_assignment_recency_slider, weight_qualification_slider, 
-                ignore_schedule_constraint_checkbox, # 新しいチェックボックスの値を渡す
-                weight_travel, weight_age, weight_frequency
-            )
-            st.session_state.raw_solver_log_for_gca = solver_result["raw_solver_log"]
-            st.session_state.solution_executed = True
+        # 計算結果がキャッシュにない場合のみ計算を実行
+        if "solver_result_cache" not in st.session_state:
+            with st.spinner("最適化計算を実行中..."):
+                solver_output = solve_assignment(
+                    DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
+                    DEFAULT_TRAVEL_COSTS_MATRIX,
+                    weight_past_assignment_recency_slider, weight_qualification_slider, 
+                    ignore_schedule_constraint_checkbox,
+                    weight_travel, weight_age, weight_frequency
+                )
+                st.session_state.solver_result_cache = solver_output # 結果をキャッシュ
+                st.session_state.raw_solver_log_for_gca = solver_output["raw_solver_log"]
 
-            log_for_gemini_api = solver_result["raw_solver_log"]
-            if log_for_gemini_api and GEMINI_API_KEY:
-                with st.spinner("Gemini API でログを解説中..."):
-                    gemini_explanation_text = get_gemini_explanation(log_for_gemini_api, GEMINI_API_KEY)
-                    st.session_state.gemini_explanation = gemini_explanation_text
-            elif not GEMINI_API_KEY:
-                st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
+                log_for_gemini_api = solver_output["raw_solver_log"]
+                if log_for_gemini_api and GEMINI_API_KEY:
+                    with st.spinner("Gemini API でログを解説中..."):
+                        gemini_explanation_text = get_gemini_explanation(log_for_gemini_api, GEMINI_API_KEY)
+                        st.session_state.gemini_explanation = gemini_explanation_text
+                elif not GEMINI_API_KEY:
+                    st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
+        
+        # キャッシュされた結果（または計算直後の結果）を取得
+        solver_result = st.session_state.solver_result_cache
 
+        # --- 以降、solver_result を使った表示ロジック ---
         st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
         if solver_result['objective_value'] is not None:
             st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
 
-        # --- サマリー情報表示 ---
         if solver_result['assignments']:
-            results_df = pd.DataFrame(solver_result['assignments'])
+            results_df = pd.DataFrame(solver_result['assignments']) # このdfはローカルでOK
             st.subheader("割り当て結果サマリー")
             
             summary_data = []
-
-            # スケジュール状況
             schedule_compatible_count = results_df[results_df["スケジュール状況"] == "適合"].shape[0]
             schedule_incompatible_count = results_df[results_df["スケジュール状況"] == "不適合"].shape[0]
             summary_data.append(("**スケジュール**", ""))
             summary_data.append(("　適合", f"{schedule_compatible_count}人"))
             summary_data.append(("　不適合（講師の空きスケジュールに不適合）", f"{schedule_incompatible_count}人"))
-
-            # 移動コストの合計値
             total_travel_cost = results_df["移動コスト(元)"].sum()
             summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
-
-            # 平均年齢と平均頻度 (割り当てられた講師の元データから計算)
             assigned_lecturer_ids = results_df["講師ID"].unique()
             temp_assigned_lecturers = [l for l in DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
-            
             if temp_assigned_lecturers:
                 avg_age = sum(l.get("age", 0) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
                 summary_data.append(("**平均年齢**", f"{avg_age:.1f}才"))
                 avg_frequency = sum(len(l.get("past_assignments", [])) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
                 summary_data.append(("**平均頻度**", f"{avg_frequency:.1f}回"))
-
-                # 資格別割り当て状況
                 lecturer_rank_total_counts = {1: 0, 2: 0, 3: 0}
-                for lecturer in DEFAULT_LECTURERS_DATA: # 全講師データから各ランクの総数をカウント
+                for lecturer in DEFAULT_LECTURERS_DATA:
                     rank = lecturer.get("qualification_rank")
                     if rank in lecturer_rank_total_counts:
                         lecturer_rank_total_counts[rank] += 1
@@ -846,26 +851,22 @@ def main():
                         assigned_rank_counts[rank] += 1
                 for rank_num in [1, 2, 3]:
                     summary_data.append((f"　ランク{rank_num}", f"{assigned_rank_counts.get(rank_num, 0)}人 / {lecturer_rank_total_counts.get(rank_num, 0)}人中"))
-
-            # 同教室への過去の割り当て
             past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0]
             past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
             summary_data.append(("**同教室への過去の割り当て**", ""))
             summary_data.append(("　新規", f"{past_assignment_new_count}人"))
             summary_data.append(("　割当て実績あり", f"{past_assignment_existing_count}人"))
-
-            # Markdownテーブルとして表示
             markdown_table = "| 項目 | 値 |\n| :---- | :---- |\n"
             for item, value in summary_data:
                 markdown_table += f"| {item} | {value} |\n"
             st.markdown(markdown_table)
-            st.markdown("---") # サマリーの区切り
+            st.markdown("---")
 
         if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
-            actual_assignments_made = bool(solver_result['assignments'])
-            if actual_assignments_made:
+            if solver_result['assignments']: # 'assignments' が空でないことを確認
+                results_df_display = pd.DataFrame(solver_result['assignments']) # 表示用に再度DataFrame作成
                 st.subheader("割り当て結果")
-                st.dataframe(results_df)
+                st.dataframe(results_df_display)
                 assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
                 unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
                 if unassigned_courses:
@@ -874,27 +875,27 @@ def main():
                     st.caption("上記の講座は、スケジュール違反を許容しても、他の制約（資格ランクなど）により割り当て可能な講師が見つからなかったか、または他の割り当てと比較してコストが高すぎると判断された可能性があります。")
                 else:
                     st.success("全ての講座が割り当てられました。")
-            else:
+            else: # assignments が空の場合 (OPTIMAL/FEASIBLEだが割り当てなし)
                 st.error("解が見つかりましたが、実際の割り当ては行われませんでした。")
                 st.warning(
                     "考えられる原因:\n"
-                    "- または、割り当て可能なペアが元々存在しない (制約が厳しすぎる、データ不適合)。\n"
+                    "- 割り当て可能なペアが元々存在しない (制約が厳しすぎる、データ不適合)。\n"
                     "**結果として、総コスト 0.00 (何も割り当てない) が最適と判断された可能性があります。**"
                 )
                 st.subheader("全ての講座が割り当てられませんでした")
                 st.dataframe(pd.DataFrame(solver_result['all_courses']))
         elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE:
             st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
-        else:
+        else: # UNKNOWN, MODEL_INVALID など
             st.error(solver_result['solution_status_str'])
 
         if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
             with st.expander("Gemini API によるログ解説", expanded=True):
                 st.markdown(st.session_state.gemini_explanation)
-        if solver_result['explained_log_text']:
+        if solver_result.get('explained_log_text'): # キーが存在するか確認
             with st.expander("処理ログ詳細 (解説付き)"):
                 st.text_area("Explained Log Output", solver_result['explained_log_text'], height=400)
-        if solver_result['raw_solver_log']:
+        if solver_result.get('raw_solver_log'): # キーが存在するか確認 (Gemini API送信ログ)
             with st.expander("生ログ詳細 (最適化処理の全出力 - Gemini APIへ送信されたログ)"):
                 st.text_area("Raw Solver Log (Sent to Gemini API)", solver_result['raw_solver_log'], height=300)
 
