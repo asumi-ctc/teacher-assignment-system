@@ -857,7 +857,19 @@ def main():
                 with st.spinner("Gemini API でログを解説中..."):
                     full_log_to_filter = st.session_state.raw_log_on_server # サーバー側の生ログを使用
                     filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
-                    gemini_explanation_text = get_gemini_explanation(filtered_log_for_gemini, GEMINI_API_KEY)
+
+                    # solver_result_cache から必要な情報を取得
+                    solver_cache = st.session_state.solver_result_cache
+                    solver_status = solver_cache["solution_status_str"]
+                    objective_value = solver_cache["objective_value"]
+                    assignments_list = solver_cache.get("assignments", [])
+                    assignments_summary_df = pd.DataFrame(assignments_list) if assignments_list else None
+
+                    gemini_explanation_text = get_gemini_explanation(
+                        filtered_log_for_gemini, GEMINI_API_KEY,
+                        solver_status, objective_value, assignments_summary_df
+                    )
+
                     if gemini_explanation_text.startswith("Gemini APIエラー:"):
                         st.session_state.gemini_api_error = gemini_explanation_text
                     else:
