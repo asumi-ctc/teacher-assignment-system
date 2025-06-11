@@ -372,7 +372,6 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     all_courses: List[dict]
     all_lecturers: List[dict]
     solver_raw_status_code: int
-    explained_log_text: str # Detailed log with line-by-line explanation for UI
     full_application_and_solver_log: str # All logs including detailed app logs for UI's explained_log_text
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data,
@@ -384,7 +383,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     # solve_assignment 内の print 文も解説対象に含めるために、
     # ここで stdout のキャプチャを開始する
     full_log_stream = io.StringIO()
-    explained_log_output = [] # 解説付きログを格納するリスト
 
     # アプリケーションログを full_log_stream に直接書き込むように変更
     def log_to_stream(message):
@@ -479,13 +477,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     if not possible_assignments:
         log_to_stream("No possible assignments found after filtering. Optimization will likely result in no assignments.")
         all_captured_logs = full_log_stream.getvalue()
-        if all_captured_logs:
-            for line in all_captured_logs.splitlines():
-                explanation = _get_log_explanation(line)
-                explained_log_output.append(f"ログ: {line.strip()}")
-                explained_log_output.append(f"解説: {explanation}")
-                explained_log_output.append("-" * 20)
-        explained_log_text = "\n".join(explained_log_output)
         return SolverOutput(
             solution_status_str="前提条件エラー (割り当て候補なし)",
             objective_value=None,
@@ -493,7 +484,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             all_courses=courses_data,
             all_lecturers=lecturers_data,
             solver_raw_status_code=cp_model.UNKNOWN, 
-            explained_log_text=explained_log_text,
             full_application_and_solver_log=all_captured_logs
         )
 
@@ -520,13 +510,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     else:
         log_to_stream("Objective terms list is empty. No assignments to optimize.")
         all_captured_logs = full_log_stream.getvalue()
-        if all_captured_logs:
-            for line in all_captured_logs.splitlines():
-                explanation = _get_log_explanation(line)
-                explained_log_output.append(f"ログ: {line.strip()}")
-                explained_log_output.append(f"解説: {explanation}")
-                explained_log_output.append("-" * 20)
-        explained_log_text = "\n".join(explained_log_output)
         return SolverOutput(
             solution_status_str="目的関数エラー (最適化対象なし)",
             objective_value=None,
@@ -534,7 +517,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
             all_courses=courses_data,
             all_lecturers=lecturers_data,
             solver_raw_status_code=cp_model.MODEL_INVALID,
-            explained_log_text=explained_log_text,
             full_application_and_solver_log=all_captured_logs
         )
 
@@ -555,17 +537,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     print("\n--- BEGIN all_captured_logs (for debugging filter) ---")
     print(full_captured_logs)
     print("--- END all_captured_logs (for debugging filter) ---\n")
-
-    # --- UI表示用の解説付きログ生成 (全ログを使用) ---
-    # explained_log_output は既に solve_assignment の冒頭で初期化されている
-    if full_captured_logs:
-        for line in full_captured_logs.splitlines():
-            explanation = _get_log_explanation(line) # このファイル内の関数を使用
-            explained_log_output.append(f"ログ: {line.strip()}")
-            explained_log_output.append(f"解説: {explanation}")
-            explained_log_output.append("-" * 20) # 区切り線
-    
-    explained_log_text = "\n".join(explained_log_output)
 
     status_name = solver.StatusName(status_code) # Get the status name
     results = []
@@ -607,7 +578,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
         all_courses=courses_data,
         all_lecturers=lecturers_data,
         solver_raw_status_code=status_code,
-        explained_log_text=explained_log_text, # UI表示用の解説付き全ログ
         full_application_and_solver_log=full_captured_logs # 全ログ
     )
 
@@ -884,9 +854,19 @@ def main():
         else: # UNKNOWN, MODEL_INVALID など
             st.error(solver_result['solution_status_str'])
 
-        if solver_result.get('explained_log_text'): # キーが存在するか確認
+        # 「処理ログ詳細 (解説付き)」の表示ロジック変更
+        if solver_result.get('full_application_and_solver_log'):
             with st.expander("処理ログ詳細 (解説付き)"):
-                st.text_area("Explained Log Output", solver_result['explained_log_text'], height=400)
+                # ここで full_application_and_solver_log から解説付きログを生成
+                full_log = solver_result['full_application_and_solver_log']
+                explained_log_output_for_ui = []
+                if full_log:
+                    for line in full_log.splitlines():
+                        explanation = _get_log_explanation(line)
+                        explained_log_output_for_ui.append(f"ログ: {line.strip()}")
+                        explained_log_output_for_ui.append(f"解説: {explanation}")
+                        explained_log_output_for_ui.append("-" * 20)
+                st.text_area("Explained Log Output", "\n".join(explained_log_output_for_ui), height=400)
             
             # 「Gemini API によるログ解説を実行」ボタンを「処理ログ詳細」の直下に配置
             if GEMINI_API_KEY and "full_log_for_filtering" in st.session_state and st.session_state.full_log_for_filtering:
