@@ -316,7 +316,7 @@ for c_from in ALL_CLASSROOM_IDS_COMBINED:
 
 # DEFAULT_FREQUENCY_PRIORITY_COSTS は実際の割り当て回数を使用するため廃止
 
-from typing import TypedDict, List, Optional, Any, Tuple # 追加
+from typing import TypedDict, List, Optional, Any, Tuple # Optional を追加
 
 # スケジュール違反に対する固定ペナルティ (floatで定義し、他の重み付けコストと合算)
 # この値は、スケジュール違反を許容する場合に、他のコスト要因よりも優先度が低くなるように十分に大きく設定します。
