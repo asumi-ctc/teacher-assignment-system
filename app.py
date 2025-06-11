@@ -322,7 +322,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     # アプリケーションログを full_log_stream に直接書き込むように変更
     def log_to_stream(message):
         print(message, file=full_log_stream)
-        print(message) # ターミナルにも表示（デバッグ用）
+        # print(message) # ターミナルにも表示（デバッグ用） - 大量ログの場合、パフォーマンスに影響する可能性
 
     # --- Main logic for model building and solving ---
     possible_assignments = []
