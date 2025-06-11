@@ -617,10 +617,9 @@ def main():
     # st.sidebar.header("最適化設定") # より詳細な構成に変更
 
     st.sidebar.markdown(
-        "以下の制約の中で、目的に対する最適化を実行します。"
-        "目的に重み付けすることでシミュレーションしながら最適解を探索することができます。"
+        "【制約】と【目的】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
+        "また目的に重み付けすることでチューニングすることができます。"
     )
-    st.sidebar.markdown("---")
     
     # 「最適割り当てを実行」ボタンを説明文の直下に移動
     if st.sidebar.button("最適割り当てを実行", type="primary", key="execute_optimization_main_button"):
@@ -633,6 +632,7 @@ def main():
         st.session_state.solution_executed = True # 実行フラグを立てる
         st.rerun() # 再実行してメインエリアで処理と表示を行う
 
+    st.sidebar.markdown("---")
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("**ハード制約（絶対固定）**")
         st.markdown("- 講師は資格ランクに応じた講座しか割り当てできません。")
@@ -649,21 +649,21 @@ def main():
             help="チェックを外すと割り当て結果が得られないことがあります。その場合は、講師の空きスケジュールが合わない場合が想定されます。"
         )
 
-    with st.sidebar.expander("【最適化目的と重み付け】", expanded=False):
+    with st.sidebar.expander("【目的】", expanded=False):
         st.caption( # st.sidebar.caption から st.caption に変更
-            "【重要度について】不要な場合は、重要度をゼロしてください。（最適化要素に加味されなくなります。）"
-            "また、各々の重要度は相対的なものなので、全部0.1と全部1.00は同じ結果となります。"
+            "【重み】不要な目的はゼロにしてください。（目的から除外されます）"
+            "また、相対的な値なので、全部0.1と全部1.0は同じ結果となります。"
         )
         st.markdown("**移動コストが低い人を優先**")
-        weight_travel = st.slider("重要度", 0.0, 1.0, 0.5, 0.05, help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp") # キーを重複しないように変更
+        weight_travel = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp") # キーを重複しないように変更
         st.markdown("**年齢の若い人を優先**")
-        weight_age = st.slider("重要度", 0.0, 1.0, 0.3, 0.05, help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
+        weight_age = st.slider("重み", 0.0, 1.0, 0.3, 0.1, help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
         st.markdown("**割り当て頻度の少ない人を優先**")
-        weight_frequency = st.slider("重要度", 0.0, 1.0, 0.2, 0.05, help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
+        weight_frequency = st.slider("重み", 0.0, 1.0, 0.2, 0.1, help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
         st.markdown("**講師資格が高い人を優先**")
-        weight_qualification_slider = st.slider("重要度", 0.0, 1.0, 0.25, 0.05, help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
-        st.markdown("**同教室への割り当てが過去に無い人を優先**")
-        weight_past_assignment_recency_slider = st.slider("重要度", 0.0, 1.0, 0.4, 0.05, help="高いほど同教室への割り当て実績人が無い人或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
+        weight_qualification_slider = st.slider("重み", 0.0, 1.0, 0.3, 0.1, help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp") # 0.25 -> 0.3
+        st.markdown("**同教室への割り当て実績が無い人を優先**")
+        weight_past_assignment_recency_slider = st.slider("重み", 0.0, 1.0, 0.4, 0.1, help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
 
     # ログインユーザー情報とログアウトボタン
     user_email = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
