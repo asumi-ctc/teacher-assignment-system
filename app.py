@@ -652,15 +652,15 @@ def main():
             "また、相対的な値なので、全部0.1と全部1.0は同じ結果となります。"
         )
         st.markdown("**移動コストが低い人を優先**")
-        weight_travel = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp")
+        weight_travel = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp")
         st.markdown("**年齢の若い人を優先**")
-        weight_age = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
+        weight_age = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
         st.markdown("**割り当て頻度の少ない人を優先**")
-        weight_frequency = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
+        weight_frequency = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
         st.markdown("**講師資格が高い人を優先**")
-        weight_qualification_slider = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
+        weight_qualification_slider = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
         st.markdown("**同教室への割り当て実績が無い人を優先**")
-        weight_past_assignment_recency_slider = st.slider("重み", 0.0, 1.0, 0.5, 0.1, help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
+        weight_past_assignment_recency_slider = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
 
     # ログインユーザー情報とログアウトボタン
     user_email = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
