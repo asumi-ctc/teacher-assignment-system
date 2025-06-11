@@ -792,7 +792,7 @@ def main():
 
         # 計算結果がキャッシュにない場合のみ計算を実行
         if "solver_result_cache" not in st.session_state:
-            with st.spinner("最適化計算を実行中..."):
+            with st.spinner("最適化計算とログ解説を実行中..."): # メッセージを調整
                 solver_output = solve_assignment(
                     DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
                     DEFAULT_TRAVEL_COSTS_MATRIX,
@@ -805,9 +805,9 @@ def main():
 
                 log_for_gemini_api = solver_output["raw_solver_log"]
                 if log_for_gemini_api and GEMINI_API_KEY:
-                    with st.spinner("Gemini API でログを解説中..."):
-                        gemini_explanation_text = get_gemini_explanation(log_for_gemini_api, GEMINI_API_KEY)
-                        st.session_state.gemini_explanation = gemini_explanation_text
+                    # ネストされたスピナーを削除し、メインのスピナーでカバーする
+                    gemini_explanation_text = get_gemini_explanation(log_for_gemini_api, GEMINI_API_KEY)
+                    st.session_state.gemini_explanation = gemini_explanation_text
                 elif not GEMINI_API_KEY:
                     st.session_state.gemini_explanation = "Gemini API キーが設定されていません。ログ解説はスキップされました。"
         
