@@ -626,17 +626,8 @@ def main():
         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
         if "gemini_api_requested" in st.session_state: del st.session_state.gemini_api_requested # クリア
         if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error # クリア
-
         st.session_state.solution_executed = True # 実行フラグを立てる
-        st.session_state.optimizing_in_sidebar = True # サイドバーでのメッセージ表示用フラグ
-        st.session_state.optimization_completed_in_sidebar = False # 完了メッセージはまだ表示しない
         st.rerun() # 再実行してメインエリアで処理と表示を行う
-
-    # サイドバーでの最適化ステータス表示
-    if st.session_state.get("optimizing_in_sidebar", False):
-        st.sidebar.info("最適化計算を実行中...")
-    elif st.session_state.get("optimization_completed_in_sidebar", False):
-        st.sidebar.success("実行が完了しました。「最適化結果」タブを参照して下さい。")
 
     st.sidebar.markdown("---")
     with st.sidebar.expander("【制約】", expanded=False):
@@ -684,10 +675,8 @@ def main():
             "solution_executed", 
             "solver_result_cache",
             "raw_log_on_server",    # サーバー側で保持する生ログ
-            "gemini_api_requested",
-            "gemini_api_error",
-            "optimizing_in_sidebar", # 追加
-            "optimization_completed_in_sidebar" # 追加
+            "gemini_api_requested", # Gemini API実行フラグ
+            "gemini_api_error"      # Gemini APIエラーメッセージ
         ]
         for key_to_clear in keys_to_clear:
             if key_to_clear in st.session_state:
@@ -733,8 +722,7 @@ def main():
 
             # 計算結果がキャッシュにない場合のみ計算を実行
             if "solver_result_cache" not in st.session_state:
-                # サイドバーに "最適化計算を実行中..." が表示されているため、
-                # ここでの st.spinner は不要。
+                with st.spinner("最適化計算を実行中..."): 
                     solver_output = solve_assignment(
                         DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
                         DEFAULT_TRAVEL_COSTS_MATRIX,
@@ -754,23 +742,9 @@ def main():
                         "all_lecturers": solver_output["all_lecturers"],
                         "solver_raw_status_code": solver_output["solver_raw_status_code"],
                     }
-                    # 計算完了したのでフラグを更新し、サイドバーのメッセージを更新するために再実行
-                    st.session_state.optimizing_in_sidebar = False
-                    st.session_state.optimization_completed_in_sidebar = True
-                    st.rerun()
 
             # キャッシュされた結果（または計算直後の結果）を取得
-            # solver_result_cache がセットされた後の rerun でここに来るか、
-            # または、既にキャッシュがある場合にここに来る。
-            if "solver_result_cache" not in st.session_state:
-                # この状態は、上記の rerun 後に solver_result_cache がまだセットされていない場合に
-                # 一時的に発生する可能性があるが、optimizing_in_sidebar が True の間は
-                # サイドバーにメッセージが表示されている。
-                # 通常、計算完了後の rerun ですぐに cache が利用可能になる。
-                return # キャッシュが利用可能になるまで待つ (次の rerun で解決される想定)
-
             solver_result = st.session_state.solver_result_cache
-            # --- 以降、solver_result を使った表示ロジック ---
             st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
             if solver_result['objective_value'] is not None:
                 st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
