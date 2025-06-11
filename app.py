@@ -829,16 +829,16 @@ def main():
             "gemini_explanation" not in st.session_state and \
             "gemini_api_error" not in st.session_state:
                 with st.spinner("Gemini API でログを解説中..."):
-                full_log_to_filter = st.session_state.raw_log_on_server # サーバー側の生ログを使用
-                filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
-                gemini_explanation_text = get_gemini_explanation(filtered_log_for_gemini, GEMINI_API_KEY)
-                if gemini_explanation_text.startswith("Gemini APIエラー:"):
-                    st.session_state.gemini_api_error = gemini_explanation_text
-                else:
-                    st.session_state.gemini_explanation = gemini_explanation_text
-                    if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
-                st.session_state.gemini_api_requested = False # 処理完了したのでフラグをリセット
-                st.rerun() # 結果を表示するために再実行
+                    full_log_to_filter = st.session_state.raw_log_on_server # サーバー側の生ログを使用
+                    filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
+                    gemini_explanation_text = get_gemini_explanation(filtered_log_for_gemini, GEMINI_API_KEY)
+                    if gemini_explanation_text.startswith("Gemini APIエラー:"):
+                        st.session_state.gemini_api_error = gemini_explanation_text
+                    else:
+                        st.session_state.gemini_explanation = gemini_explanation_text
+                        if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
+                    st.session_state.gemini_api_requested = False # 処理完了したのでフラグをリセット
+                    st.rerun() # 結果を表示するために再実行
 
         if "gemini_api_error" in st.session_state and st.session_state.gemini_api_error: # エラーがあれば表示
             st.error(st.session_state.gemini_api_error)
