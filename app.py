@@ -685,8 +685,7 @@ def main():
 
     st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
 
-    # タブを作成
-    tab1, tab2 = st.tabs(["サンプルデータ", "最適化結果"])
+    tab1, tab2 = st.tabs(["サンプルデータ", "最適化結果"]) # タブタイトルは固定に戻す
 
     with tab1:
         st.header("入力データ")
