@@ -869,19 +869,17 @@ def main():
         # 「処理ログ詳細 (解説付き)」の表示ロジック変更
         if "raw_log_on_server" in st.session_state: # サーバーに生ログがあれば表示の準備
             expander_cache_key = "explained_log_cache"
-            # st.expanderの返り値はbool (開いているか)だが、ここでは直接使わず、
-            # expanderが開かれた後のブロックでキャッシュの有無を確認する。
-            # expanded=False で初期状態は閉じておく。
-            with st.expander("処理ログ詳細 (解説付き)", expanded=False):
-                # キャッシュのキーに元のログのハッシュ値も加えることで、
-                # 最適化が再実行されて元のログが変わった場合にキャッシュを無効化する。
-                current_log_hash = hash(st.session_state.raw_log_on_server)
-                cache_valid = (expander_cache_key in st.session_state and
-                               st.session_state.get(expander_cache_key + "_source_log_hash") == current_log_hash)
+            with st.expander("処理ログ詳細 (解説付き)", expanded=True): # 初期状態で開いておくが、内容はボタン押下まで表示しない
+                if st.button("解説付きログを生成・表示", key="generate_explained_log_button"):
+                    current_log_hash = hash(st.session_state.raw_log_on_server)
+                    # 既存のキャッシュがあればクリアして再生成を促す
+                    if expander_cache_key in st.session_state:
+                        del st.session_state[expander_cache_key]
+                    if expander_cache_key + "_source_log_hash" in st.session_state:
+                        del st.session_state[expander_cache_key + "_source_log_hash"]
 
-                if not cache_valid:
                     with st.spinner("解説付きログを生成中..."):
-                        full_log = st.session_state.raw_log_on_server # サーバー側の生ログを使用
+                        full_log = st.session_state.raw_log_on_server
                         explained_log_output_for_ui = []
                         if full_log:
                             for line in full_log.splitlines():
@@ -889,19 +887,28 @@ def main():
                                 explained_log_output_for_ui.append(f"ログ: {line.strip()}\n解説: {explanation}\n{'-'*20}")
                         st.session_state[expander_cache_key] = "\n".join(explained_log_output_for_ui)
                         st.session_state[expander_cache_key + "_source_log_hash"] = current_log_hash
-                
-                st.text_area("Explained Log Output", st.session_state.get(expander_cache_key, "ログがありません。"), height=400)
+                        st.rerun() # 生成後にUIを更新して表示させる
+
+                if expander_cache_key in st.session_state and \
+                   st.session_state.get(expander_cache_key + "_source_log_hash") == hash(st.session_state.raw_log_on_server):
+                    explained_log_content = st.session_state[expander_cache_key]
+                    st.text_area("Explained Log Output", explained_log_content, height=400)
+                else:
+                    st.info("上の「解説付きログを生成・表示」ボタンを押してください。")
             
-            # 「Gemini API によるログ解説を実行」ボタンを「処理ログ詳細」の直下に配置
+            # 「Gemini API によるログ解説を実行」ボタン
             if GEMINI_API_KEY and "raw_log_on_server" in st.session_state:
-                if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation"):
+                if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation_button"):
                     st.session_state.gemini_api_requested = True # 実行フラグ
                     # 既存の解説があればクリア
                     if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
-                    # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
-                    # st.rerun() # ここでrerunするとスピナー表示前に画面がクリアされる可能性があるのでコメントアウト
+                    if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
+                    st.rerun() # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
 
-            if st.session_state.get("gemini_api_requested") and "gemini_explanation" not in st.session_state:
+            # Gemini API 呼び出しと結果表示 (ボタン押下後に実行される)
+            if st.session_state.get("gemini_api_requested") and \
+               "gemini_explanation" not in st.session_state and \
+               "gemini_api_error" not in st.session_state:
                  with st.spinner("Gemini API でログを解説中..."):
                     full_log_to_filter = st.session_state.raw_log_on_server # サーバー側の生ログを使用
                     # ここでフィルタリングを実行
@@ -909,8 +916,17 @@ def main():
                     gemini_explanation_text = get_gemini_explanation(filtered_log_for_gemini, GEMINI_API_KEY)
                     st.session_state.gemini_explanation = gemini_explanation_text
                     # st.rerun() # 解説取得後に再実行して表示を更新
+                    if gemini_explanation_text.startswith("Gemini APIエラー:"):
+                        st.session_state.gemini_api_error = gemini_explanation_text
+                    else:
+                        st.session_state.gemini_explanation = gemini_explanation_text
+                        if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
+                 st.session_state.gemini_api_requested = False # 処理完了したのでフラグをリセット
+                 st.rerun() # 結果を表示するために再実行
 
-        if "gemini_explanation" in st.session_state and st.session_state.gemini_explanation: # 解説があれば表示
+        if "gemini_api_error" in st.session_state and st.session_state.gemini_api_error:
+            st.error(f"Gemini API エラー: {st.session_state.gemini_api_error}")
+        elif "gemini_explanation" in st.session_state and st.session_state.gemini_explanation: # 解説があれば表示
             with st.expander("Gemini API によるログ解説", expanded=True):
                 st.markdown(st.session_state.gemini_explanation)
 
