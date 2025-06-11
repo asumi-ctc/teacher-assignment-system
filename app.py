@@ -684,16 +684,206 @@ def main():
         st.rerun()
 
     st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
-    # --- メインコンテンツ (認証済みの場合のみ表示) ---
-    st.header("入力データ")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("講師データ")
-        # past_assignments を表示用に整形
-        df_lecturers = pd.DataFrame(DEFAULT_LECTURERS_DATA)
-        if 'past_assignments' in df_lecturers.columns:
-            df_lecturers['past_assignments'] = df_lecturers['past_assignments'].apply(
-                lambda assignments: ", ".join([f"{a['classroom_id']} ({a['date']})" for a in assignments]) if isinstance(assignments, list) and assignments else "履歴なし"
+
+    # タブを作成
+    tab1, tab2 = st.tabs(["サンプルデータ", "最適化結果"])
+
+    with tab1:
+        st.header("入力データ")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("講師データ")
+            # past_assignments を表示用に整形
+            df_lecturers = pd.DataFrame(DEFAULT_LECTURERS_DATA)
+            if 'past_assignments' in df_lecturers.columns:
+                df_lecturers['past_assignments'] = df_lecturers['past_assignments'].apply(
+                    lambda assignments: ", ".join([f"{a['classroom_id']} ({a['date']})" for a in assignments]) if isinstance(assignments, list) and assignments else "履歴なし"
+                )
+            st.dataframe(df_lecturers, height=200)
+        with col2:
+            st.subheader("講座データ")
+            st.dataframe(pd.DataFrame(DEFAULT_COURSES_DATA), height=200)
+        
+        st.subheader("教室データと移動コスト")
+        col3, col4 = st.columns(2)
+        with col3:
+            st.dataframe(pd.DataFrame(DEFAULT_CLASSROOMS_DATA))
+        with col4:
+            # travel_costs_matrix を表示用に整形
+            df_travel_costs = pd.DataFrame([
+                {"出発教室": k[0], "到着教室": k[1], "コスト": v}
+                for k, v in DEFAULT_TRAVEL_COSTS_MATRIX.items()
+            ])
+            st.dataframe(df_travel_costs)
+
+    with tab2:
+        # 最適化実行フラグに基づいて結果を表示
+        if st.session_state.get("solution_executed", False):
+            st.header("最適化結果") # ヘッダーは計算前に表示
+
+            # 計算結果がキャッシュにない場合のみ計算を実行
+            if "solver_result_cache" not in st.session_state:
+                with st.spinner("最適化計算を実行中..."): # メッセージ変更
+                    solver_output = solve_assignment(
+                        DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
+                        DEFAULT_TRAVEL_COSTS_MATRIX,
+                        weight_past_assignment_recency_slider, weight_qualification_slider, 
+                        ignore_schedule_constraint_checkbox,
+                        weight_travel, weight_age, weight_frequency
+                    )
+                    # 生ログは別のセッションステートに保存し、結果キャッシュには含めない
+                    st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
+                    
+                    # 結果キャッシュにはログ以外の情報を格納
+                    st.session_state.solver_result_cache = {
+                        "solution_status_str": solver_output["solution_status_str"],
+                        "objective_value": solver_output["objective_value"],
+                        "assignments": solver_output["assignments"],
+                        "all_courses": solver_output["all_courses"],
+                        "all_lecturers": solver_output["all_lecturers"],
+                        "solver_raw_status_code": solver_output["solver_raw_status_code"],
+                    }
+                    # ここではGemini API呼び出しは行わない
+            
+            # キャッシュされた結果（または計算直後の結果）を取得
+            solver_result = st.session_state.solver_result_cache
+
+            # --- 以降、solver_result を使った表示ロジック ---
+            st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
+            if solver_result['objective_value'] is not None:
+                st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
+
+            if solver_result['assignments']:
+                results_df = pd.DataFrame(solver_result['assignments']) # このdfはローカルでOK
+                st.subheader("割り当て結果サマリー")
+                
+                summary_data = []
+                schedule_compatible_count = results_df[results_df["スケジュール状況"] == "適合"].shape[0]
+                schedule_incompatible_count = results_df[results_df["スケジュール状況"] == "不適合"].shape[0]
+                summary_data.append(("**スケジュール**", ""))
+                summary_data.append(("　適合", f"{schedule_compatible_count}人"))
+                summary_data.append(("　不適合（講師の空きスケジュールに不適合）", f"{schedule_incompatible_count}人"))
+                total_travel_cost = results_df["移動コスト(元)"].sum()
+                summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
+                assigned_lecturer_ids = results_df["講師ID"].unique()
+                temp_assigned_lecturers = [l for l in DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
+                if temp_assigned_lecturers:
+                    avg_age = sum(l.get("age", 0) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
+                    summary_data.append(("**平均年齢**", f"{avg_age:.1f}才"))
+                    avg_frequency = sum(len(l.get("past_assignments", [])) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
+                    summary_data.append(("**平均頻度**", f"{avg_frequency:.1f}回"))
+                    lecturer_rank_total_counts = {1: 0, 2: 0, 3: 0}
+                    for lecturer in DEFAULT_LECTURERS_DATA:
+                        rank = lecturer.get("qualification_rank")
+                        if rank in lecturer_rank_total_counts:
+                            lecturer_rank_total_counts[rank] += 1
+                    summary_data.append(("**資格別割り当て状況**", ""))
+                    assigned_rank_counts = {1: 0, 2: 0, 3: 0}
+                    for l_assigned in temp_assigned_lecturers:
+                        rank = l_assigned.get("qualification_rank")
+                        if rank in assigned_rank_counts:
+                            assigned_rank_counts[rank] += 1
+                    for rank_num in [1, 2, 3]:
+                        summary_data.append((f"　ランク{rank_num}", f"{assigned_rank_counts.get(rank_num, 0)}人 / {lecturer_rank_total_counts.get(rank_num, 0)}人中"))
+                past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0]
+                past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
+                summary_data.append(("**同教室への過去の割り当て**", ""))
+                summary_data.append(("　新規", f"{past_assignment_new_count}人"))
+                summary_data.append(("　割当て実績あり", f"{past_assignment_existing_count}人"))
+                markdown_table = "| 項目 | 値 |\n| :---- | :---- |\n"
+                for item, value in summary_data:
+                    markdown_table += f"| {item} | {value} |\n"
+                st.markdown(markdown_table)
+                st.markdown("---")
+
+            if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
+                if solver_result['assignments']: # 'assignments' が空でないことを確認
+                    results_df_display = pd.DataFrame(solver_result['assignments']) # 表示用に再度DataFrame作成
+                    st.subheader("割り当て結果")
+                    st.dataframe(results_df_display)
+                    assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
+                    unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
+                    if unassigned_courses:
+                        st.subheader("割り当てられなかった講座")
+                        st.dataframe(pd.DataFrame(unassigned_courses))
+                        st.caption("上記の講座は、スケジュール違反を許容しても、他の制約（資格ランクなど）により割り当て可能な講師が見つからなかったか、または他の割り当てと比較してコストが高すぎると判断された可能性があります。")
+                    else:
+                        st.success("全ての講座が割り当てられました。")
+                else: # assignments が空の場合 (OPTIMAL/FEASIBLEだが割り当てなし)
+                    st.error("解が見つかりましたが、実際の割り当ては行われませんでした。")
+                    st.warning(
+                        "考えられる原因:\n"
+                        "- 割り当て可能なペアが元々存在しない (制約が厳しすぎる、データ不適合)。\n"
+                        "**結果として、総コスト 0.00 (何も割り当てない) が最適と判断された可能性があります。**"
+                    )
+                    st.subheader("全ての講座が割り当てられませんでした")
+                    st.dataframe(pd.DataFrame(solver_result['all_courses']))
+            elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE:
+                st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
+            else: # UNKNOWN, MODEL_INVALID など
+                st.error(solver_result['solution_status_str'])
+
+            # 「Gemini API によるログ解説を実行」ボタン
+            if GEMINI_API_KEY and "raw_log_on_server" in st.session_state and st.session_state.raw_log_on_server is not None:
+                if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation_button"):
+                    st.session_state.gemini_api_requested = True # 実行フラグ
+                    # 既存の解説があればクリア
+                    if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
+                    if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
+                    st.rerun() # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
+
+                # 生ログダウンロードボタン (Gemini APIボタンの下)
+                st.download_button(
+                    label="ログのダウンロード",
+                    data=st.session_state.raw_log_on_server,
+                    file_name="assignment_log.txt",
+                    mime="text/plain",
+                    key="download_raw_log_button"
+                )
+            elif st.session_state.get("solution_executed"): # ボタンが表示されない場合のヒント (最適化実行後)
+                if not GEMINI_API_KEY:
+                    st.info("Gemini APIキーが設定されていません。ログ関連機能を利用するには設定が必要です。")
+                elif "raw_log_on_server" not in st.session_state or st.session_state.raw_log_on_server is None:
+                    st.warning("ログデータが利用できないため、ログ関連機能は表示されません。最適化処理が完了していないか、ログ取得に失敗した可能性があります。")
+
+            # Gemini API 呼び出しと結果表示 (ボタン押下後に実行される)
+            if st.session_state.get("gemini_api_requested") and \
+               "gemini_explanation" not in st.session_state and \
+               "gemini_api_error" not in st.session_state:
+                    with st.spinner("Gemini API でログを解説中..."):
+                        full_log_to_filter = st.session_state.raw_log_on_server # サーバー側の生ログを使用
+                        filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
+
+                        # solver_result_cache から必要な情報を取得
+                        solver_cache = st.session_state.solver_result_cache
+                        solver_status = solver_cache["solution_status_str"]
+                        objective_value = solver_cache["objective_value"]
+                        assignments_list = solver_cache.get("assignments", [])
+                        assignments_summary_df = pd.DataFrame(assignments_list) if assignments_list else None
+
+                        gemini_explanation_text = get_gemini_explanation(
+                            filtered_log_for_gemini, GEMINI_API_KEY,
+                            solver_status, objective_value, assignments_summary_df
+                        )
+
+                        if gemini_explanation_text.startswith("Gemini APIエラー:"):
+                            st.session_state.gemini_api_error = gemini_explanation_text
+                        else:
+                            st.session_state.gemini_explanation = gemini_explanation_text
+                            if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
+                        st.session_state.gemini_api_requested = False # 処理完了したのでフラグをリセット
+                        st.rerun() # 結果を表示するために再実行
+
+            if "gemini_api_error" in st.session_state and st.session_state.gemini_api_error: # エラーがあれば表示
+                st.error(st.session_state.gemini_api_error)
+            elif "gemini_explanation" in st.session_state and st.session_state.gemini_explanation: # 解説があれば表示
+                with st.expander("Gemini API によるログ解説", expanded=True):
+                    st.markdown(st.session_state.gemini_explanation)
+        else:
+            st.info("サイドバーの「最適割り当てを実行」ボタンを押すと、ここに結果が表示されます。")
+
+if __name__ == "__main__":
+    main()
             )
         st.dataframe(df_lecturers, height=200)
     with col2:
