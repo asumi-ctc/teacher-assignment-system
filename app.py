@@ -619,6 +619,35 @@ def main():
     if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
 
+    # --- メイン画面上部にナビゲーションボタンを配置 ---
+    nav_cols = st.columns([1, 1, 5]) # ボタンの幅を調整するための比率 (最後の列はスペーサー)
+    with nav_cols[0]:
+        if st.button("サンプルデータ", key="nav_sample_data_button", use_container_width=True):
+            st.session_state.view_mode = "sample_data"
+            # 最適化関連のキャッシュをクリアするが、solution_executed は変更しない
+            # これにより、「最適化結果」ボタンが表示されたままになる
+            keys_to_clear_for_sample_view = [
+                "solver_result_cache",
+                "raw_log_on_server",
+                "gemini_explanation",
+                "gemini_api_requested",
+                "gemini_api_error",
+                # "solution_executed" # ここから削除
+            ]
+            for key_to_clear in keys_to_clear_for_sample_view:
+                if key_to_clear in st.session_state:
+                    del st.session_state[key_to_clear]
+            st.rerun()
+
+    with nav_cols[1]:
+        if st.session_state.get("solution_executed", False): # 最適化実行後に表示
+            if st.button("最適化結果", key="nav_optimization_result_button", use_container_width=True):
+                st.session_state.view_mode = "optimization_result"
+                st.rerun()
+        else:
+            # 最適化実行前はボタンを非表示にするか、無効化する (ここでは無効化)
+            st.button("最適化結果", key="nav_optimization_result_disabled", disabled=True, use_container_width=True)
+
     st.sidebar.markdown(
         "【制約】と【目的】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
         "また目的に重み付けすることでチューニングすることができます。"
@@ -637,29 +666,7 @@ def main():
         st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
         st.rerun() # 再実行してメインエリアで処理と表示を行う
 
-    # 「サンプルデータ」ボタン
-    if st.sidebar.button("サンプルデータ", key="show_sample_data_button"):
-        st.session_state.view_mode = "sample_data"
-        # 最適化関連の表示をリセットするために solution_executed を False にする
-        # また、関連キャッシュもクリアして、次回「最適割り当てを実行」時に再計算・再取得されるようにする
-        keys_to_clear_for_sample_view = [
-            "solver_result_cache",
-            "raw_log_on_server",
-            "gemini_explanation",
-            "gemini_api_requested",
-            "gemini_api_error",
-            "solution_executed" # solution_executed もリセット
-        ]
-        for key_to_clear in keys_to_clear_for_sample_view:
-            if key_to_clear in st.session_state:
-                del st.session_state[key_to_clear]
-        st.rerun() # 再実行してメインエリアで処理と表示を行う
-
-    # 最適化が一度でも実行されたら「最適化結果」ボタンを表示
-    if st.session_state.get("solution_executed", False):
-        if st.sidebar.button("最適化結果", key="show_optimization_result_button"):
-            st.session_state.view_mode = "optimization_result"
-            st.rerun()
+    # サイドバーの「サンプルデータ」「最適化結果」ボタンは削除 (上部に移動したため)
 
     st.sidebar.markdown("---")
     with st.sidebar.expander("【制約】", expanded=False):
