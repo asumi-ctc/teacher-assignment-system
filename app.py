@@ -655,6 +655,12 @@ def main():
                 del st.session_state[key_to_clear]
         st.rerun() # 再実行してメインエリアで処理と表示を行う
 
+    # 最適化が一度でも実行されたら「最適化結果」ボタンを表示
+    if st.session_state.get("solution_executed", False):
+        if st.sidebar.button("最適化結果", key="show_optimization_result_button"):
+            st.session_state.view_mode = "optimization_result"
+            st.rerun()
+
     st.sidebar.markdown("---")
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("**ハード制約（絶対固定）**")
@@ -743,8 +749,8 @@ def main():
     elif st.session_state.view_mode == "optimization_result":
         # 最適化実行フラグに基づいて結果を表示
         if st.session_state.get("solution_executed", False):
-            # サイドバーに「最適化結果を表示中」の旨を表示
-            st.sidebar.markdown("表示中: **最適化結果**")
+            # # サイドバーに「最適化結果を表示中」の旨を表示 -> ボタンに変更したためコメントアウト
+            # st.sidebar.markdown("表示中: **最適化結果**")
 
             st.header("最適化結果") # ヘッダーは計算前に表示
 
