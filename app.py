@@ -656,25 +656,31 @@ def main():
     
     # 「最適割り当てを実行」ボタンを説明文の直下に移動
     if st.sidebar.button("最適割り当てを実行", type="primary", key="execute_optimization_main_button"):
-        # 既存のセッション変数をクリア (特に計算結果キャッシュ)
-        if "solver_result_cache" in st.session_state: del st.session_state.solver_result_cache
-        if "raw_log_on_server" in st.session_state: del st.session_state.raw_log_on_server
-        if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
-        if "gemini_api_requested" in st.session_state: del st.session_state.gemini_api_requested # クリア
-        if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error # クリア
+        # 既存の計算結果関連のセッション変数をクリア
+        keys_to_clear_on_execute = [
+            "solver_result_cache", "raw_log_on_server", "gemini_explanation",
+            "gemini_api_requested", "gemini_api_error"
+        ]
+        for key in keys_to_clear_on_execute:
+            if key in st.session_state:
+                del st.session_state[key]
         
-        # ここで最適化計算を実行し、結果をキャッシュに保存する
-        with st.spinner("最適化計算を実行中..."): # メインエリアではなく、ボタン押下時にスピナーを表示
-            solver_output = solve_assignment(
-                DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
-                DEFAULT_TRAVEL_COSTS_MATRIX,
-                st.session_state.get("weight_past_assignment_exp", 0.5), # スライダーのキー名で取得
-                st.session_state.get("weight_qualification_exp", 0.5),  # スライダーのキー名で取得
-                st.session_state.get("ignore_schedule_constraint_checkbox_value", True), # チェックボックスの値を取得
-                st.session_state.get("weight_travel_exp", 0.5),         # スライダーのキー名で取得
-                st.session_state.get("weight_age_exp", 0.5),            # スライダーのキー名で取得
-                st.session_state.get("weight_frequency_exp", 0.5)       # スライダーのキー名で取得
-            )
+        try:
+            # ここで最適化計算を実行し、結果をキャッシュに保存する
+            with st.spinner("最適化計算を実行中..."):
+                solver_output = solve_assignment(
+                    DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
+                    DEFAULT_TRAVEL_COSTS_MATRIX,
+                    st.session_state.get("weight_past_assignment_exp", 0.5), # スライダーのキー名で取得
+                    st.session_state.get("weight_qualification_exp", 0.5),  # スライダーのキー名で取得
+                    st.session_state.get("ignore_schedule_constraint_checkbox_value", True), # チェックボックスの値を取得
+                    st.session_state.get("weight_travel_exp", 0.5),         # スライダーのキー名で取得
+                    st.session_state.get("weight_age_exp", 0.5),            # スライダーのキー名で取得
+                    st.session_state.get("weight_frequency_exp", 0.5)       # スライダーのキー名で取得
+                )
+            
+            # solve_assignment が SolverOutput 型の辞書を返すことを期待
+            # TypedDictで型ヒントされているため、キーアクセスはそのまま行う
             st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
             st.session_state.solver_result_cache = {
                 "solution_status_str": solver_output["solution_status_str"],
@@ -684,9 +690,16 @@ def main():
                 "all_lecturers": solver_output["all_lecturers"],
                 "solver_raw_status_code": solver_output["solver_raw_status_code"],
             }
+            st.session_state.solution_executed = True # 実行フラグを立てる
+            st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
 
-        st.session_state.solution_executed = True # 実行フラグを立てる
-        st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
+        except Exception as e:
+            st.error(f"最適化処理中に予期せぬエラーが発生しました: {e}")
+            # エラーが発生しても、実行試行済みとし、結果表示画面へ遷移させる
+            # solver_result_cache は設定されないため、結果表示画面で「データなし」の警告が表示される
+            st.session_state.solution_executed = True 
+            st.session_state.view_mode = "optimization_result"
+
         st.rerun() # 再実行してメインエリアで処理と表示を行う
 
     # サイドバーの「サンプルデータ」「最適化結果」ボタンは削除 (上部に移動したため)
