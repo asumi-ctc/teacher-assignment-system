@@ -613,6 +613,12 @@ def main():
 
     # st.sidebar.header("最適化設定") # より詳細な構成に変更
 
+    # --- セッション状態の初期化 (表示モード管理用) ---
+    if "view_mode" not in st.session_state:
+        st.session_state.view_mode = "sample_data"  # デフォルトはサンプルデータ表示
+    if "solution_executed" not in st.session_state:
+        st.session_state.solution_executed = False
+
     st.sidebar.markdown(
         "【制約】と【目的】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
         "また目的に重み付けすることでチューニングすることができます。"
@@ -626,7 +632,27 @@ def main():
         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
         if "gemini_api_requested" in st.session_state: del st.session_state.gemini_api_requested # クリア
         if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error # クリア
+        
         st.session_state.solution_executed = True # 実行フラグを立てる
+        st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
+        st.rerun() # 再実行してメインエリアで処理と表示を行う
+
+    # 「サンプルデータ」ボタン
+    if st.sidebar.button("サンプルデータ", key="show_sample_data_button"):
+        st.session_state.view_mode = "sample_data"
+        # 最適化関連の表示をリセットするために solution_executed を False にする
+        # また、関連キャッシュもクリアして、次回「最適割り当てを実行」時に再計算・再取得されるようにする
+        keys_to_clear_for_sample_view = [
+            "solver_result_cache",
+            "raw_log_on_server",
+            "gemini_explanation",
+            "gemini_api_requested",
+            "gemini_api_error",
+            "solution_executed" # solution_executed もリセット
+        ]
+        for key_to_clear in keys_to_clear_for_sample_view:
+            if key_to_clear in st.session_state:
+                del st.session_state[key_to_clear]
         st.rerun() # 再実行してメインエリアで処理と表示を行う
 
     st.sidebar.markdown("---")
@@ -685,13 +711,12 @@ def main():
 
     st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
 
-    tab1, tab2 = st.tabs(["サンプルデータ", "最適化結果"]) # タブタイトルは固定に戻す
-
-    with tab1:
+    # --- メインエリアの表示制御 ---
+    if st.session_state.view_mode == "sample_data":
         st.header("入力データ")
         col1, col2 = st.columns(2)
         with col1:
-            st.subheader("講師データ")
+            st.subheader("講師データ (サンプル)")
             # past_assignments を表示用に整形
             df_lecturers = pd.DataFrame(DEFAULT_LECTURERS_DATA)
             if 'past_assignments' in df_lecturers.columns:
@@ -700,10 +725,10 @@ def main():
                 )
             st.dataframe(df_lecturers, height=200)
         with col2:
-            st.subheader("講座データ")
+            st.subheader("講座データ (サンプル)")
             st.dataframe(pd.DataFrame(DEFAULT_COURSES_DATA), height=200)
         
-        st.subheader("教室データと移動コスト")
+        st.subheader("教室データと移動コスト (サンプル)")
         col3, col4 = st.columns(2)
         with col3:
             st.dataframe(pd.DataFrame(DEFAULT_CLASSROOMS_DATA))
@@ -715,9 +740,12 @@ def main():
             ])
             st.dataframe(df_travel_costs)
 
-    with tab2:
+    elif st.session_state.view_mode == "optimization_result":
         # 最適化実行フラグに基づいて結果を表示
         if st.session_state.get("solution_executed", False):
+            # サイドバーに「最適化結果を表示中」の旨を表示
+            st.sidebar.markdown("表示中: **最適化結果**")
+
             st.header("最適化結果") # ヘッダーは計算前に表示
 
             # 計算結果がキャッシュにない場合のみ計算を実行
@@ -876,7 +904,11 @@ def main():
                 with st.expander("Gemini API によるログ解説", expanded=True):
                     st.markdown(st.session_state.gemini_explanation)
         else:
-            st.info("サイドバーの「最適割り当てを実行」ボタンを押すと、ここに結果が表示されます。")
+            # この状態は、例えば「サンプルデータ」表示後に view_mode が "optimization_result" になったが、
+            # solution_executed が False の場合など (通常は「最適割り当てを実行」で True になる)
+            st.info("サイドバーの「最適割り当てを実行」ボタンを押して最適化を実行してください。")
+    else: # view_mode が予期せぬ値の場合 (フォールバック)
+        st.info("サイドバーから表示するデータを選択してください。")
 
 if __name__ == "__main__":
     main()
