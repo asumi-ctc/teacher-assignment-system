@@ -620,9 +620,11 @@ def main():
         st.session_state.solution_executed = False
 
     # --- メイン画面上部にナビゲーションボタンを配置 ---
-    nav_cols = st.columns([1, 1, 5]) # ボタンの幅を調整するための比率 (最後の列はスペーサー)
+    # ボタン幅を広げ、文字列が改行されないように比率を調整 (例: [1,1,5] -> [2,2,3])
+    nav_cols = st.columns([2, 2, 3]) 
     with nav_cols[0]:
-        if st.button("サンプルデータ", key="nav_sample_data_button", use_container_width=True):
+        button_type_sample = "primary" if st.session_state.view_mode == "sample_data" else "secondary"
+        if st.button("サンプルデータ", key="nav_sample_data_button", use_container_width=True, type=button_type_sample):
             st.session_state.view_mode = "sample_data"
             # 最適化関連のキャッシュをクリアするが、solution_executed は変更しない
             # これにより、「最適化結果」ボタンが表示されたままになる
@@ -632,7 +634,6 @@ def main():
                 "gemini_explanation",
                 "gemini_api_requested",
                 "gemini_api_error",
-                # "solution_executed" # ここから削除
             ]
             for key_to_clear in keys_to_clear_for_sample_view:
                 if key_to_clear in st.session_state:
@@ -640,13 +641,13 @@ def main():
             st.rerun()
 
     with nav_cols[1]:
-        if st.session_state.get("solution_executed", False): # 最適化実行後に表示
-            if st.button("最適化結果", key="nav_optimization_result_button", use_container_width=True):
+        # 「最適化結果」ボタンは、最適化が一度でも実行された後にのみ表示
+        if st.session_state.get("solution_executed", False): 
+            button_type_result = "primary" if st.session_state.view_mode == "optimization_result" else "secondary"
+            if st.button("最適化結果", key="nav_optimization_result_button", use_container_width=True, type=button_type_result):
                 st.session_state.view_mode = "optimization_result"
                 st.rerun()
-        else:
-            # 最適化実行前はボタンを非表示にするか、無効化する (ここでは無効化)
-            st.button("最適化結果", key="nav_optimization_result_disabled", disabled=True, use_container_width=True)
+        # else: # solution_executed が False の場合 (初期状態など) は「最適化結果」ボタンをレンダリングしない
 
     st.sidebar.markdown(
         "【制約】と【目的】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
