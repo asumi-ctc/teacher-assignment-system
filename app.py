@@ -785,7 +785,7 @@ def main():
                 del st.session_state[key_to_clear]
         st.rerun()
 
-    st.title("講師割り当てシステム デモ (OR-Tools) - ログ解説付き")
+    st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
 
     # --- メインエリアの表示制御 ---
     if st.session_state.view_mode == "sample_data":
@@ -836,6 +836,15 @@ def main():
                 st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
                 if solver_result['objective_value'] is not None:
                     st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
+
+                # 「全ての講座が割り当てられました」メッセージをここに移動
+                if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
+                    if solver_result['assignments']:
+                        assigned_course_ids_for_message = {res["講座ID"] for res in solver_result['assignments']}
+                        unassigned_courses_for_message = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids_for_message]
+                        if not unassigned_courses_for_message:
+                            st.success("全ての講座が割り当てられました。")
+                    # assignments が空の場合のメッセージは後続のロジックで表示されるため、ここでは不要
 
                 if solver_result['assignments']:
                     results_df = pd.DataFrame(solver_result['assignments']) # このdfはローカルでOK
@@ -892,8 +901,8 @@ def main():
                             st.subheader("割り当てられなかった講座")
                             st.dataframe(pd.DataFrame(unassigned_courses))
                             st.caption("上記の講座は、スケジュール違反を許容しても、他の制約（資格ランクなど）により割り当て可能な講師が見つからなかったか、または他の割り当てと比較してコストが高すぎると判断された可能性があります。")
-                        else:
-                            st.success("全ての講座が割り当てられました。")
+                        # else: # 「全ての講座が割り当てられました」メッセージは上で表示済のため削除
+                            # st.success("全ての講座が割り当てられました。")
                     else: # assignments が空の場合 (OPTIMAL/FEASIBLEだが割り当てなし)
                         st.error("解が見つかりましたが、実際の割り当ては行われませんでした。")
                         st.warning(
