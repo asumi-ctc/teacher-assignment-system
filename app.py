@@ -558,6 +558,7 @@ def main():
     GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
     GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
     REDIRECT_URI = st.secrets.get("REDIRECT_URI")
+    ALLOWED_EMAIL = "asaumi.ctc@gmail.com" # 許可するメールアドレス
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 
     AUTHORIZE_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -606,15 +607,23 @@ def main():
                         google_requests.Request(),
                         GOOGLE_CLIENT_ID # type: ignore
                     )
-                    st.session_state.user_info = {
-                        "email": id_info.get("email"),
-                        "name": id_info.get("name")
-                    }
+                    user_email = id_info.get("email")
+                    if user_email == ALLOWED_EMAIL:
+                        st.session_state.user_info = {
+                            "email": user_email,
+                            "name": id_info.get("name")
+                        }
+                    else:
+                        st.error(f"このアプリケーションへのアクセスは許可されていません。({user_email})")
+                        st.session_state.token = None # トークンをクリアしてログイン状態を解除
+                        st.session_state.user_info = None
                 else:
                     st.error("IDトークンが取得できませんでした。")
+                    st.session_state.token = None # トークンをクリア
                     st.session_state.user_info = {"email": "error@example.com", "name": "Unknown User"}
             except Exception as e:
                 st.error(f"ユーザー情報の取得/設定中にエラー: {e}")
+                st.session_state.token = None # トークンをクリア
                 st.session_state.user_info = {"email": "error@example.com"}
             st.rerun()
         return # 未認証の場合はここで処理を終了し、メインUIは表示しない
