@@ -104,6 +104,11 @@ def filter_log_for_gemini(log_content: str) -> str:
 # (変更なし)
 
 # --- Gemini API 連携 ---
+# (get_gemini_explanation 関数は変更なしのため省略)
+# ... (get_gemini_explanation の元のコード) ...
+
+# --- データ生成関数群 ---
+# これらの関数は initialize_app_data 内で呼び出され、結果を st.session_state に格納する
 def get_gemini_explanation(log_text: str,
                            api_key: str,
                            solver_status: str,
@@ -148,115 +153,108 @@ def get_gemini_explanation(log_text: str,
         # st.error を直接呼ばず、エラーメッセージ文字列を返す
         return f"Gemini APIエラー: {str(e)[:500]}..."
 
-PREFECTURES = [
-    "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
-    "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
-    "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県",
-    "静岡県", "愛知県", "三重県", "滋賀県", "京都府", "大阪府", "兵庫県",
-    "奈良県", "和歌山県", "鳥取県", "島根県", "岡山県", "広島県", "山口県",
-    "徳島県", "香川県", "愛媛県", "高知県", "福岡県", "佐賀県", "長崎県",
-    "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"
-]
+def generate_prefectures_data():
+    PREFECTURES = [
+        "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+        "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+        "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県",
+        "静岡県", "愛知県", "三重県", "滋賀県", "京都府", "大阪府", "兵庫県",
+        "奈良県", "和歌山県", "鳥取県", "島根県", "岡山県", "広島県", "山口県",
+        "徳島県", "香川県", "愛媛県", "高知県", "福岡県", "佐賀県", "長崎県",
+        "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"
+    ]
+    PREFECTURE_CLASSROOM_IDS = [f"P{i+1}" for i in range(len(PREFECTURES))]
+    return PREFECTURES, PREFECTURE_CLASSROOM_IDS
 
-# 都道府県教室ID (P1 - P47)
-PREFECTURE_CLASSROOM_IDS = [f"P{i+1}" for i in range(len(PREFECTURES))]
+def generate_classrooms_data(prefectures, prefecture_classroom_ids):
+    classrooms_data = []
+    for i, pref_name in enumerate(prefectures):
+        classrooms_data.append({"id": prefecture_classroom_ids[i], "location": pref_name})
+    return classrooms_data
 
-# 全教室データ生成
-DEFAULT_CLASSROOMS_DATA = []
-for i, pref_name in enumerate(PREFECTURES):
-    DEFAULT_CLASSROOMS_DATA.append({"id": PREFECTURE_CLASSROOM_IDS[i], "location": pref_name})
+def generate_lecturers_data(prefecture_classroom_ids, today_date):
+    lecturers_data = []
+    DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    TIMES = ["AM", "PM"]
+    ALL_SLOTS = [(day, time) for day in DAYS for time in TIMES]
+    QUALIFICATION_RANKS = [1, 2, 3]
 
-ALL_CLASSROOM_IDS_COMBINED = PREFECTURE_CLASSROOM_IDS # 拠点という概念をなくし、都道府県教室のみとする
-
-# 講師データ生成 (100人)
-DEFAULT_LECTURERS_DATA = []
-DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-TIMES = ["AM", "PM"]
-ALL_SLOTS = [(day, time) for day in DAYS for time in TIMES]
-# AGE_CATEGORIES = ["low", "middle", "high"] # 実年齢を使用するため廃止
-QUALIFICATION_RANKS = [1, 2, 3]
-# FREQ_CATEGORIES = ["low", "middle", "high"] # 実際の割り当て回数を使用するため廃止
-
-# 過去の割り当て日付生成用
-TODAY = datetime.date.today()
-
-for i in range(1, 301): # 講師数を100人から300人に変更
-    num_available_slots = random.randint(3, 7)
-    availability = random.sample(ALL_SLOTS, num_available_slots)
-
-    # 過去の割り当て履歴を生成 (約10件)
-    num_past_assignments = random.randint(8, 12) # 8から12件の間でランダム
-    past_assignments = []
-    for _ in range(num_past_assignments):
-        days_ago = random.randint(1, 730) # 過去2年以内のランダムな日付
-        assignment_date = TODAY - datetime.timedelta(days=days_ago)
-        past_assignments.append({
-            "classroom_id": random.choice(ALL_CLASSROOM_IDS_COMBINED),
-            "date": assignment_date.strftime("%Y-%m-%d")
+    for i in range(1, 301): # 講師数を100人から300人に変更
+        num_available_slots = random.randint(3, 7)
+        availability = random.sample(ALL_SLOTS, num_available_slots)
+        # 過去の割り当て履歴を生成 (約10件)
+        num_past_assignments = random.randint(8, 12) # 8から12件の間でランダム
+        past_assignments = []
+        for _ in range(num_past_assignments):
+            days_ago = random.randint(1, 730) # 過去2年以内のランダムな日付
+            assignment_date = today_date - datetime.timedelta(days=days_ago)
+            past_assignments.append({
+                "classroom_id": random.choice(prefecture_classroom_ids),
+                "date": assignment_date.strftime("%Y-%m-%d")
+            })
+        past_assignments.sort(key=lambda x: x["date"], reverse=True)
+        lecturers_data.append({
+            "id": f"L{i}",
+            "name": f"講師{i:03d}",
+            "age": random.randint(22, 65),
+            "home_classroom_id": random.choice(prefecture_classroom_ids),
+            "qualification_rank": random.choice(QUALIFICATION_RANKS),
+            "availability": availability,
+            "past_assignments": past_assignments
         })
-    # 日付で降順ソート (最新が先頭)
-    past_assignments.sort(key=lambda x: x["date"], reverse=True)
+    return lecturers_data
 
-    DEFAULT_LECTURERS_DATA.append({
-        "id": f"L{i}",
-        "name": f"講師{i:03d}",
-        "age": random.randint(22, 65), # 実年齢を追加 (例: 22歳から65歳)
-        "home_classroom_id": random.choice(PREFECTURE_CLASSROOM_IDS), # 本拠地は都道府県のいずれか
-        # "age_category": random.choice(AGE_CATEGORIES), # 廃止
-        "qualification_rank": random.choice(QUALIFICATION_RANKS),
-        "availability": availability,
-        # "assignment_frequency_category": random.choice(FREQ_CATEGORIES), # 実際の割り当て回数を使用するため廃止
-        "past_assignments": past_assignments # 過去の割り当て履歴
-    })
+def generate_courses_data(prefectures, prefecture_classroom_ids):
+    BASE_COURSE_DEFINITIONS = [
+        {"id_suffix": "C1", "name": "初級コース", "required_rank": 3, "schedule": ("Mon", "AM")},
+        {"id_suffix": "C2", "name": "中級コース", "required_rank": 2, "schedule": ("Tue", "PM")},
+        {"id_suffix": "C3", "name": "上級コース", "required_rank": 1, "schedule": ("Wed", "AM")},
+        {"id_suffix": "C4", "name": "初級コース", "required_rank": 3, "schedule": ("Thu", "PM")},
+        {"id_suffix": "C5", "name": "中級コース", "required_rank": 2, "schedule": ("Fri", "AM")},
+    ]
+    courses_data = []
+    for i, pref_classroom_id in enumerate(prefecture_classroom_ids):
+        pref_name = prefectures[i]
+        for base_course in BASE_COURSE_DEFINITIONS:
+            courses_data.append({
+                "id": f"{pref_classroom_id}-{base_course['id_suffix']}",
+                "name": f"{pref_name} {base_course['name']}",
+                "classroom_id": pref_classroom_id,
+                "required_rank": base_course["required_rank"],
+                "schedule": base_course["schedule"]
+            })
+    return courses_data
 
-# 講座データ生成 (47都道府県 × 7種類の講座)
-# 講座種別を3種類に変更
-BASE_COURSE_DEFINITIONS = [
-    {"id_suffix": "C1", "name": "初級コース", "required_rank": 3, "schedule": ("Mon", "AM")}, # ランク3,2,1が担当可能
-    {"id_suffix": "C2", "name": "中級コース", "required_rank": 2, "schedule": ("Tue", "PM")}, # ランク2,1が担当可能
-    {"id_suffix": "C3", "name": "上級コース", "required_rank": 1, "schedule": ("Wed", "AM")}, # ランク1のみ担当可能
-    # スケジュールのバリエーションを増やすため、同じコース種別で異なる時間帯も定義可能
-    {"id_suffix": "C4", "name": "初級コース", "required_rank": 3, "schedule": ("Thu", "PM")},
-    {"id_suffix": "C5", "name": "中級コース", "required_rank": 2, "schedule": ("Fri", "AM")},
-]
+def generate_travel_costs_matrix(all_classroom_ids_combined, classroom_id_to_pref_name, prefecture_to_region, region_graph):
+    travel_costs_matrix = {}
+    for c_from in all_classroom_ids_combined:
+        for c_to in all_classroom_ids_combined:
+            if c_from == c_to:
+                base_cost = 0
+            else:
+                pref_from = classroom_id_to_pref_name[c_from]
+                pref_to = classroom_id_to_pref_name[c_to]
+                region_from = prefecture_to_region[pref_from]
+                region_to = prefecture_to_region[pref_to]
+                is_okinawa_involved = (pref_from == "沖縄県" and pref_to != "沖縄県") or \
+                                      (pref_to == "沖縄県" and pref_from != "沖縄県")
+                if is_okinawa_involved:
+                    base_cost = random.randint(80000, 120000)
+                elif region_from == region_to:
+                    base_cost = random.randint(5000, 15000)
+                else:
+                    hops = get_region_hops(region_from, region_to, region_graph)
+                    if hops == 1:
+                        base_cost = random.randint(15000, 30000)
+                    elif hops == 2:
+                        base_cost = random.randint(35000, 60000)
+                    else:
+                        base_cost = random.randint(70000, 100000)
+            travel_costs_matrix[(c_from, c_to)] = base_cost
+    return travel_costs_matrix
 
-DEFAULT_COURSES_DATA = []
-for i, pref_classroom_id in enumerate(PREFECTURE_CLASSROOM_IDS):
-    pref_name = PREFECTURES[i] # PREFECTURE_CLASSROOM_IDS と PREFECTURES のインデックスは対応
-    for base_course in BASE_COURSE_DEFINITIONS:
-        DEFAULT_COURSES_DATA.append({
-            "id": f"{pref_classroom_id}-{base_course['id_suffix']}", # 例: P1-S1
-            "name": f"{pref_name} {base_course['name']}", # 例: 北海道 初級プログラミング
-            "classroom_id": pref_classroom_id,
-            "required_rank": base_course["required_rank"],
-            "schedule": base_course["schedule"]
-        })
-
-# --- 移動コスト生成のための地域定義 ---
-REGIONS = {
-    "Hokkaido": ["北海道"],
-    "Tohoku": ["青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県"],
-    "Kanto": ["茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県"],
-    "Chubu": ["新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県"],
-    "Kinki": ["三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県"],
-    "Chugoku": ["鳥取県", "島根県", "岡山県", "広島県", "山口県"],
-    "Shikoku": ["徳島県", "香川県", "愛媛県", "高知県"],
-    "Kyushu_Okinawa": ["福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"]
-}
-
-PREFECTURE_TO_REGION = {pref: region for region, prefs in REGIONS.items() for pref in prefs}
-
-REGION_GRAPH = { # 地域間の隣接関係グラフ (ホップ数計算用)
-    "Hokkaido": {"Tohoku"},
-    "Tohoku": {"Hokkaido", "Kanto", "Chubu"},
-    "Kanto": {"Tohoku", "Chubu"},
-    "Chubu": {"Tohoku", "Kanto", "Kinki"},
-    "Kinki": {"Chubu", "Chugoku", "Shikoku"},
-    "Chugoku": {"Kinki", "Shikoku", "Kyushu_Okinawa"},
-    "Shikoku": {"Kinki", "Chugoku", "Kyushu_Okinawa"},
-    "Kyushu_Okinawa": {"Chugoku", "Shikoku"}
-}
-
+# get_region_hops 関数は変更なしのため省略
+# ... (get_region_hops の元のコード) ...
 def get_region_hops(region1, region2, graph):
     """地域間のホップ数（隣接度）を計算する"""
     if region1 == region2:
@@ -276,53 +274,20 @@ def get_region_hops(region1, region2, graph):
                 queue.append((neighbor, dist + 1))
     return float('inf') # 到達不能 (通常は発生しない)
 
-# 教室IDから都道府県名へのマッピングを作成
-CLASSROOM_ID_TO_PREF_NAME = {item["id"]: item["location"] for item in DEFAULT_CLASSROOMS_DATA}
-
-# 移動コスト行列生成 (全教室間)
-DEFAULT_TRAVEL_COSTS_MATRIX = {}
-
-for c_from in ALL_CLASSROOM_IDS_COMBINED:
-    for c_to in ALL_CLASSROOM_IDS_COMBINED:
-        if c_from == c_to:
-            base_cost = 0
-        else:
-            pref_from = CLASSROOM_ID_TO_PREF_NAME[c_from]
-            pref_to = CLASSROOM_ID_TO_PREF_NAME[c_to]
-            
-            region_from = PREFECTURE_TO_REGION[pref_from]
-            region_to = PREFECTURE_TO_REGION[pref_to]
-
-            # 沖縄県と本土間の特別処理
-            is_okinawa_involved = (pref_from == "沖縄県" and pref_to != "沖縄県") or \
-                                  (pref_to == "沖縄県" and pref_from != "沖縄県")
-
-            if is_okinawa_involved:
-                base_cost = random.randint(80000, 120000) # 沖縄は高コスト帯 (円単位のイメージ)
-            elif region_from == region_to: # 同一地域内
-                base_cost = random.randint(5000, 15000)   # 低コスト帯
-            else:
-                hops = get_region_hops(region_from, region_to, REGION_GRAPH)
-                if hops == 1: # 隣接地域
-                    base_cost = random.randint(15000, 30000) # 中コスト帯
-                elif hops == 2: # 1つ地域を挟む
-                    base_cost = random.randint(35000, 60000) # やや高コスト帯
-                else: # 2つ以上地域を挟む、または到達不能(get_region_hopsがinfの場合)
-                    base_cost = random.randint(70000, 100000) # 高コスト帯
-            
-        DEFAULT_TRAVEL_COSTS_MATRIX[(c_from, c_to)] = base_cost
-
-# DEFAULT_AGE_PRIORITY_COSTS は実年齢を使用するため廃止
-
-# DEFAULT_FREQUENCY_PRIORITY_COSTS は実際の割り当て回数を使用するため廃止
+# --- グローバル定数 (データ生成後に設定されるもの) ---
+# これらは initialize_app_data 内で設定され、st.session_state に格納される
+# PREFECTURES, PREFECTURE_CLASSROOM_IDS, DEFAULT_CLASSROOMS_DATA, ALL_CLASSROOM_IDS_COMBINED,
+# DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, REGIONS, PREFECTURE_TO_REGION, REGION_GRAPH,
+# CLASSROOM_ID_TO_PREF_NAME, DEFAULT_TRAVEL_COSTS_MATRIX, TODAY,
+# DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT
+# は initialize_app_data で st.session_state に格納される
 
 # スケジュール違反に対する固定ペナルティ (floatで定義し、他の重み付けコストと合算)
 # この値は、スケジュール違反を許容する場合に、他のコスト要因よりも優先度が低くなるように十分に大きく設定します。
 BASE_PENALTY_SCHEDULE_VIOLATION = 1000000.0  # 例: 100万
 
 # 過去の割り当てがない、または日付パース不能な場合に設定するデフォルトの経過日数 (ペナルティ計算上、十分に大きい値)
-# サマリー表示でも使用するためグローバルスコープに移動
-DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 100000
+# これは initialize_app_data で st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT に設定される
 
 # --- 2. OR-Tools 最適化ロジック ---
 class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型定義
@@ -334,11 +299,12 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     solver_raw_status_code: int
     full_application_and_solver_log: str # All logs including detailed app logs for UI's explained_log_text
 
-def solve_assignment(lecturers_data, courses_data, classrooms_data,
+def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms_data は現在未使用だが、将来のために残す
                      travel_costs_matrix, # frequency_priority_costs を削除
                      weight_past_assignment_recency, weight_qualification, 
                      ignore_schedule_constraint: bool, # スケジュール制約を無視するかのフラグ
-                     weight_travel, weight_age, weight_frequency) -> SolverOutput:
+                     weight_travel, weight_age, weight_frequency,
+                     today_date, default_days_no_past_assignment) -> SolverOutput: # 引数追加
     model = cp_model.CpModel()
     # solve_assignment 内の print 文も解説対象に含めるために、
     # ここで stdout のキャプチャを開始する
@@ -390,7 +356,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
 
             # 過去割り当ての近さによるコスト計算
             past_assignment_recency_cost = 0
-            days_since_last_assignment_to_classroom = DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT
+            days_since_last_assignment_to_classroom = default_days_no_past_assignment # 引数から取得
 
             if lecturer.get("past_assignments"):
                 relevant_past_assignments_to_this_classroom = [
@@ -401,13 +367,13 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                     # past_assignments は日付降順ソート済みなので、リストの最初のものが最新の割り当て
                     latest_assignment_date_str = relevant_past_assignments_to_this_classroom[0]["date"]
                     try:
-                        latest_assignment_date = datetime.datetime.strptime(latest_assignment_date_str, "%Y-%m-%d").date()
-                        days_since_last_assignment_to_classroom = (TODAY - latest_assignment_date).days
-
+                        latest_assignment_date = datetime.datetime.strptime(latest_assignment_date_str, "%Y-%m-%d").date() # type: ignore
+                        days_since_last_assignment_to_classroom = (today_date - latest_assignment_date).days # 引数から取得
+                        
                         # コスト計算: 経過日数が少ないほど高いコスト
                         # (DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT - 経過日数)
                         # 経過日数が DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT の場合、コストは0
-                        raw_recency_cost = DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT - days_since_last_assignment_to_classroom
+                        raw_recency_cost = default_days_no_past_assignment - days_since_last_assignment_to_classroom
                         past_assignment_recency_cost = raw_recency_cost
                     except ValueError:
                         log_to_stream(f"    Warning: Could not parse date '{latest_assignment_date_str}' for {lecturer_id} and classroom {course['classroom_id']}")
@@ -419,7 +385,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
                                          weight_qualification * qualification_cost + # 資格コストを追加
                                          weight_past_assignment_recency * past_assignment_recency_cost
                                         ) + schedule_violation_penalty # スケジュール違反ペナルティを加算
-            total_weighted_cost_int = int(total_weighted_cost_float * 100) # コストを整数にスケーリング
+            total_weighted_cost_int = int(total_weighted_cost_float * 100) # コストを整数にスケーリング # type: ignore
             log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol_penalty={schedule_violation_penalty}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             possible_assignments.append({
                 "lecturer_id": lecturer_id, "course_id": course_id,
@@ -490,11 +456,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     log_to_stream("--- End Solver Log (Captured by app.py) ---")
 
     full_captured_logs = full_log_stream.getvalue()
-    
-    # DEBUG: キャプチャされた全ログの内容をターミナルに出力して確認
-    print("\n--- BEGIN all_captured_logs (for debugging filter) ---")
-    print(full_captured_logs)
-    print("--- END all_captured_logs (for debugging filter) ---\n")
 
     status_name = solver.StatusName(status_code) # Get the status name
     results = []
@@ -503,7 +464,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
 
     if status_code == cp_model.OPTIMAL or status_code == cp_model.FEASIBLE:
         solution_status_str = "最適解" if status_code == cp_model.OPTIMAL else "実行可能解"
-        objective_value = solver.ObjectiveValue() / 100 # スケーリングを戻す
+        objective_value = solver.ObjectiveValue() / 100 # スケーリングを戻す # type: ignore
         
         for pa in possible_assignments:
             if solver.Value(pa["variable"]) == 1:
@@ -540,8 +501,58 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data,
     )
 
 # --- 3. Streamlit UI ---
+def initialize_app_data():
+    """アプリケーションの初期データを生成し、セッション状態に保存する。"""
+    if "app_data_initialized" not in st.session_state:
+        st.session_state.TODAY = datetime.date.today()
+        st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 100000
+
+        PREFECTURES_val, PREFECTURE_CLASSROOM_IDS_val = generate_prefectures_data()
+        st.session_state.PREFECTURES = PREFECTURES_val
+        st.session_state.PREFECTURE_CLASSROOM_IDS = PREFECTURE_CLASSROOM_IDS_val
+
+        st.session_state.DEFAULT_CLASSROOMS_DATA = generate_classrooms_data(
+            st.session_state.PREFECTURES, st.session_state.PREFECTURE_CLASSROOM_IDS
+        )
+        st.session_state.ALL_CLASSROOM_IDS_COMBINED = st.session_state.PREFECTURE_CLASSROOM_IDS
+
+        st.session_state.DEFAULT_LECTURERS_DATA = generate_lecturers_data(
+            st.session_state.PREFECTURE_CLASSROOM_IDS, st.session_state.TODAY
+        )
+        st.session_state.DEFAULT_COURSES_DATA = generate_courses_data(
+            st.session_state.PREFECTURES, st.session_state.PREFECTURE_CLASSROOM_IDS
+        )
+
+        REGIONS = {
+            "Hokkaido": ["北海道"], "Tohoku": ["青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県"],
+            "Kanto": ["茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県"],
+            "Chubu": ["新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県"],
+            "Kinki": ["三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県"],
+            "Chugoku": ["鳥取県", "島根県", "岡山県", "広島県", "山口県"],
+            "Shikoku": ["徳島県", "香川県", "愛媛県", "高知県"],
+            "Kyushu_Okinawa": ["福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"]
+        }
+        st.session_state.PREFECTURE_TO_REGION = {pref: region for region, prefs in REGIONS.items() for pref in prefs}
+        st.session_state.REGION_GRAPH = {
+            "Hokkaido": {"Tohoku"}, "Tohoku": {"Hokkaido", "Kanto", "Chubu"},
+            "Kanto": {"Tohoku", "Chubu"}, "Chubu": {"Tohoku", "Kanto", "Kinki"},
+            "Kinki": {"Chubu", "Chugoku", "Shikoku"}, "Chugoku": {"Kinki", "Shikoku", "Kyushu_Okinawa"},
+            "Shikoku": {"Kinki", "Chugoku", "Kyushu_Okinawa"}, "Kyushu_Okinawa": {"Chugoku", "Shikoku"}
+        }
+        st.session_state.CLASSROOM_ID_TO_PREF_NAME = {
+            item["id"]: item["location"] for item in st.session_state.DEFAULT_CLASSROOMS_DATA
+        }
+        st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX = generate_travel_costs_matrix(
+            st.session_state.ALL_CLASSROOM_IDS_COMBINED,
+            st.session_state.CLASSROOM_ID_TO_PREF_NAME,
+            st.session_state.PREFECTURE_TO_REGION,
+            st.session_state.REGION_GRAPH
+        )
+        st.session_state.app_data_initialized = True
+
 def main():
     st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
+    initialize_app_data() # アプリケーションデータの初期化
 
     # --- OIDC認証設定 ---
     GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
@@ -553,7 +564,7 @@ def main():
     TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
     # REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke" # 必要に応じて
 
-    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI]):
+    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI]): # type: ignore
         st.error("Google OAuth の設定が不完全です。管理者にお問い合わせください。(.streamlit/secrets.toml を確認してください)")
         st.stop()
 
@@ -584,7 +595,7 @@ def main():
             key="google_login_main", # 他のボタンとキーが衝突しないように変更
             extras_params={"access_type": "offline"} # "prompt": "consent" を削除
         )
-        if result and "token" in result:
+        if result and "token" in result: # type: ignore
             st.session_state.token = result.get("token")
             try:
                 # IDトークンを取得して検証
@@ -593,7 +604,7 @@ def main():
                     id_info = id_token.verify_oauth2_token(
                         id_token_str,
                         google_requests.Request(),
-                        GOOGLE_CLIENT_ID
+                        GOOGLE_CLIENT_ID # type: ignore
                     )
                     st.session_state.user_info = {
                         "email": id_info.get("email"),
@@ -667,14 +678,16 @@ def main():
             # ここで最適化計算を実行し、結果をキャッシュに保存する
             with st.spinner("最適化計算を実行中..."):
                 solver_output = solve_assignment(
-                    DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
-                    DEFAULT_TRAVEL_COSTS_MATRIX,
+                    st.session_state.DEFAULT_LECTURERS_DATA, st.session_state.DEFAULT_COURSES_DATA,
+                    st.session_state.DEFAULT_CLASSROOMS_DATA, st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX,
                     st.session_state.get("weight_past_assignment_exp", 0.5), # スライダーのキー名で取得
                     st.session_state.get("weight_qualification_exp", 0.5),  # スライダーのキー名で取得
                     st.session_state.get("ignore_schedule_constraint_checkbox_value", True), # チェックボックスの値を取得
                     st.session_state.get("weight_travel_exp", 0.5),         # スライダーのキー名で取得
                     st.session_state.get("weight_age_exp", 0.5),            # スライダーのキー名で取得
-                    st.session_state.get("weight_frequency_exp", 0.5)       # スライダーのキー名で取得
+                    st.session_state.get("weight_frequency_exp", 0.5),       # スライダーのキー名で取得
+                    st.session_state.TODAY, # 追加
+                    st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
                 )
             
             # solver_output の検証を追加
@@ -698,13 +711,9 @@ def main():
 
             # 検証が通れば、結果を保存
             st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
+            # solver_result_cache には、SolverOutput のキーから full_application_and_solver_log を除いたものを格納
             st.session_state.solver_result_cache = {
-                "solution_status_str": solver_output["solution_status_str"],
-                "objective_value": solver_output["objective_value"],
-                "assignments": solver_output["assignments"],
-                "all_courses": solver_output["all_courses"],
-                "all_lecturers": solver_output["all_lecturers"],
-                "solver_raw_status_code": solver_output["solver_raw_status_code"],
+                k: solver_output[k] for k in required_keys if k != "full_application_and_solver_log" # type: ignore
             }
             st.session_state.solution_executed = True # 実行フラグを立てる
             st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
@@ -768,7 +777,8 @@ def main():
             "solver_result_cache",
             "raw_log_on_server",    # サーバー側で保持する生ログ
             "gemini_api_requested", # Gemini API実行フラグ
-            "gemini_api_error"      # Gemini APIエラーメッセージ
+            "gemini_api_error",     # Gemini APIエラーメッセージ
+            "app_data_initialized"  # アプリデータ初期化フラグもクリア
         ]
         for key_to_clear in keys_to_clear:
             if key_to_clear in st.session_state:
@@ -783,8 +793,8 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("講師データ (サンプル)")
-            # past_assignments を表示用に整形
-            df_lecturers = pd.DataFrame(DEFAULT_LECTURERS_DATA)
+            # st.session_state からデータを取得
+            df_lecturers = pd.DataFrame(st.session_state.DEFAULT_LECTURERS_DATA)
             if 'past_assignments' in df_lecturers.columns:
                 df_lecturers['past_assignments'] = df_lecturers['past_assignments'].apply(
                     lambda assignments: ", ".join([f"{a['classroom_id']} ({a['date']})" for a in assignments]) if isinstance(assignments, list) and assignments else "履歴なし"
@@ -792,17 +802,17 @@ def main():
             st.dataframe(df_lecturers, height=200)
         with col2:
             st.subheader("講座データ (サンプル)")
-            st.dataframe(pd.DataFrame(DEFAULT_COURSES_DATA), height=200)
+            st.dataframe(pd.DataFrame(st.session_state.DEFAULT_COURSES_DATA), height=200) # st.session_state から取得
         
         st.subheader("教室データと移動コスト (サンプル)")
         col3, col4 = st.columns(2)
         with col3:
-            st.dataframe(pd.DataFrame(DEFAULT_CLASSROOMS_DATA))
+            st.dataframe(pd.DataFrame(st.session_state.DEFAULT_CLASSROOMS_DATA)) # st.session_state から取得
         with col4:
             # travel_costs_matrix を表示用に整形
             df_travel_costs = pd.DataFrame([
                 {"出発教室": k[0], "到着教室": k[1], "コスト": v}
-                for k, v in DEFAULT_TRAVEL_COSTS_MATRIX.items()
+                for k, v in st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX.items() # st.session_state から取得
             ])
             st.dataframe(df_travel_costs)
 
@@ -814,10 +824,9 @@ def main():
         else: # solution_executed is True
             if "solver_result_cache" not in st.session_state:
                 # solution_executed is True, but no cache (e.g., after viewing sample data, which clears the cache)
-                # この場合、再計算は行わず、キャッシュがない旨をユーザーに伝える
+                # この場合、再計算は行わず、キャッシュがない旨をユーザーに伝える (メッセージを簡潔に)
                 st.warning(
-                    "最適化結果のデータは現在ありません。\n\n"
-                    "以前の結果は「サンプルデータ」表示などでクリアされた可能性があります。\n\n"
+                    "最適化結果のデータは現在ありません。\n"
                     "再度結果を表示するには、サイドバーの「最適割り当てを実行」ボタンを押してください。"
                 )
             else: # solution_executed is True and solver_result_cache exists
@@ -842,25 +851,27 @@ def main():
                     summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
                     assigned_lecturer_ids = results_df["講師ID"].unique()
                     temp_assigned_lecturers = [l for l in DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
+                    # サマリー計算時も st.session_state のデータを使用
+                    temp_assigned_lecturers = [l for l in st.session_state.DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
                     if temp_assigned_lecturers:
                         avg_age = sum(l.get("age", 0) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
                         summary_data.append(("**平均年齢**", f"{avg_age:.1f}才"))
                         avg_frequency = sum(len(l.get("past_assignments", [])) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
                         summary_data.append(("**平均頻度**", f"{avg_frequency:.1f}回"))
                         lecturer_rank_total_counts = {1: 0, 2: 0, 3: 0}
-                        for lecturer in DEFAULT_LECTURERS_DATA:
+                        for lecturer in st.session_state.DEFAULT_LECTURERS_DATA: # st.session_state から取得
                             rank = lecturer.get("qualification_rank")
                             if rank in lecturer_rank_total_counts:
                                 lecturer_rank_total_counts[rank] += 1
                         summary_data.append(("**資格別割り当て状況**", ""))
                         assigned_rank_counts = {1: 0, 2: 0, 3: 0}
                         for l_assigned in temp_assigned_lecturers:
-                            rank = l_assigned.get("qualification_rank")
+                            rank = l_assigned.get("qualification_rank") # type: ignore
                             if rank in assigned_rank_counts:
-                                assigned_rank_counts[rank] += 1
+                                assigned_rank_counts[rank] += 1 # type: ignore
                         for rank_num in [1, 2, 3]:
                             summary_data.append((f"　ランク{rank_num}", f"{assigned_rank_counts.get(rank_num, 0)}人 / {lecturer_rank_total_counts.get(rank_num, 0)}人中"))
-                    past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0]
+                    past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0] # st.session_state から取得
                     past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
                     summary_data.append(("**同教室への過去の割り当て**", ""))
                     summary_data.append(("　新規", f"{past_assignment_new_count}人"))
@@ -875,7 +886,7 @@ def main():
                     if solver_result['assignments']: # 'assignments' が空でないことを確認
                         results_df_display = pd.DataFrame(solver_result['assignments']) # 表示用に再度DataFrame作成
                         st.subheader("割り当て結果")
-                        st.dataframe(results_df_display)
+                        st.dataframe(results_df_display) # type: ignore
                         assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
                         unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
                         if unassigned_courses:
@@ -934,7 +945,7 @@ def main():
                             solver_status = solver_cache["solution_status_str"]
                             objective_value = solver_cache["objective_value"]
                             assignments_list = solver_cache.get("assignments", [])
-                            assignments_summary_df = pd.DataFrame(assignments_list) if assignments_list else None
+                            assignments_summary_df = pd.DataFrame(assignments_list) if assignments_list else None # type: ignore
 
                             gemini_explanation_text = get_gemini_explanation(
                                 filtered_log_for_gemini, GEMINI_API_KEY,
