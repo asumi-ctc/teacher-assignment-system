@@ -850,7 +850,6 @@ def main():
                     total_travel_cost = results_df["移動コスト(元)"].sum()
                     summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
                     assigned_lecturer_ids = results_df["講師ID"].unique()
-                    temp_assigned_lecturers = [l for l in DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
                     # サマリー計算時も st.session_state のデータを使用
                     temp_assigned_lecturers = [l for l in st.session_state.DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
                     if temp_assigned_lecturers:
