@@ -626,11 +626,9 @@ def main():
         button_type_sample = "primary" if st.session_state.view_mode == "sample_data" else "secondary"
         if st.button("サンプルデータ", key="nav_sample_data_button", use_container_width=True, type=button_type_sample):
             st.session_state.view_mode = "sample_data"
-            # 最適化関連のキャッシュをクリアするが、solution_executed は変更しない
-            # これにより、「最適化結果」ボタンが表示されたままになる
+            # サンプルデータ表示時、最適化結果の主要キャッシュ(solver_result_cache, raw_log_on_server)は保持する。
+            # Gemini API関連のキャッシュのみクリアする。
             keys_to_clear_for_sample_view = [
-                "solver_result_cache",
-                "raw_log_on_server",
                 "gemini_explanation",
                 "gemini_api_requested",
                 "gemini_api_error",
