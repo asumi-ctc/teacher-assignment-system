@@ -663,6 +663,28 @@ def main():
         if "gemini_api_requested" in st.session_state: del st.session_state.gemini_api_requested # クリア
         if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error # クリア
         
+        # ここで最適化計算を実行し、結果をキャッシュに保存する
+        with st.spinner("最適化計算を実行中..."): # メインエリアではなく、ボタン押下時にスピナーを表示
+            solver_output = solve_assignment(
+                DEFAULT_LECTURERS_DATA, DEFAULT_COURSES_DATA, DEFAULT_CLASSROOMS_DATA,
+                DEFAULT_TRAVEL_COSTS_MATRIX,
+                st.session_state.get("weight_past_assignment_exp", 0.5), # スライダーのキー名で取得
+                st.session_state.get("weight_qualification_exp", 0.5),  # スライダーのキー名で取得
+                st.session_state.get("ignore_schedule_constraint_checkbox_value", True), # チェックボックスの値を取得
+                st.session_state.get("weight_travel_exp", 0.5),         # スライダーのキー名で取得
+                st.session_state.get("weight_age_exp", 0.5),            # スライダーのキー名で取得
+                st.session_state.get("weight_frequency_exp", 0.5)       # スライダーのキー名で取得
+            )
+            st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
+            st.session_state.solver_result_cache = {
+                "solution_status_str": solver_output["solution_status_str"],
+                "objective_value": solver_output["objective_value"],
+                "assignments": solver_output["assignments"],
+                "all_courses": solver_output["all_courses"],
+                "all_lecturers": solver_output["all_lecturers"],
+                "solver_raw_status_code": solver_output["solver_raw_status_code"],
+            }
+
         st.session_state.solution_executed = True # 実行フラグを立てる
         st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
         st.rerun() # 再実行してメインエリアで処理と表示を行う
@@ -680,27 +702,27 @@ def main():
             "講師の空きスケジュールに応じた講座しか割り当てできないことが原則ですが、"
             "完全割り当てのために以下のことを許容できます。"
         )
-        ignore_schedule_constraint_checkbox = st.checkbox( # st.sidebar.checkbox から st.checkbox に変更
+        st.session_state.ignore_schedule_constraint_checkbox_value = st.checkbox( # 値をセッションステートに保存
             "講師の空きスケジュールを無視する", 
             value=True, 
             help="チェックを外すと割り当て結果が得られないことがあります。その場合は、講師の空きスケジュールが合わない場合が想定されます。"
         )
 
     with st.sidebar.expander("【目的】", expanded=False):
-        st.caption( # st.sidebar.caption から st.caption に変更
+        st.caption(
             "【重み】不要な目的はゼロにしてください。（目的から除外されます）"
             "また、相対的な値なので、全部0.1と全部1.0は同じ結果となります。"
         )
         st.markdown("**移動コストが低い人を優先**")
-        weight_travel = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp")
         st.markdown("**年齢の若い人を優先**")
-        weight_age = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
         st.markdown("**割り当て頻度の少ない人を優先**")
-        weight_frequency = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
         st.markdown("**講師資格が高い人を優先**")
-        weight_qualification_slider = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
         st.markdown("**同教室への割り当て実績が無い人を優先**")
-        weight_past_assignment_recency_slider = st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
 
     # ログインユーザー情報とログアウトボタン
     user_email = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
