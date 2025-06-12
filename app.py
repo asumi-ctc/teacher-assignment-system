@@ -679,8 +679,26 @@ def main():
                     st.session_state.get("weight_frequency_exp", 0.5)       # スライダーのキー名で取得
                 )
             
-            # solve_assignment が SolverOutput 型の辞書を返すことを期待
-            # TypedDictで型ヒントされているため、キーアクセスはそのまま行う
+            # solver_output の検証を追加
+            if not isinstance(solver_output, dict):
+                st.error(f"最適化関数の戻り値が不正です (辞書ではありません)。型: {type(solver_output)}")
+                st.session_state.solution_executed = True
+                st.session_state.view_mode = "optimization_result"
+                st.rerun()
+                return # tryブロックを抜ける (st.rerunがあるので実際には不要だが念のため)
+
+            required_keys = ["full_application_and_solver_log", "solution_status_str", 
+                             "objective_value", "assignments", "all_courses", 
+                             "all_lecturers", "solver_raw_status_code"]
+            missing_keys = [key for key in required_keys if key not in solver_output]
+            if missing_keys:
+                st.error(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}。取得キー: {list(solver_output.keys())}")
+                st.session_state.solution_executed = True
+                st.session_state.view_mode = "optimization_result"
+                st.rerun()
+                return
+
+            # 検証が通れば、結果を保存
             st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
             st.session_state.solver_result_cache = {
                 "solution_status_str": solver_output["solution_status_str"],
@@ -694,15 +712,16 @@ def main():
             st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
 
         except Exception as e:
-            st.error(f"最適化処理中に予期せぬエラーが発生しました: {e}")
+            st.error(f"最適化処理中または結果の格納中に予期せぬエラーが発生しました: {e}")
             # エラーが発生しても、実行試行済みとし、結果表示画面へ遷移させる
             # solver_result_cache は設定されないため、結果表示画面で「データなし」の警告が表示される
+            # デバッグ用にスタックトレースを表示することも検討できます:
+            # import traceback
+            # st.text_area("エラー詳細:", traceback.format_exc(), height=300)
             st.session_state.solution_executed = True 
             st.session_state.view_mode = "optimization_result"
 
         st.rerun() # 再実行してメインエリアで処理と表示を行う
-
-    # サイドバーの「サンプルデータ」「最適化結果」ボタンは削除 (上部に移動したため)
 
     st.sidebar.markdown("---")
     with st.sidebar.expander("【制約】", expanded=False):
