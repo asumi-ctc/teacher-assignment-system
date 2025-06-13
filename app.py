@@ -661,8 +661,8 @@ def main():
 
     with nav_cols[1]:
         # 目的関数の数式ボタン
-        button_type_objective = "primary" if st.session_state.view_mode == "model_object" else "secondary" # view_mode の値は変更せず、ボタン名とページヘッダーを合わせる
-        if st.button("model オブジェクト", key="nav_model_object_button", use_container_width=True, type=button_type_objective): # ボタン名を変更
+        button_type_objective = "primary" if st.session_state.view_mode == "objective_function" else "secondary"
+        if st.button("ソルバーとmodelオブジェクト", key="nav_solver_model_object_button", use_container_width=True, type=button_type_objective): # ボタン名を変更
             st.session_state.view_mode = "objective_function"
             st.rerun()
 
@@ -834,14 +834,43 @@ def main():
             st.dataframe(df_travel_costs)
 
     elif st.session_state.view_mode == "objective_function":
-        st.header("model オブジェクトの構成要素") # ヘッダー名を変更
+        st.header("ソルバーとmodelオブジェクト") # ヘッダー名を変更
 
         st.markdown(
             r"""
-            OR-Toolsのソルバーは、最適化問題を解くために「model オブジェクト」を利用します。
-            このオブジェクトは、問題の構造を数学的に定義するもので、主に以下の3つの要素で構成されます。
+            このシステムでは、数理最適化問題を解くために特定のソルバーと、そのソルバーが理解できる形式で問題を記述した「model オブジェクト」を使用します。
             """
         )
+
+        st.subheader("選択されたソルバー: CP-SAT")
+        st.markdown(
+            r"""
+            この講師割り当て問題の解決には、Google OR-Toolsに含まれる**CP-SATソルバー**が選択されています。
+            CP-SATは「Constraint Programming - Satisfiability」の略で、制約プログラミングと充足可能性問題解決の技術を組み合わせた強力なソルバーです。
+            """
+        )
+        with st.expander("CP-SATソルバーを選択した理由"):
+            st.markdown(
+                r"""
+                CP-SATソルバーがこの講師割り当て問題に適している主な理由は以下の通りです。
+
+                1.  **組み合わせ最適化問題への適合性**:
+                    講師をどの講座に割り当てるかという多数の組み合わせの中から最適なものを見つけ出す問題であり、CP-SATはこのような問題を得意としています。
+
+                2.  **多様な制約の表現力と処理能力**:
+                    「各講座には1人の講師」「各講師は最大1講座」「資格ランクの適合」「スケジュールの適合（またはペナルティ）」といった複雑な制約条件を効率的に扱うことができます。特に論理的な制約の記述に優れています。
+
+                3.  **離散変数（特にバイナリ変数）への対応**:
+                    「講師Lを講座Cに割り当てるか否か」を0か1で表現する決定変数が中心となります。CP-SATはこのような離散変数、特にブール変数を効率的に処理するSAT技術を基盤としています。
+
+                4.  **明確な目的関数の最適化**:
+                    割り当ての総コスト（移動、年齢、頻度、資格、近接性、スケジュール違反ペナルティなどの重み付き合計）を最小化するという明確な目的のもと、制約を満たしつつ最適な解を探索できます。
+
+                これらの特性により、CP-SATソルバーは本問題に対して効率的かつ効果的な解を提供することが期待できます。
+                """
+            )
+        st.markdown("---")
+        st.subheader("model オブジェクトの構成要素")
 
         st.subheader("1. 決定変数 (Decision Variables)")
         st.markdown(
