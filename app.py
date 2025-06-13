@@ -624,18 +624,11 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     if objective_terms:
         model.Minimize(sum(objective_terms))
     else:
-        log_to_stream("Objective terms list is empty. Minimizing 0 (no assignments or no costs).")
+        # This case should ideally not be reached if 'possible_assignments' was non-empty,
+        # as 'assignment_costs' would initialize 'objective_terms'.
+        # However, if it is reached, minimizing 0 is valid, and the solver should still run.
+        log_to_stream("Warning: Objective terms list was empty. Minimizing 0.")
         model.Minimize(0) # 目的項がない場合は0を最小化 (エラー回避)
-        all_captured_logs = full_log_stream.getvalue()
-        return SolverOutput(
-            solution_status_str="目的関数エラー (最適化対象なし)",
-            objective_value=None,
-            assignments=[],
-            all_courses=courses_data,
-            all_lecturers=lecturers_data,
-            solver_raw_status_code=cp_model.MODEL_INVALID,
-            full_application_and_solver_log=all_captured_logs
-        )
     solver = cp_model.CpSolver()
     solver.parameters.log_search_progress = True
 
