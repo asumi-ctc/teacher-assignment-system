@@ -834,26 +834,78 @@ def main():
             st.dataframe(df_travel_costs)
 
     elif st.session_state.view_mode == "objective_function":
-        st.header("目的関数の数式")
+        st.header("model オブジェクトの構成要素") # ヘッダー名を変更
 
-        #  Markdownで数式を表示 (動的な重みを使用)
         st.markdown(
             r"""
-            目的関数は、割り当ての総コストを最小化するように設計されています。具体的には、以下の要素の重み付き合計です。
+            OR-Toolsのソルバーは、最適化問題を解くために「model オブジェクト」を利用します。
+            このオブジェクトは、問題の構造を数学的に定義するもので、主に以下の3つの要素で構成されます。
+            """
+        )
+
+        st.subheader("1. 決定変数 (Decision Variables)")
+        st.markdown(
+            r"""
+            決定変数は、ソルバーが最適解を見つけるために値を決定する変数です。
+            この講師割り当て問題では、各講師 $l$ が各講座 $c$ に割り当てられるかどうかを示すバイナリ変数 $x_{l,c}$ を使用します。
 
             $$
-            \text{Total Cost} = \sum_{\text{lecturer } l, \text{ course } c} x_{l,c} \cdot \text{Cost}_{l,c}
+            x_{l,c} \in \{0, 1\} \quad (\forall l \in L, \forall c \in C)
             $$
 
-            ここで、$x_{l,c}$ は講師 $l$ が講座 $c$ に割り当てられた場合に 1、そうでない場合に 0 をとる変数です。
+            ここで、
+            - $L$ は講師の集合
+            - $C$ は講座の集合
+            - $x_{l,c} = 1$ ならば、講師 $l$ は講座 $c$ に割り当てられます。
+            - $x_{l,c} = 0$ ならば、講師 $l$ は講座 $c$ に割り当てられません。
+            """
+        )
 
-            各割り当てのコスト $\text{Cost}_{l,c}$ は以下のように計算されます。
+        st.subheader("2. 制約 (Constraints)")
+        st.markdown(
+            r"""
+            制約は、決定変数が取りうる値の範囲や、変数間の関係を定義する条件です。
+            これにより、実行可能な解（許容される割り当てパターン）の範囲が定まります。
+
+            **主な制約:**
+            - **各講座への割り当て制約:** 各講座 $c$ には、担当可能な講師候補が存在する場合、必ず1人の講師が割り当てられます。
+              $$
+              \sum_{l \in L_c} x_{l,c} = 1 \quad (\forall c \in C \text{ s.t. } L_c \neq \emptyset)
+              $$
+              ここで、$L_c$ は講座 $c$ を担当可能な講師の集合です（資格ランクやスケジュール（無視しない場合）を考慮）。
+
+            - **各講師の担当上限制約:** 各講師 $l$ は、最大で1つの講座しか担当できません。
+              $$
+              \sum_{c \in C} x_{l,c} \leq 1 \quad (\forall l \in L)
+              $$
+            
+            - **暗黙的な制約:** ソースコード上では、講師の資格ランクが講座の要求ランクを満たさない場合や、スケジュールが適合しない（かつスケジュール制約を無視する設定でない）組み合わせは、そもそも上記の決定変数 $x_{l,c}$ が生成される前の段階で除外されます。これは、それらの組み合わせに対する $x_{l,c}$ が実質的に 0 に固定される制約と見なせます。
+            """
+        )
+
+        st.subheader("3. 目的関数 (Objective Function)")
+        st.markdown(
+            r"""
+            目的関数は、最適化の目標を定義する数式です。この問題では、割り当ての総コストを最小化することが目的です。
+
+            $$
+            \text{Minimize} \quad Z = \sum_{l \in L} \sum_{c \in C} x_{l,c} \cdot \text{Cost}_{l,c}
+            $$
+
+            ここで、$\text{Cost}_{l,c}$ は講師 $l$ が講座 $c$ に割り当てられた場合の個別のコストで、以下のように計算されます。
 
             $$
             \text{Cost}_{l,c} = w_{\text{travel}} \cdot \text{TravelCost}_{l,c} + w_{\text{age}} \cdot \text{AgeCost}_l + w_{\text{frequency}} \cdot \text{FrequencyCost}_l + w_{\text{qualification}} \cdot \text{QualificationCost}_l + w_{\text{recency}} \cdot \text{RecencyCost}_{l,c}  + \text{ScheduleViolationPenalty}_{l,c}
             $$
 
-            各要素の説明は以下の通りです。
+            各記号の意味:
+            - $w_{\text{...}}$: 各コスト要素に対する重み（サイドバーで設定可能）
+            - $\text{TravelCost}_{l,c}$: 講師 $l$ と講座 $c$ の教室間の移動コスト
+            - $\text{AgeCost}_l$: 講師 $l$ の年齢に基づくコスト
+            - $\text{FrequencyCost}_l$: 講師 $l$ の過去の総割り当て頻度に基づくコスト
+            - $\text{QualificationCost}_l$: 講師 $l$ の資格ランクに基づくコスト
+            - $\text{RecencyCost}_{l,c}$: 講師 $l$ が講座 $c$ の教室に最後に割り当てられてからの経過日数に基づくコスト
+            - $\text{ScheduleViolationPenalty}_{l,c}$: 講師 $l$ と講座 $c$ のスケジュールが不適合な場合に発生するペナルティ（スケジュール制約を無視する場合）
             """
         )
 
