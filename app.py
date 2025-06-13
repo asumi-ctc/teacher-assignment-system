@@ -894,6 +894,14 @@ def main():
             - $x_{l,c} = 0$ ならば、講師 $l$ は講座 $c$ に割り当てられません。
             """
         )
+        st.markdown("**対応するPythonコード (抜粋):**")
+        st.code(
+            """
+# ... ループ内で各講師と講座の組み合わせに対して ...
+var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
+possible_assignments.append({"variable": var, ...})
+            """, language="python"
+        )
 
         st.subheader("2. 制約 (Constraints)")
         st.markdown(
@@ -915,6 +923,22 @@ def main():
             
             - **暗黙的な制約:** ソースコード上では、講師の資格ランクが講座の要求ランクを満たさない場合や、スケジュールが適合しない（かつスケジュール制約を無視する設定でない）組み合わせは、そもそも上記の決定変数 $x_{l,c}$ が生成される前の段階で除外されます。これは、それらの組み合わせに対する $x_{l,c}$ が実質的に 0 に固定される制約と見なせます。
             """
+        )
+        st.markdown("**対応するPythonコード (抜粋):**")
+        st.code(
+            """
+# 各講座への割り当て制約
+for course_item in courses_data:
+    possible_assignments_for_course = [pa["variable"] for pa in possible_assignments if pa["course_id"] == course_item["id"]]
+    if possible_assignments_for_course:
+        model.Add(sum(possible_assignments_for_course) == 1)
+
+# 各講師の担当上限制約
+for lecturer_item in lecturers_data:
+    assignments_for_lecturer = [pa["variable"] for pa in possible_assignments if pa["lecturer_id"] == lecturer_item["id"]]
+    if assignments_for_lecturer:
+        model.Add(sum(assignments_for_lecturer) <= 1)
+            """, language="python"
         )
 
         st.subheader("3. 目的関数 (Objective Function)")
@@ -941,6 +965,21 @@ def main():
             - $\text{RecencyCost}_{l,c}$: 講師 $l$ が講座 $c$ の教室に最後に割り当てられてからの経過日数に基づくコスト
             - $\text{ScheduleViolationPenalty}_{l,c}$: 講師 $l$ と講座 $c$ のスケジュールが不適合な場合に発生するペナルティ（スケジュール制約を無視する場合）
             """
+        )
+        st.markdown("**対応するPythonコード (抜粋):**")
+        st.code(
+            """
+# 各割り当て候補のコスト計算 (total_weighted_cost_int)
+# total_weighted_cost_float = (weight_travel * travel_cost + ...) + schedule_violation_penalty
+# total_weighted_cost_int = int(total_weighted_cost_float * 100)
+# possible_assignments.append({..., "cost": total_weighted_cost_int, ...})
+
+# 目的関数の設定
+assignment_costs = [pa["variable"] * pa["cost"] for pa in possible_assignments]
+objective_terms = assignment_costs
+if objective_terms:
+    model.Minimize(sum(objective_terms))
+            """, language="python"
         )
 
     elif st.session_state.view_mode == "optimization_result":
