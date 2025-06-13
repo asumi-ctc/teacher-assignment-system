@@ -641,8 +641,9 @@ def main():
 
     # --- メイン画面上部にナビゲーションボタンを配置 ---
     # ボタン幅を広げ、文字列が改行されないように比率を調整 (例: [1,1,5] -> [2,2,3])
-    nav_cols = st.columns([2, 2, 3]) 
+    nav_cols = st.columns([2, 2, 2, 1])  # ボタン数を3つに合わせ、比率を調整
     with nav_cols[0]:
+        # サンプルデータボタン
         button_type_sample = "primary" if st.session_state.view_mode == "sample_data" else "secondary"
         if st.button("サンプルデータ", key="nav_sample_data_button", use_container_width=True, type=button_type_sample):
             st.session_state.view_mode = "sample_data"
@@ -659,6 +660,13 @@ def main():
             st.rerun()
 
     with nav_cols[1]:
+        # 目的関数の数式ボタン
+        button_type_objective = "primary" if st.session_state.view_mode == "objective_function" else "secondary"
+        if st.button("目的関数の数式", key="nav_objective_function_button", use_container_width=True, type=button_type_objective):
+            st.session_state.view_mode = "objective_function"
+            st.rerun()
+
+    with nav_cols[2]:
         # 「最適化結果」ボタンは、最適化が一度でも実行された後にのみ表示
         if st.session_state.get("solution_executed", False): 
             button_type_result = "primary" if st.session_state.view_mode == "optimization_result" else "secondary"
@@ -824,6 +832,30 @@ def main():
                 for k, v in st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX.items() # st.session_state から取得
             ])
             st.dataframe(df_travel_costs)
+
+    elif st.session_state.view_mode == "objective_function":
+        st.header("目的関数の数式")
+
+        #  Markdownで数式を表示 (動的な重みを使用)
+        st.markdown(
+            r"""
+            目的関数は、割り当ての総コストを最小化するように設計されています。具体的には、以下の要素の重み付き合計です。
+
+            $$
+            \text{Total Cost} = \sum_{\text{lecturer } l, \text{ course } c} x_{l,c} \cdot \text{Cost}_{l,c}
+            $$
+
+            ここで、$x_{l,c}$ は講師 $l$ が講座 $c$ に割り当てられた場合に 1、そうでない場合に 0 をとる変数です。
+
+            各割り当てのコスト $\text{Cost}_{l,c}$ は以下のように計算されます。
+
+            $$
+            \text{Cost}_{l,c} = w_{\text{travel}} \cdot \text{TravelCost}_{l,c} + w_{\text{age}} \cdot \text{AgeCost}_l + w_{\text{frequency}} \cdot \text{FrequencyCost}_l + w_{\text{qualification}} \cdot \text{QualificationCost}_l + w_{\text{recency}} \cdot \text{RecencyCost}_{l,c}  + \text{ScheduleViolationPenalty}_{l,c}
+            $$
+
+            各要素の説明は以下の通りです。
+            """
+        )
 
     elif st.session_state.view_mode == "optimization_result":
         st.header("最適化結果") # ヘッダーは最初に表示
