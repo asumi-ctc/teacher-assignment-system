@@ -915,7 +915,7 @@ def main():
                     st.session_state.get("allow_multiple_assignments_general_case_cb", True),
                     st.session_state.TODAY, # 追加
                     st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
-                )
+                ) # type: ignore
             
             # solver_output の検証を追加
             if not isinstance(solver_output, dict):
@@ -946,12 +946,14 @@ def main():
             st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
 
         except Exception as e:
-            st.error(f"最適化処理中または結果の格納中に予期せぬエラーが発生しました: {e}")
+            st.error(f"最適化処理中に予期せぬエラーが発生しました。")
+            st.error(f"エラー詳細: {str(e)[:1000]}") # エラーメッセージを少し長く表示
             # エラーが発生しても、実行試行済みとし、結果表示画面へ遷移させる
             # solver_result_cache は設定されないため、結果表示画面で「データなし」の警告が表示される
-            # デバッグ用にスタックトレースを表示することも検討できます:
-            # import traceback
-            # st.text_area("エラー詳細:", traceback.format_exc(), height=300)
+            # デバッグ用にスタックトレースをログに出力（UIには出さない）
+            import traceback
+            error_trace = traceback.format_exc()
+            st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{error_trace}" # ログにエラーを記録
             st.session_state.solution_executed = True 
             st.session_state.view_mode = "optimization_result"
 
