@@ -909,18 +909,40 @@ def main():
         st.markdown("- 講師は資格ランクに応じた講座しか割り当てできません。")
         # st.markdown("- 講師は（今回の割り当てでは）1つの講座しか担当できません。") # この行を削除
 
-        st.markdown("**ソフト制約（割り当てできない場合に許容できる）**")
+        st.markdown("**ソフト制約（割り当てできない場合に許容できる）**") # 変更なし
         st.markdown(
-            "講師の空きスケジュールに応じた講座しか割り当てできないことが原則ですが、"
-            "完全割り当てのために以下のことを許容できます。"
+            "以下の項目は原則として守られますが、チェックボックスで許容することで、"
+            "より多くの講座に講師を割り当てられる可能性があります。"
         )
-        st.session_state.ignore_schedule_constraint_checkbox_value = st.checkbox( # 値をセッションステートに保存
-            "講師の空きスケジュールを無視する", 
-            value=True, 
-            help="チェックを外すと割り当て結果が得られないことがあります。その場合は、講師の空きスケジュールが合わない場合が想定されます。"
+        
+        st.markdown("---") # 区切り線
+        st.markdown("**1. 講師の個人スケジュールを尊重する**")
+        st.session_state.allow_schedule_violation = st.checkbox(
+            "ただし、割り当て出来ない場合にスケジュール違反を許容する",
+            value=st.session_state.get("allow_schedule_violation", True), # デフォルトは許容
+            key="allow_schedule_violation_cb",
+            help="チェックを外すと、講師の空きスケジュールに完全に合致しない割り当ては行われません。"
         )
 
-    with st.sidebar.expander("【目的】", expanded=False):
+        st.markdown("---") # 区切り線
+        st.markdown("**2. 一般講習と特別講習が連日開催される場合は、特別資格を持つ同一講師を優先的に割り当てる**")
+        st.session_state.allow_ignore_favored_consecutive = st.checkbox(
+            "ただし、この優先割り当てを無視して他の講師の割り当てを許容する",
+            value=st.session_state.get("allow_ignore_favored_consecutive", False), # デフォルトは優先
+            key="allow_ignore_favored_consecutive_cb",
+            help="チェックを入れると、連日開催の優遇を行わず、他の割り当て基準が優先されることがあります。"
+        )
+
+        st.markdown("---") # 区切り線
+        st.markdown("**3. 一般講習と特別講習が連日開催される場合を除き、同一講師の割り当て回数は1回にする。**") # 文言変更
+        st.session_state.allow_multiple_assignments_general_case = st.checkbox(
+            "上記原則に反して、複数回の割り当てを許容する（連日開催の例外以外でも）", # 文言調整
+            value=st.session_state.get("allow_multiple_assignments_general_case", True), # デフォルトは許容
+            key="allow_multiple_assignments_general_case_cb", # キー名を変更して意図を明確に
+            help="チェックを外すと、一般講習と特別講習の連日開催の場合を除き、各講師は最大1つの講座しか担当しません（ペナルティが非常に高くなります）。" # ヘルプテキスト調整
+        )
+
+    with st.sidebar.expander("【目的】（上記ソフト制約を許容する場合の重み付け）", expanded=False): # タイトル変更
         st.caption(
             "【重み】不要な目的はゼロにしてください。（目的から除外されます）"
             "また、相対的な値なので、全部0.1と全部1.0は同じ結果となります。"
@@ -935,8 +957,9 @@ def main():
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
         st.markdown("**同教室への割り当て実績が無い人を優先**")
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
-        st.markdown("**講師の割り当て集中度を低くする**")
-        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が複数の講座を担当することへのペナルティが大きくなります。値が高いほど、各講師は1つの講座に近づきます。", key="weight_lecturer_concentration_exp")
+        # 「講師の割り当て集中度を低くする」のスライダーは削除 (新しいソフト制約3で制御するため)
+        # st.markdown("**講師の割り当て集中度を低くする**")
+        # st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が複数の講座を担当することへのペナルティが大きくなります。値が高いほど、各講師は1つの講座に近づきます。", key="weight_lecturer_concentration_exp")
 
     # ログインユーザー情報とログアウトボタン
     user_email = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
