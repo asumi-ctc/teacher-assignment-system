@@ -10,6 +10,9 @@ from streamlit_oauth import OAuth2Component # OIDC認証用
 from google.oauth2 import id_token # IDトークン検証用
 from google.auth.transport import requests as google_requests # IDトークン検証用
 import random # データ生成用
+# dateutil.relativedelta を使用するため、インストールが必要な場合があります。
+# pip install python-dateutil
+from dateutil.relativedelta import relativedelta
 from typing import TypedDict, List, Optional, Any, Tuple # 他のimport文と合わせて先頭に移動
 
 # --- 1. データ定義 (LOG_EXPLANATIONS と _get_log_explanation は削除) ---
@@ -172,15 +175,28 @@ def generate_classrooms_data(prefectures, prefecture_classroom_ids):
         classrooms_data.append({"id": prefecture_classroom_ids[i], "location": pref_name})
     return classrooms_data
 
-def generate_lecturers_data(prefecture_classroom_ids, today_date):
+def generate_lecturers_data(prefecture_classroom_ids, today_date, assignment_target_month_start, assignment_target_month_end):
     lecturers_data = []
-    DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-    TIMES = ["AM", "PM"]
-    ALL_SLOTS = [(day, time) for day in DAYS for time in TIMES]
+    # 講師の空き日を生成する期間 (対象月の前後1ヶ月)
+    availability_period_start = assignment_target_month_start - relativedelta(months=1)
+    availability_period_end = assignment_target_month_end + relativedelta(months=1)
+
+    all_possible_dates_for_availability = []
+    current_date_iter = availability_period_start
+    while current_date_iter <= availability_period_end:
+        all_possible_dates_for_availability.append(current_date_iter.strftime("%Y-%m-%d"))
+        current_date_iter += datetime.timedelta(days=1)
 
     for i in range(1, 301): # 講師数を100人から300人に変更
-        num_available_slots = random.randint(3, 7)
-        availability = random.sample(ALL_SLOTS, num_available_slots)
+        # num_available_slots = random.randint(3, 7) # 以前のAM/PMスロット数
+        # availability = random.sample(ALL_SLOTS, num_available_slots) # 以前の形式
+
+        num_available_days = random.randint(15, 45) # 対象月±1ヶ月の期間内で15～45日空いている
+        if len(all_possible_dates_for_availability) >= num_available_days:
+            availability = random.sample(all_possible_dates_for_availability, num_available_days)
+            availability.sort()
+        else: # 万が一、候補日が少ない場合（通常ありえない）
+            availability = all_possible_dates_for_availability[:]
         # 過去の割り当て履歴を生成 (約10件)
         num_past_assignments = random.randint(8, 12) # 8から12件の間でランダム
         past_assignments = []
@@ -214,7 +230,7 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date):
         })
     return lecturers_data
 
-def generate_courses_data(prefectures, prefecture_classroom_ids):
+def generate_courses_data(prefectures, prefecture_classroom_ids, assignment_target_month_start, assignment_target_month_end):
     # 新しい講座定義
     GENERAL_COURSE_LEVELS = [
         {"name_suffix": "初心", "rank": 5}, {"name_suffix": "初級", "rank": 4},
@@ -227,37 +243,65 @@ def generate_courses_data(prefectures, prefecture_classroom_ids):
         {"name_suffix": "プロ", "rank": 1}
     ]
 
-    # 各都道府県で生成する講座の種類とスケジュールを定義
-    # (例として、一般講座3つ、特別講座2つを異なる時間帯で生成)
-    COURSE_SCHEDULE_TEMPLATES = [
-        {"type": "general", "level_idx": 0, "schedule": ("Mon", "AM"), "id_suffix_prefix": "GC"}, # 一般講座 ランク5 (初心)
-        {"type": "general", "level_idx": 2, "schedule": ("Tue", "PM"), "id_suffix_prefix": "GC"}, # 一般講座 ランク3 (中級)
-        {"type": "general", "level_idx": 4, "schedule": ("Wed", "AM"), "id_suffix_prefix": "GC"}, # 一般講座 ランク1 (プロ)
-        {"type": "special", "level_idx": 1, "schedule": ("Thu", "PM"), "id_suffix_prefix": "SC"}, # 特別講座 ランク4 (初級)
-        {"type": "special", "level_idx": 3, "schedule": ("Fri", "AM"), "id_suffix_prefix": "SC"}, # 特別講座 ランク2 (上級)
-    ]
+    # 対象月の日曜日リストを作成
+    sundays_in_target_month = []
+    current_date_iter = assignment_target_month_start
+    while current_date_iter <= assignment_target_month_end:
+        if current_date_iter.weekday() == 6: # 0:月曜日, 6:日曜日
+            sundays_in_target_month.append(current_date_iter.strftime("%Y-%m-%d"))
+        current_date_iter += datetime.timedelta(days=1)
+
+    # 対象月の土曜日と平日リストを作成 (特別講座用)
+    saturdays_in_target_month_for_special = []
+    weekdays_in_target_month_for_special = []
+    all_days_in_target_month_for_special_obj = [] # 日付オブジェクトを保持
+    current_date_iter = assignment_target_month_start
+    while current_date_iter <= assignment_target_month_end:
+        all_days_in_target_month_for_special_obj.append(current_date_iter)
+        if current_date_iter.weekday() == 5: # 土曜日
+            saturdays_in_target_month_for_special.append(current_date_iter.strftime("%Y-%m-%d"))
+        elif current_date_iter.weekday() < 5: # 平日
+            weekdays_in_target_month_for_special.append(current_date_iter.strftime("%Y-%m-%d"))
+        current_date_iter += datetime.timedelta(days=1)
 
     courses_data = []
     course_counter = 1
     for i, pref_classroom_id in enumerate(prefecture_classroom_ids):
         pref_name = prefectures[i]
-        for template in COURSE_SCHEDULE_TEMPLATES:
-            level_info = None
-            course_type_name = ""
-            if template["type"] == "general":
-                level_info = GENERAL_COURSE_LEVELS[template["level_idx"]]
-                course_type_name = "一般講座"
-            else: # special
-                level_info = SPECIAL_COURSE_LEVELS[template["level_idx"]]
-                course_type_name = "特別講座"
 
+        # 一般講座の生成 (対象月の各日曜日に、ランダムに2つのレベルで開催)
+        for sunday_str in sundays_in_target_month:
+            # 各日曜日に異なるレベルの一般講座を例えば2つ生成
+            selected_levels_for_general = random.sample(GENERAL_COURSE_LEVELS, min(2, len(GENERAL_COURSE_LEVELS)))
+            for level_info in selected_levels_for_general:
+                courses_data.append({
+                    "id": f"{pref_classroom_id}-GC{course_counter}",
+                    "name": f"{pref_name} 一般講座 {level_info['name_suffix']} ({sunday_str[-5:]})", # 日付の月日部分を名前に含める
+                    "classroom_id": pref_classroom_id,
+                    "course_type": "general",
+                    "rank": level_info['rank'],
+                    "schedule": sunday_str
+                })
+                course_counter += 1
+
+        # 特別講座の生成 (対象月内に1回、土曜優先)
+        chosen_date_for_special_course = None
+        if saturdays_in_target_month_for_special:
+            chosen_date_for_special_course = random.choice(saturdays_in_target_month_for_special)
+        elif weekdays_in_target_month_for_special:
+            chosen_date_for_special_course = random.choice(weekdays_in_target_month_for_special)
+        elif all_days_in_target_month_for_special_obj: # 万が一の場合
+            chosen_date_for_special_course = random.choice(all_days_in_target_month_for_special_obj).strftime("%Y-%m-%d")
+        
+        if chosen_date_for_special_course:
+            level_info_special = random.choice(SPECIAL_COURSE_LEVELS)
             courses_data.append({
-                "id": f"{pref_classroom_id}-{template['id_suffix_prefix']}{course_counter}",
-                "name": f"{pref_name} {course_type_name} {level_info['name_suffix']}",
+                "id": f"{pref_classroom_id}-SC{course_counter}",
+                "name": f"{pref_name} 特別講座 {level_info_special['name_suffix']} ({chosen_date_for_special_course[-5:]})",
                 "classroom_id": pref_classroom_id,
-                "course_type": template["type"],
-                "rank": level_info['rank'],
-                "schedule": template["schedule"]
+                "course_type": "special",
+                "rank": level_info_special['rank'],
+                "schedule": chosen_date_for_special_course
             })
             course_counter += 1
     return courses_data
@@ -399,14 +443,14 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             if not schedule_available: # スケジュールが合わない場合
                 if ignore_schedule_constraint: # スケジュール制約を無視する設定の場合
                     schedule_violation_penalty = BASE_PENALTY_SCHEDULE_VIOLATION
-                    log_to_stream(f"  - Schedule incompatible (constraint ignored, penalty {schedule_violation_penalty} applied): {lecturer_id} for {course_id} (Course_schedule={course['schedule']}, Lecturer_avail={lecturer['availability']})")
+                    log_to_stream(f"  - Schedule incompatible (constraint ignored, penalty {schedule_violation_penalty} applied): {lecturer_id} for {course_id} (Course_schedule={course['schedule']}, Lecturer_avail_sample={lecturer['availability'][:3]}...)") # 講師の空き日は多すぎる可能性があるので一部表示
                 else: # スケジュール制約を無視しない設定の場合 -> 割り当て不可
-                    log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable and constraint NOT ignored: Course_schedule={course['schedule']}, Lecturer_avail={lecturer['availability']})")
+                    log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable and constraint NOT ignored: Course_schedule={course['schedule']}, Lecturer_avail_sample={lecturer['availability'][:3]}...)")
                     continue
             # else: スケジュールが合う場合はペナルティなし
 
             potential_assignment_count += 1
-            log_to_stream(f"  + Potential assignment: {lecturer_id} to {course_id}")
+            log_to_stream(f"  + Potential assignment: {lecturer_id} to {course_id} on {course['schedule']}")
             var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
             
             travel_cost = travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999)
@@ -572,7 +616,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     "講座ID": course["id"],
                     "講座名": course["name"],
                     "教室ID": course["classroom_id"],
-                    "スケジュール": f"{course['schedule'][0]} {course['schedule'][1]}",
+                    "スケジュール": course['schedule'], # 日付文字列を直接使用
                     "算出コスト(x100)": pa["cost"], # pa["cost"] は重み付け後の整数コスト
                     "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
                     "年齢コスト(元)": lecturer.get("age", 99),
@@ -607,6 +651,12 @@ def initialize_app_data():
     if "app_data_initialized" not in st.session_state:
         st.session_state.TODAY = datetime.date.today()
         st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 100000
+        
+        # 割り当て対象月の設定 (現在の4ヶ月後)
+        assignment_target_month_start_val = (st.session_state.TODAY + relativedelta(months=4)).replace(day=1)
+        st.session_state.ASSIGNMENT_TARGET_MONTH_START = assignment_target_month_start_val
+        next_month_val = assignment_target_month_start_val + relativedelta(months=1)
+        st.session_state.ASSIGNMENT_TARGET_MONTH_END = next_month_val - datetime.timedelta(days=1)
 
         PREFECTURES_val, PREFECTURE_CLASSROOM_IDS_val = generate_prefectures_data()
         st.session_state.PREFECTURES = PREFECTURES_val
@@ -618,10 +668,14 @@ def initialize_app_data():
         st.session_state.ALL_CLASSROOM_IDS_COMBINED = st.session_state.PREFECTURE_CLASSROOM_IDS
 
         st.session_state.DEFAULT_LECTURERS_DATA = generate_lecturers_data(
-            st.session_state.PREFECTURE_CLASSROOM_IDS, st.session_state.TODAY
+            st.session_state.PREFECTURE_CLASSROOM_IDS, st.session_state.TODAY,
+            st.session_state.ASSIGNMENT_TARGET_MONTH_START, # 追加
+            st.session_state.ASSIGNMENT_TARGET_MONTH_END    # 追加
         )
         st.session_state.DEFAULT_COURSES_DATA = generate_courses_data(
-            st.session_state.PREFECTURES, st.session_state.PREFECTURE_CLASSROOM_IDS
+            st.session_state.PREFECTURES, st.session_state.PREFECTURE_CLASSROOM_IDS,
+            st.session_state.ASSIGNMENT_TARGET_MONTH_START, # 追加
+            st.session_state.ASSIGNMENT_TARGET_MONTH_END    # 追加
         )
 
         REGIONS = {
@@ -896,7 +950,8 @@ def main():
             "gemini_explanation", 
             "solution_executed", 
             "solver_result_cache",
-            "raw_log_on_server",    # サーバー側で保持する生ログ
+            "raw_log_on_server",
+            "app_data_initialized", # アプリデータ初期化フラグもクリアして再生成を促す
             "gemini_api_requested", # Gemini API実行フラグ
             "gemini_api_error",     # Gemini APIエラーメッセージ
             "app_data_initialized"  # アプリデータ初期化フラグもクリア
@@ -905,12 +960,17 @@ def main():
             if key_to_clear in st.session_state:
                 del st.session_state[key_to_clear]
         st.rerun()
+    
 
     st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
 
     # --- メインエリアの表示制御 ---
     if st.session_state.view_mode == "sample_data":
         st.header("入力データ")
+        st.markdown(
+            f"**現在の割り当て対象月:** {st.session_state.ASSIGNMENT_TARGET_MONTH_START.strftime('%Y年%m月%d日')} "
+            f"～ {st.session_state.ASSIGNMENT_TARGET_MONTH_END.strftime('%Y年%m月%d日')}"
+        )
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("講師データ (サンプル)")
@@ -920,11 +980,13 @@ def main():
             if 'qualification_special_rank' in df_lecturers_display.columns:
                 df_lecturers_display['qualification_special_rank'] = df_lecturers_display['qualification_special_rank'].apply(lambda x: "なし" if x is None else x)
             if 'past_assignments' in df_lecturers_display.columns:
-                df_lecturers_display['past_assignments'] = df_lecturers_display['past_assignments'].apply(
+                df_lecturers_display['past_assignments_display'] = df_lecturers_display['past_assignments'].apply( # 新しい列名
                     lambda assignments: ", ".join([f"{a['classroom_id']} ({a['date']})" for a in assignments]) if isinstance(assignments, list) and assignments else "履歴なし"
                 )
+            if 'availability' in df_lecturers_display.columns:
+                df_lecturers_display['availability_display'] = df_lecturers_display['availability'].apply(lambda dates: ", ".join(dates) if isinstance(dates, list) else "") # 新しい列名
             # 表示するカラムを調整
-            lecturer_display_columns = ["id", "name", "age", "home_classroom_id", "qualification_general_rank", "qualification_special_rank", "availability", "past_assignments"]
+            lecturer_display_columns = ["id", "name", "age", "home_classroom_id", "qualification_general_rank", "qualification_special_rank", "availability_display", "past_assignments_display"]
             st.dataframe(df_lecturers_display[lecturer_display_columns], height=200)
         with col2:
             st.subheader("講座データ (サンプル)")
