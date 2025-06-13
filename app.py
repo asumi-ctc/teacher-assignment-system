@@ -384,8 +384,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                      travel_costs_matrix, # frequency_priority_costs を削除
                      weight_past_assignment_recency, weight_qualification, 
                      ignore_schedule_constraint: bool, # スケジュール制約を無視するかのフラグ
-                     weight_travel, weight_age, weight_frequency, # 既存の重み
-                     weight_lecturer_concentration, # 新しい重み: 講師の割り当て集中度
+                     weight_travel, weight_age, weight_frequency, # 既存の目的
+                     allow_ignore_favored_consecutive: bool,
+                     allow_multiple_assignments_general_case: bool,
                      today_date, default_days_no_past_assignment) -> SolverOutput: # 引数追加
     model = cp_model.CpModel()
     # solve_assignment 内の print 文も解説対象に含めるために、
@@ -524,34 +525,36 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         if possible_assignments_for_course: # 担当可能な講師候補がいる場合のみ制約を追加
             model.Add(sum(possible_assignments_for_course) == 1)
             
-    # 【変更点】各講師の担当上限制約 (<=1) を削除
-    # for lecturer_item in lecturers_data:
-    #     lecturer_id = lecturer_item["id"]
-    #     assignments_for_lecturer = [pa["variable"] for pa in possible_assignments if pa["lecturer_id"] == lecturer_id]
-    #     if assignments_for_lecturer:
-    #         model.Add(sum(assignments_for_lecturer) <= 1)
-
-    # 【新規】講師の割り当て集中度に対するペナルティ項を目的関数に追加
-    concentration_penalty_terms = []
-    for lecturer_item in lecturers_data:
-        lecturer_id = lecturer_item["id"]
-        assignments_for_lecturer_vars = [pa["variable"] for pa in possible_assignments if pa["lecturer_id"] == lecturer_id]
-        if not assignments_for_lecturer_vars:
-            continue
-
-        num_assignments_l = model.NewIntVar(0, len(courses_data), f'num_assignments_{lecturer_id}')
-        model.Add(num_assignments_l == sum(assignments_for_lecturer_vars))
-
-        # extra_assignments_l = max(0, num_assignments_l - 1)
-        extra_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_assignments_{lecturer_id}')
-        model.Add(extra_assignments_l >= num_assignments_l - 1)
-        # IntVarの下限が0なので model.Add(extra_assignments_l >= 0) は不要
-
-        cost_value_for_extra_assignment = int(weight_lecturer_concentration * PENALTY_PER_EXTRA_ASSIGNMENT_RAW * 100)
-        if cost_value_for_extra_assignment > 0: # 重みが0の場合はペナルティなし
-            concentration_penalty_terms.append(extra_assignments_l * cost_value_for_extra_assignment)
-            log_to_stream(f"  - Lecturer Concentration Penalty: For {lecturer_id}, cost per extra assignment (after 1st) = {cost_value_for_extra_assignment} (raw penalty base: {PENALTY_PER_EXTRA_ASSIGNMENT_RAW}, weight: {weight_lecturer_concentration})")
-
+    # ソフト制約と目的関数 (ペナルティ項)
+    objective_terms = assignment_costs  # 初期化：基本の割り当てコスト
+    
+    if not allow_multiple_assignments_general_case:
+        # 複数割り当てを原則禁止 (連日特別/一般の組み合わせは考慮)
+        log_to_stream("Multiple assignments per lecturer (except consecutive General/Special) are NOT allowed (high penalty).")
+        PENALTY_FOR_MULTIPLE_ASSIGNMENTS = 10000000 # 非常に大きなペナルティ
+        for lecturer_item in lecturers_data:
+            lecturer_id = lecturer_item["id"]
+            assignments_for_lecturer = [pa["variable"] for pa in possible_assignments if pa["lecturer_id"] == lecturer_id]
+            if len(assignments_for_lecturer) > 1: # 2つ以上の割り当てがある場合にペナルティ
+                # 連日特別/一般の組み合わせを考慮するロジックをここに追加 (未実装)
+                # このロジックは複雑になるため、後で段階的に実装
+                #  - 講師のassignmentsリストから、2つの割り当ての組み合わせを全て生成
+                #  - is_consecutive_general_special_pair()を使って、連日特別/一般の組み合わせかどうかを判定
+                #  - 連日特別/一般の組み合わせでない割り当ての数に応じてペナルティを加算
+                model.Add(sum(assignments_for_lecturer) <= 1) # 一旦、シンプルに最大1つまでという制約を課す
+    else:
+        # 複数割り当てを許容 (連日特別/一般の組み合わせは考慮)
+        log_to_stream("Multiple assignments per lecturer are allowed (with potential penalty).")
+        PENALTY_PER_EXTRA_ASSIGNMENT = 50000  # 調整可能なペナルティ
+        for lecturer_item in lecturers_data:
+            lecturer_id = lecturer_item["id"]
+            assignments_for_lecturer = [pa["variable"] for pa in possible_assignments if pa["lecturer_id"] == lecturer_id]
+            if len(assignments_for_lecturer) > 1:
+                num_assignments = model.NewIntVar(0, len(courses_data), f'num_assignments_{lecturer_id}')
+                model.Add(num_assignments == sum(assignments_for_lecturer))
+                extra_assignments = model.NewIntVar(0, len(courses_data), f'extra_assignments_{lecturer_id}')
+                model.Add(extra_assignments >= num_assignments - 1)
+                objective_terms.append(extra_assignments * PENALTY_PER_EXTRA_ASSIGNMENT)
     assignment_costs = [pa["variable"] * pa["cost"] for pa in possible_assignments]
     # 未割り当てペナルティ (penalty_terms) を削除
     objective_terms = assignment_costs
@@ -858,7 +861,8 @@ def main():
                     st.session_state.get("weight_travel_exp", 0.5),         # スライダーのキー名で取得
                     st.session_state.get("weight_age_exp", 0.5),            # スライダーのキー名で取得
                     st.session_state.get("weight_frequency_exp", 0.5),       # スライダーのキー名で取得
-                    st.session_state.get("weight_lecturer_concentration_exp", 0.5), # 新しい重み
+                    st.session_state.get("allow_ignore_favored_consecutive_cb", False),
+                    st.session_state.get("allow_multiple_assignments_general_case_cb", True),
                     st.session_state.TODAY, # 追加
                     st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
                 )
