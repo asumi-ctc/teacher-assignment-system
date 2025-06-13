@@ -902,6 +902,15 @@ var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
 possible_assignments.append({"variable": var, ...})
             """, language="python"
         )
+        with st.expander("コード解説"):
+            st.markdown(
+                """
+                - `model.NewBoolVar(f'x_{lecturer_id}_{course_id}')` は、各講師 (`lecturer_id`) と各講座 (`course_id`) の組み合わせに対して、0または1の値を取るブール変数（決定変数）を作成します。
+                - 変数名は、デバッグしやすいように講師IDと講座IDを含む一意な文字列 (`x_L1_C1` など）としています。
+                - 作成された変数は、他の情報（講師ID、講座ID、後で計算されるコストなど）と共に `possible_assignments` リストに辞書として格納され、後で制約や目的関数の定義に使用されます。
+                """
+            )
+        )
 
         st.subheader("2. 制約 (Constraints)")
         st.markdown(
@@ -939,6 +948,22 @@ for lecturer_item in lecturers_data:
     if assignments_for_lecturer:
         model.Add(sum(assignments_for_lecturer) <= 1)
             """, language="python"
+        )
+        with st.expander("コード解説"):
+            st.markdown(
+                """
+                **各講座への割り当て制約:**
+                - `for course_item in courses_data:`: 全ての講座に対してループ処理を行います。
+                - `possible_assignments_for_course = [...]`: 特定の講座 `course_item["id"]` に割り当て可能な全ての決定変数をリストアップします。
+                - `if possible_assignments_for_course:`: その講座に割り当て可能な講師候補が1人以上いる場合のみ、制約を追加します。
+                - `model.Add(sum(possible_assignments_for_course) == 1)`: その講座に割り当てられる講師の総数がちょうど1人になるように制約を設定します。つまり、必ず1人の講師が割り当てられます（候補がいる場合）。
+
+                **各講師の担当上限制約:**
+                - `for lecturer_item in lecturers_data:`: 全ての講師に対してループ処理を行います。
+                - `assignments_for_lecturer = [...]`: 特定の講師 `lecturer_item["id"]` が担当する可能性のある全ての決定変数をリストアップします。
+                - `model.Add(sum(assignments_for_lecturer) <= 1)`: その講師が担当する講座の総数が1つ以下になるように制約を設定します。つまり、各講師は最大で1つの講座しか担当できません。
+                """
+            )
         )
 
         st.subheader("3. 目的関数 (Objective Function)")
@@ -980,6 +1005,20 @@ objective_terms = assignment_costs
 if objective_terms:
     model.Minimize(sum(objective_terms))
             """, language="python"
+        )
+        with st.expander("コード解説"):
+            st.markdown(
+                """
+                - **各割り当て候補のコスト計算**:
+                    - `total_weighted_cost_float = ...`: 各コスト要素（移動、年齢、頻度など）に、ユーザーが設定した重みを掛け合わせ、それらを合計して、その割り当ての総フロートコストを計算します。スケジュール違反がある場合は、ここでペナルティも加算されます。
+                    - `total_weighted_cost_int = int(total_weighted_cost_float * 100)`: CP-SATソルバーは整数演算を基本とするため、計算されたフロートコストを100倍して整数に変換（スケーリング）します。
+                    - `possible_assignments.append({..., "cost": total_weighted_cost_int, ...})`: 計算された整数コストを、対応する決定変数などと一緒に `possible_assignments` リストに格納します。
+                - **目的関数の設定**:
+                    - `assignment_costs = [pa["variable"] * pa["cost"] for pa in possible_assignments]`: `possible_assignments` リスト内の各割り当て候補について、その割り当てが選択された場合（`pa["variable"]` が1の場合）のコスト (`pa["cost"]`) を計算し、リスト `assignment_costs` を作成します。
+                    - `objective_terms = assignment_costs`: この問題では、割り当てコストの合計が目的関数の全てです。
+                    - `model.Minimize(sum(objective_terms))`: ソルバーに対して、`objective_terms` の合計値（つまり、選択された全ての割り当ての総コスト）を最小化するように指示します。
+                """
+            )
         )
 
     elif st.session_state.view_mode == "optimization_result":
