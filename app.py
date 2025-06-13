@@ -661,8 +661,8 @@ def main():
 
     with nav_cols[1]:
         # 目的関数の数式ボタン
-        button_type_objective = "primary" if st.session_state.view_mode == "objective_function" else "secondary"
-        if st.button("目的関数の数式", key="nav_objective_function_button", use_container_width=True, type=button_type_objective):
+        button_type_objective = "primary" if st.session_state.view_mode == "model_object" else "secondary" # view_mode の値は変更せず、ボタン名とページヘッダーを合わせる
+        if st.button("model オブジェクト", key="nav_model_object_button", use_container_width=True, type=button_type_objective): # ボタン名を変更
             st.session_state.view_mode = "objective_function"
             st.rerun()
 
