@@ -177,7 +177,6 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date):
     DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
     TIMES = ["AM", "PM"]
     ALL_SLOTS = [(day, time) for day in DAYS for time in TIMES]
-    QUALIFICATION_RANKS = [1, 2, 3]
 
     for i in range(1, 301): # 講師数を100人から300人に変更
         num_available_slots = random.randint(3, 7)
@@ -185,6 +184,16 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date):
         # 過去の割り当て履歴を生成 (約10件)
         num_past_assignments = random.randint(8, 12) # 8から12件の間でランダム
         past_assignments = []
+
+        # 新しい資格ランク生成ロジック
+        has_special_qualification = random.choice([True, False, False]) # 約1/3が特別資格持ち
+        special_rank = None
+        if has_special_qualification:
+            special_rank = random.randint(1, 5)
+            general_rank = 1 # 特別資格持ちは一般資格ランク1
+        else:
+            general_rank = random.randint(1, 5)
+
         for _ in range(num_past_assignments):
             days_ago = random.randint(1, 730) # 過去2年以内のランダムな日付
             assignment_date = today_date - datetime.timedelta(days=days_ago)
@@ -198,31 +207,59 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date):
             "name": f"講師{i:03d}",
             "age": random.randint(22, 65),
             "home_classroom_id": random.choice(prefecture_classroom_ids),
-            "qualification_rank": random.choice(QUALIFICATION_RANKS),
+            "qualification_general_rank": general_rank,
+            "qualification_special_rank": special_rank,
             "availability": availability,
             "past_assignments": past_assignments
         })
     return lecturers_data
 
 def generate_courses_data(prefectures, prefecture_classroom_ids):
-    BASE_COURSE_DEFINITIONS = [
-        {"id_suffix": "C1", "name": "初級コース", "required_rank": 3, "schedule": ("Mon", "AM")},
-        {"id_suffix": "C2", "name": "中級コース", "required_rank": 2, "schedule": ("Tue", "PM")},
-        {"id_suffix": "C3", "name": "上級コース", "required_rank": 1, "schedule": ("Wed", "AM")},
-        {"id_suffix": "C4", "name": "初級コース", "required_rank": 3, "schedule": ("Thu", "PM")},
-        {"id_suffix": "C5", "name": "中級コース", "required_rank": 2, "schedule": ("Fri", "AM")},
+    # 新しい講座定義
+    GENERAL_COURSE_LEVELS = [
+        {"name_suffix": "初心", "rank": 5}, {"name_suffix": "初級", "rank": 4},
+        {"name_suffix": "中級", "rank": 3}, {"name_suffix": "上級", "rank": 2},
+        {"name_suffix": "プロ", "rank": 1}
     ]
+    SPECIAL_COURSE_LEVELS = [
+        {"name_suffix": "初心", "rank": 5}, {"name_suffix": "初級", "rank": 4},
+        {"name_suffix": "中級", "rank": 3}, {"name_suffix": "上級", "rank": 2},
+        {"name_suffix": "プロ", "rank": 1}
+    ]
+
+    # 各都道府県で生成する講座の種類とスケジュールを定義
+    # (例として、一般講座3つ、特別講座2つを異なる時間帯で生成)
+    COURSE_SCHEDULE_TEMPLATES = [
+        {"type": "general", "level_idx": 0, "schedule": ("Mon", "AM"), "id_suffix_prefix": "GC"}, # 一般講座 ランク5 (初心)
+        {"type": "general", "level_idx": 2, "schedule": ("Tue", "PM"), "id_suffix_prefix": "GC"}, # 一般講座 ランク3 (中級)
+        {"type": "general", "level_idx": 4, "schedule": ("Wed", "AM"), "id_suffix_prefix": "GC"}, # 一般講座 ランク1 (プロ)
+        {"type": "special", "level_idx": 1, "schedule": ("Thu", "PM"), "id_suffix_prefix": "SC"}, # 特別講座 ランク4 (初級)
+        {"type": "special", "level_idx": 3, "schedule": ("Fri", "AM"), "id_suffix_prefix": "SC"}, # 特別講座 ランク2 (上級)
+    ]
+
     courses_data = []
+    course_counter = 1
     for i, pref_classroom_id in enumerate(prefecture_classroom_ids):
         pref_name = prefectures[i]
-        for base_course in BASE_COURSE_DEFINITIONS:
+        for template in COURSE_SCHEDULE_TEMPLATES:
+            level_info = None
+            course_type_name = ""
+            if template["type"] == "general":
+                level_info = GENERAL_COURSE_LEVELS[template["level_idx"]]
+                course_type_name = "一般講座"
+            else: # special
+                level_info = SPECIAL_COURSE_LEVELS[template["level_idx"]]
+                course_type_name = "特別講座"
+
             courses_data.append({
-                "id": f"{pref_classroom_id}-{base_course['id_suffix']}",
-                "name": f"{pref_name} {base_course['name']}",
+                "id": f"{pref_classroom_id}-{template['id_suffix_prefix']}{course_counter}",
+                "name": f"{pref_name} {course_type_name} {level_info['name_suffix']}",
                 "classroom_id": pref_classroom_id,
-                "required_rank": base_course["required_rank"],
-                "schedule": base_course["schedule"]
+                "course_type": template["type"],
+                "rank": level_info['rank'],
+                "schedule": template["schedule"]
             })
+            course_counter += 1
     return courses_data
 
 def generate_travel_costs_matrix(all_classroom_ids_combined, classroom_id_to_pref_name, prefecture_to_region, region_graph):
@@ -325,11 +362,31 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             lecturer_id = lecturer["id"]
             course_id = course["id"]
 
-            # 資格ランクチェック: 講師のランクが講座の要求ランクより低い(数値が大きい)場合は除外
-            if lecturer["qualification_rank"] > course["required_rank"]:
-                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Rank insufficient: Lecturer_rank={lecturer['qualification_rank']} (higher number is lower rank), Course_required_rank={course['required_rank']} (lecturer rank must be <= this number))")
-                continue
+            # 新しい資格ランクチェックロジック
+            course_type = course["course_type"]
+            course_rank = course["rank"]
+            lecturer_general_rank = lecturer["qualification_general_rank"]
+            lecturer_special_rank = lecturer.get("qualification_special_rank") # None の可能性あり
+
+            can_assign_by_qualification = False
+            qualification_cost_for_this_assignment = 0
+
+            if course_type == "general":
+                if lecturer_special_rank is not None: # 特別資格持ちは一般講座OK
+                    can_assign_by_qualification = True
+                    qualification_cost_for_this_assignment = lecturer_general_rank # コストは一般ランクで
+                elif lecturer_general_rank <= course_rank: # 一般資格のみの場合、ランク比較
+                    can_assign_by_qualification = True
+                    qualification_cost_for_this_assignment = lecturer_general_rank
+            elif course_type == "special":
+                if lecturer_special_rank is not None and lecturer_special_rank <= course_rank:
+                    can_assign_by_qualification = True
+                    qualification_cost_for_this_assignment = lecturer_special_rank
             
+            if not can_assign_by_qualification:
+                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Qualification insufficient. Course: {course_type} Rank {course_rank}. Lecturer: GenRank {lecturer_general_rank}, SpecRank {lecturer_special_rank})")
+                continue
+
             # スケジュールチェック
             schedule_available = course["schedule"] in lecturer["availability"]
             actual_schedule_incompatibility_occurred = not schedule_available # 最終的な結果表示用
@@ -352,7 +409,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             age_cost = lecturer.get("age", 99) # 実年齢をコストとして使用。未設定の場合は大きな値。
             # 実際の過去の総割り当て回数を頻度コストとする (少ないほど良い)
             frequency_cost = len(lecturer.get("past_assignments", []))
-            qualification_cost = lecturer["qualification_rank"] # ランク値が小さいほど高資格
+            qualification_cost = qualification_cost_for_this_assignment # 上で計算した、この割り当てにおける資格コスト
 
             # 過去割り当ての近さによるコスト計算
             past_assignment_recency_cost = 0
@@ -482,8 +539,12 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     "年齢コスト(元)": lecturer.get("age", 99),
                     "頻度コスト(元)": len(lecturer.get("past_assignments", [])), # 実際の総割り当て回数
                     "スケジュール状況": "不適合" if pa.get("is_schedule_incompatible") else "適合", # "不適合" に変更
-                    "資格コスト(元)": pa.get("qualification_cost_raw"), # 講師の資格ランク
-                    "当該教室最終割当日からの日数": pa.get("debug_days_since_last_assignment") # "該当なし" のフォールバックを削除し、格納された値を直接使用
+                    "資格コスト(元)": pa.get("qualification_cost_raw"), # この割り当てで評価された資格コスト
+                    "当該教室最終割当日からの日数": pa.get("debug_days_since_last_assignment"),
+                    "講師一般ランク": lecturer.get("qualification_general_rank"),
+                    "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
+                    "講座タイプ": course.get("course_type"),
+                    "講座ランク": course.get("rank")
                 })
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
@@ -811,15 +872,22 @@ def main():
         with col1:
             st.subheader("講師データ (サンプル)")
             # st.session_state からデータを取得
-            df_lecturers = pd.DataFrame(st.session_state.DEFAULT_LECTURERS_DATA)
-            if 'past_assignments' in df_lecturers.columns:
-                df_lecturers['past_assignments'] = df_lecturers['past_assignments'].apply(
+            df_lecturers_display = pd.DataFrame(st.session_state.DEFAULT_LECTURERS_DATA)
+            # 表示用に 'qualification_special_rank' が None の場合は "なし" に変換
+            if 'qualification_special_rank' in df_lecturers_display.columns:
+                df_lecturers_display['qualification_special_rank'] = df_lecturers_display['qualification_special_rank'].apply(lambda x: "なし" if x is None else x)
+            if 'past_assignments' in df_lecturers_display.columns:
+                df_lecturers_display['past_assignments'] = df_lecturers_display['past_assignments'].apply(
                     lambda assignments: ", ".join([f"{a['classroom_id']} ({a['date']})" for a in assignments]) if isinstance(assignments, list) and assignments else "履歴なし"
                 )
-            st.dataframe(df_lecturers, height=200)
+            # 表示するカラムを調整
+            lecturer_display_columns = ["id", "name", "age", "home_classroom_id", "qualification_general_rank", "qualification_special_rank", "availability", "past_assignments"]
+            st.dataframe(df_lecturers_display[lecturer_display_columns], height=200)
         with col2:
             st.subheader("講座データ (サンプル)")
-            st.dataframe(pd.DataFrame(st.session_state.DEFAULT_COURSES_DATA), height=200) # st.session_state から取得
+            df_courses_display = pd.DataFrame(st.session_state.DEFAULT_COURSES_DATA)
+            course_display_columns = ["id", "name", "classroom_id", "course_type", "rank", "schedule"]
+            st.dataframe(df_courses_display[course_display_columns], height=200)
         
         st.subheader("教室データと移動コスト (サンプル)")
         col3, col4 = st.columns(2)
@@ -1068,19 +1136,46 @@ if objective_terms:
                         summary_data.append(("**平均年齢**", f"{avg_age:.1f}才"))
                         avg_frequency = sum(len(l.get("past_assignments", [])) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
                         summary_data.append(("**平均頻度**", f"{avg_frequency:.1f}回"))
-                        lecturer_rank_total_counts = {1: 0, 2: 0, 3: 0}
+
+                        # 一般資格ランク別割り当て状況
+                        summary_data.append(("**一般資格ランク別割り当て**", "(講師が保有する一般資格ランク / 全講師中の同ランク保有者数)"))
+                        general_rank_total_counts = {i: 0 for i in range(1, 6)}
                         for lecturer in st.session_state.DEFAULT_LECTURERS_DATA: # st.session_state から取得
-                            rank = lecturer.get("qualification_rank")
-                            if rank in lecturer_rank_total_counts:
-                                lecturer_rank_total_counts[rank] += 1
-                        summary_data.append(("**資格別割り当て状況**", ""))
-                        assigned_rank_counts = {1: 0, 2: 0, 3: 0}
+                            rank = lecturer.get("qualification_general_rank")
+                            if rank in general_rank_total_counts:
+                                general_rank_total_counts[rank] += 1
+                        
+                        assigned_general_rank_counts = {i: 0 for i in range(1, 6)}
                         for l_assigned in temp_assigned_lecturers:
-                            rank = l_assigned.get("qualification_rank") # type: ignore
-                            if rank in assigned_rank_counts:
-                                assigned_rank_counts[rank] += 1 # type: ignore
-                        for rank_num in [1, 2, 3]:
-                            summary_data.append((f"　ランク{rank_num}", f"{assigned_rank_counts.get(rank_num, 0)}人 / {lecturer_rank_total_counts.get(rank_num, 0)}人中"))
+                            rank = l_assigned.get("qualification_general_rank")
+                            if rank in assigned_general_rank_counts:
+                                assigned_general_rank_counts[rank] += 1
+                        for rank_num in range(1, 6):
+                            summary_data.append((f"　一般ランク{rank_num}", f"{assigned_general_rank_counts.get(rank_num, 0)}人 / {general_rank_total_counts.get(rank_num, 0)}人中"))
+
+                        # 特別資格ランク別割り当て状況
+                        summary_data.append(("**特別資格ランク別割り当て**", "(講師が保有する特別資格ランク / 全講師中の同ランク保有者数)"))
+                        special_rank_total_counts = {i: 0 for i in range(1, 6)}
+                        special_rank_none_total_count = 0
+                        for lecturer in st.session_state.DEFAULT_LECTURERS_DATA: # st.session_state から取得
+                            rank = lecturer.get("qualification_special_rank")
+                            if rank is None:
+                                special_rank_none_total_count +=1
+                            elif rank in special_rank_total_counts:
+                                special_rank_total_counts[rank] += 1
+                        
+                        assigned_special_rank_counts = {i: 0 for i in range(1, 6)}
+                        assigned_special_rank_none_count = 0 # 割り当てられた講師が特別資格なしのケース
+                        for l_assigned in temp_assigned_lecturers:
+                            rank = l_assigned.get("qualification_special_rank")
+                            if rank is None:
+                                assigned_special_rank_none_count +=1
+                            elif rank in assigned_special_rank_counts:
+                                assigned_special_rank_counts[rank] += 1
+                        for rank_num in range(1, 6):
+                            summary_data.append((f"　特別ランク{rank_num}", f"{assigned_special_rank_counts.get(rank_num, 0)}人 / {special_rank_total_counts.get(rank_num, 0)}人中"))
+                        summary_data.append((f"　(特別資格なしの講師)", f"{assigned_special_rank_none_count}人 / {special_rank_none_total_count}人中"))
+
                     past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0] # st.session_state から取得
                     past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
                     summary_data.append(("**同教室への過去の割り当て**", ""))
