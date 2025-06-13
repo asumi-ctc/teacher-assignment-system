@@ -554,6 +554,14 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         solution_status_str = "最適解" if status_code == cp_model.OPTIMAL else "実行可能解"
         objective_value = solver.ObjectiveValue() / 100 # スケーリングを戻す # type: ignore
         
+        # まず、今回の割り当てで各講師が何回割り当てられたかを計算
+        lecturer_assignment_counts_this_round = {}
+        for pa_count_check in possible_assignments:
+            if solver.Value(pa_count_check["variable"]) == 1:
+                lecturer_id_for_count = pa_count_check["lecturer_id"]
+                lecturer_assignment_counts_this_round[lecturer_id_for_count] = \
+                    lecturer_assignment_counts_this_round.get(lecturer_id_for_count, 0) + 1
+
         for pa in possible_assignments:
             if solver.Value(pa["variable"]) == 1:
                 lecturer = next(l for l in lecturers_data if l["id"] == pa["lecturer_id"])
@@ -575,7 +583,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     "講師一般ランク": lecturer.get("qualification_general_rank"),
                     "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
                     "講座タイプ": course.get("course_type"),
-                    "講座ランク": course.get("rank")
+                    "講座ランク": course.get("rank"),
+                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0)
                 })
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
@@ -1202,6 +1211,19 @@ if objective_terms:
                                 assigned_special_rank_counts[rank] += 1
                         for rank_num in range(1, 6):
                             summary_data.append((f"　特別ランク{rank_num}", f"{assigned_special_rank_counts.get(rank_num, 0)}人 / {special_rank_total_counts.get(rank_num, 0)}人中"))
+
+                    # 講師の割り当て回数別集計 (今回の最適化での担当講座数)
+                    if '今回の割り当て回数' in results_df.columns:
+                        # 各講師が何回割り当てられたか (results_df には割り当てられた講師の情報しかない)
+                        lecturer_assignment_counts_per_lecturer = results_df['講師ID'].value_counts()
+                        # 割り当て回数ごとに何人講師がいるか
+                        counts_of_lecturers_by_assignment_num = lecturer_assignment_counts_per_lecturer.value_counts().sort_index()
+                        
+                        summary_data.append(("**講師の割り当て回数別**", "(今回の最適化での担当講座数)"))
+                        has_multiple_assignments_summary = False
+                        for num_assignments, num_lecturers in counts_of_lecturers_by_assignment_num.items():
+                            if num_assignments >= 1: # 1回以上担当した講師を表示
+                                summary_data.append((f"　{num_assignments}回 担当した講師", f"{num_lecturers}人"))
 
                     past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0] # st.session_state から取得
                     past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
