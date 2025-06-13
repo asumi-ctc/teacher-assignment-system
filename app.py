@@ -910,7 +910,6 @@ possible_assignments.append({"variable": var, ...})
                 - 作成された変数は、他の情報（講師ID、講座ID、後で計算されるコストなど）と共に `possible_assignments` リストに辞書として格納され、後で制約や目的関数の定義に使用されます。
                 """
             )
-        )
 
         st.subheader("2. 制約 (Constraints)")
         st.markdown(
@@ -964,7 +963,6 @@ for lecturer_item in lecturers_data:
                 - `model.Add(sum(assignments_for_lecturer) <= 1)`: その講師が担当する講座の総数が1つ以下になるように制約を設定します。つまり、各講師は最大で1つの講座しか担当できません。
                 """
             )
-        )
 
         st.subheader("3. 目的関数 (Objective Function)")
         st.markdown(
@@ -1019,7 +1017,6 @@ if objective_terms:
                     - `model.Minimize(sum(objective_terms))`: ソルバーに対して、`objective_terms` の合計値（つまり、選択された全ての割り当ての総コスト）を最小化するように指示します。
                 """
             )
-        )
 
     elif st.session_state.view_mode == "optimization_result":
         st.header("最適化結果") # ヘッダーは最初に表示
