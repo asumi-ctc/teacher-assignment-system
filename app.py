@@ -1190,25 +1190,18 @@ if objective_terms:
                         # 特別資格ランク別割り当て状況
                         summary_data.append(("**特別資格ランク別割り当て**", "(講師が保有する特別資格ランク / 全講師中の同ランク保有者数)"))
                         special_rank_total_counts = {i: 0 for i in range(1, 6)}
-                        special_rank_none_total_count = 0
                         for lecturer in st.session_state.DEFAULT_LECTURERS_DATA: # st.session_state から取得
                             rank = lecturer.get("qualification_special_rank")
-                            if rank is None:
-                                special_rank_none_total_count +=1
-                            elif rank in special_rank_total_counts:
+                            if rank is not None and rank in special_rank_total_counts: # None は除外
                                 special_rank_total_counts[rank] += 1
                         
                         assigned_special_rank_counts = {i: 0 for i in range(1, 6)}
-                        assigned_special_rank_none_count = 0 # 割り当てられた講師が特別資格なしのケース
                         for l_assigned in temp_assigned_lecturers:
                             rank = l_assigned.get("qualification_special_rank")
-                            if rank is None:
-                                assigned_special_rank_none_count +=1
-                            elif rank in assigned_special_rank_counts:
+                            if rank is not None and rank in assigned_special_rank_counts: # None は除外
                                 assigned_special_rank_counts[rank] += 1
                         for rank_num in range(1, 6):
                             summary_data.append((f"　特別ランク{rank_num}", f"{assigned_special_rank_counts.get(rank_num, 0)}人 / {special_rank_total_counts.get(rank_num, 0)}人中"))
-                        summary_data.append((f"　(特別資格なしの講師)", f"{assigned_special_rank_none_count}人 / {special_rank_none_total_count}人中"))
 
                     past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0] # st.session_state から取得
                     past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
