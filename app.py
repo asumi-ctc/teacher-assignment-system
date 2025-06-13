@@ -1132,18 +1132,26 @@ def main():
         st.subheader("1. 決定変数 (Decision Variables)")
         st.markdown(
             r"""
-            決定変数は、ソルバーが最適解を見つけるために値を決定する変数です。
-            この講師割り当て問題では、各講師 $l$ が各講座 $c$ に割り当てられるかどうかを示すバイナリ変数 $x_{l,c}$ を使用します。
+            決定変数は、ソルバーが最適解を見つけるために値を決定する要素です。このモデルでは主に以下の変数が使用されます。
 
+            **基本決定変数:**
+            - 各講師 $l$ が各講座 $c$ に割り当てられるかどうかを示すバイナリ変数 $x_{l,c}$。
             $$
             x_{l,c} \in \{0, 1\} \quad (\forall l \in L, \forall c \in C)
             $$
-
             ここで、
             - $L$ は講師の集合
             - $C$ は講座の集合
             - $x_{l,c} = 1$ ならば、講師 $l$ は講座 $c$ に割り当てられます。
             - $x_{l,c} = 0$ ならば、講師 $l$ は講座 $c$ に割り当てられません。
+
+            **補助変数 (主に整数変数またはブール変数):**
+            これらは基本決定変数 $x_{l,c}$ から導出され、制約の定義や目的関数の計算を容易にするために使用されます。
+            - $\text{num\_total\_assignments}_l$: 講師 $l$ の総割り当て数。
+            - $\text{is\_assigned\_to\_fav\_pair}_{l,p}$: 講師 $l$ が特定の優遇連日ペア $p$ (例: 一般講座とその翌日の特別講座) に割り当てられているかを示すブール変数。($x_{l,c1_p} \land x_{l,c2_p}$ と等価)
+            - $\text{num\_fav\_pairs}_l$: 講師 $l$ が担当する優遇連日ペアの数。
+            - $\text{effective\_assignments\_for\_penalty}_l$: 講師 $l$ のペナルティ計算対象となる実効割り当て数 (総割り当て数から優遇ペア数を引いたもの)。
+            - $\text{extra\_effective\_assignments}_l$: 講師 $l$ のペナルティ対象となる「追加の」実効割り当て数 (実効割り当て数が1を超えた分)。
             """
         )
         st.markdown("**対応するPythonコード (抜粋):**")
@@ -1151,15 +1159,27 @@ def main():
             """
 # ... ループ内で各講師と講座の組み合わせに対して ...
 var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
-possible_assignments.append({"variable": var, ...})
+possible_assignments.append({"lecturer_id": lecturer_id, "course_id": course_id, "variable": var, ...})
+
+# 補助変数の例
+# num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
+# model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
+
+# is_assigned_to_fav_pair_var = model.NewBoolVar(f'is_fav_pair_{lecturer_id}_{c1_id}_{c2_id}')
+# model.AddMultiplicationEquality(is_assigned_to_fav_pair_var, [var_l_c1, var_l_c2])
+
+# extra_effective_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_eff_assign_{lecturer_id}')
             """, language="python"
         )
         with st.expander("コード解説", expanded=False):
             st.markdown(
                 """
-                - `model.NewBoolVar(f'x_{lecturer_id}_{course_id}')` は、各講師 (`lecturer_id`) と各講座 (`course_id`) の組み合わせに対して、0または1の値を取るブール変数（決定変数）を作成します。
+                - `model.NewBoolVar(f'x_{lecturer_id}_{course_id}')`: 各講師と講座のペアに対する基本決定変数 $x_{l,c}$ を作成します。
                 - 変数名は、デバッグしやすいように講師IDと講座IDを含む一意な文字列 (`x_L1_C1` など）としています。
                 - 作成された変数は、他の情報（講師ID、講座ID、後で計算されるコストなど）と共に `possible_assignments` リストに辞書として格納され、後で制約や目的関数の定義に使用されます。
+                - `model.NewIntVar(...)`: 補助的な整数変数（例: 割り当て回数）を定義します。範囲 (最小値、最大値) と名前を指定します。
+                - `model.Add(...)`: 変数間の関係を定義する制約を追加します。例えば、`num_total_assignments_l` がその講師に割り当てられた $x_{l,c}$ の合計と等しくなるようにします。
+                - `model.AddMultiplicationEquality(target, [var1, var2])`: `target = var1 * var2` という制約を追加します。ブール変数に対して使うと論理AND (`target = var1 AND var2`) を表現できます。これは `is_assigned_to_fav_pair_var` の計算に使用されます。
                 """
             )
 
@@ -1174,9 +1194,150 @@ possible_assignments.append({"variable": var, ...})
               $$
               \sum_{l \in L_c} x_{l,c} = 1 \quad (\forall c \in C \text{ s.t. } L_c \neq \emptyset)
               $$
-              ここで、$L_c$ は講座 $c$ を担当可能な講師の集合です（資格ランクやスケジュール（無視しない場合）を考慮）。
+              ここで、$L_c$ は講座 $c$ を担当可能な講師の集合（資格ランクやスケジュール（無視設定でない場合）を考慮）。
 
-            - **各講師の担当上限制約:** 各講師 $l$ は、最大で1つの講座しか担当できません。
+            - **講師の割り当て回数に関するソフト制約と関連変数定義:**
+              講師の割り当て回数については、UIの設定（「連日開催の優先割り当てを無視」「複数回割り当てを許容」）に応じて、ハードな制約ではなく、目的関数でのペナルティによって制御されます。
+              - **講師ごとの総割り当て数:**
+                $$ \text{num\_total\_assignments}_l = \sum_{c \in C} x_{l,c} \quad (\forall l \in L) $$
+              - **優遇される連日ペアへの割り当て:** (UIで「連日開催の優先割り当てを無視」がオフの場合)
+                特定の講師 $l$ が、隣接する一般講座 $c_1$ と特別講座 $c_2$ のペア $p$ に両方割り当てられているかを示す変数 $\text{is\_assigned\_to\_fav\_pair}_{l,p}$ を定義します。
+                $$ \text{is\_assigned\_to\_fav\_pair}_{l,p} \iff x_{l,c_1} \land x_{l,c_2} $$
+                その合計が、講師 $l$ の優遇連日ペア割り当て数 $\text{num\_fav\_pairs}_l$ となります。
+                $$ \text{num\_fav\_pairs}_l = \sum_{p \in \text{FavPairs}} \text{is\_assigned\_to\_fav\_pair}_{l,p} $$
+              - **ペナルティ計算のための実効割り当て数:**
+                $$ \text{effective\_assignments\_for\_penalty}_l = \text{num\_total\_assignments}_l - \text{num\_fav\_pairs}_l $$
+              - **ペナルティ対象の「追加の」実効割り当て数:** (1回を超える分)
+                $$ \text{extra\_effective\_assignments}_l \ge \text{effective\_assignments\_for\_penalty}_l - 1 $$
+                $$ \text{extra\_effective\_assignments}_l \ge 0 $$
+              これらの `extra_effective_assignments_l` に基づいて、目的関数でペナルティが加算されます。
+
+            - **暗黙的な制約:**
+              ソースコード上では、講師の資格ランクが講座の要求ランクを満たさない場合や、スケジュールが適合しない（かつスケジュール制約を無視する設定でない）組み合わせは、そもそも決定変数 $x_{l,c}$ が生成される前の段階で除外されます。これは、それらの組み合わせに対する $x_{l,c}$ が実質的に 0 に固定される制約と見なせます。
+            """
+        )
+        st.markdown("**対応するPythonコード (抜粋):**")
+        st.code(
+            """
+# 各講座への割り当て制約 (変更なし)
+for course_item in courses_data:
+    possible_assignments_for_course = [pa["variable"] for pa in possible_assignments if pa["course_id"] == course_item["id"]]
+    if possible_assignments_for_course: # 担当可能な講師候補がいる場合のみ
+        model.Add(sum(possible_assignments_for_course) == 1)
+
+# 講師の割り当て回数関連の制約 (講師ごとのループ内)
+for lecturer_item in lecturers_data:
+    lecturer_id = lecturer_item["id"]
+    assignments_for_lecturer_vars = [pa["variable"] for pa in possible_assignments if pa["lecturer_id"] == lecturer_id]
+    
+    num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
+    model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
+
+    num_favored_consecutive_pairs_l = model.NewIntVar(0, ..., f'num_fav_pairs_{lecturer_id}')
+    if not allow_ignore_favored_consecutive and lecturer_has_special_qualification:
+        favored_pair_assignment_indicators = []
+        for pair_info in all_consecutive_gs_pairs_info: # 事前に計算された連日ペア情報
+            var_l_c1 = get_assignment_var(lecturer_id, pair_info['c1']['id'], possible_assignments)
+            var_l_c2 = get_assignment_var(lecturer_id, pair_info['c2']['id'], possible_assignments)
+            if var_l_c1 and var_l_c2:
+                is_assigned_to_fav_pair_var = model.NewBoolVar(...)
+                model.AddMultiplicationEquality(is_assigned_to_fav_pair_var, [var_l_c1, var_l_c2])
+                favored_pair_assignment_indicators.append(is_assigned_to_fav_pair_var)
+        model.Add(num_favored_consecutive_pairs_l == sum(favored_pair_assignment_indicators))
+    else:
+        model.Add(num_favored_consecutive_pairs_l == 0)
+
+    effective_assignments_for_penalty_l = model.NewIntVar(0, ..., f'eff_assign_penalty_{lecturer_id}')
+    model.Add(effective_assignments_for_penalty_l == num_total_assignments_l - num_favored_consecutive_pairs_l)
+    
+    extra_effective_assignments_l = model.NewIntVar(0, ..., f'extra_eff_assign_{lecturer_id}')
+    model.Add(extra_effective_assignments_l >= effective_assignments_for_penalty_l - 1)
+    # extra_effective_assignments_l >= 0 はIntVarの定義でカバーされることが多い
+
+            """, language="python"
+        )
+        with st.expander("コード解説", expanded=False):
+            st.markdown(
+                """
+                **各講座への割り当て制約:**
+                - `model.Add(sum(possible_assignments_for_course) == 1)`: 特定の講座に割り当てられる講師の総数がちょうど1人になるようにします（担当可能な講師がいる場合）。
+
+                **講師の割り当て回数関連:**
+                - `num_total_assignments_l = model.NewIntVar(...)`: 講師ごとの総割り当て数を格納する整数変数を定義します。
+                - `model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))`: 総割り当て数を、その講師に関連する全ての $x_{l,c}$ 変数の合計として定義します。
+                - `is_assigned_to_fav_pair_var = model.NewBoolVar(...)`: 講師が特定の連日ペアに割り当てられたかを示すブール変数。
+                - `model.AddMultiplicationEquality(...)`: ブール変数間のAND演算を表現し、連日ペアへの同時割り当てを検出します。
+                - `num_favored_consecutive_pairs_l = model.NewIntVar(...)`: 優遇される連日ペアの数を定義します。
+                - `effective_assignments_for_penalty_l`: ペナルティ計算の基準となる実効的な割り当て数を計算します（総数 - 優遇ペア数）。
+                - `extra_effective_assignments_l`: 実効割り当て数が1を超えた部分（ペナルティ対象）を計算します。この変数が目的関数でペナルティコストと乗算されます。
+                - UIの `allow_ignore_favored_consecutive` や `allow_multiple_assignments_general_case` の設定が、これらの計算や後述の目的関数でのペナルティ値に影響します。
+                """
+            )
+
+        st.subheader("3. 目的関数 (Objective Function)")
+        st.markdown(
+            r"""
+            目的関数は、最適化の目標を定義する数式です。この問題では、割り当ての総コストと、複数割り当てに対するペナルティの合計を最小化することが目的です。
+
+            $$
+            \text{Minimize} \quad Z = \sum_{l \in L} \sum_{c \in C} (x_{l,c} \cdot \text{Cost}_{l,c}) + \sum_{l \in L} (\text{extra\_effective\_assignments}_l \cdot \text{PenaltyPerExtra}_l)
+            $$
+
+            ここで、$\text{Cost}_{l,c}$ は講師 $l$ が講座 $c$ に割り当てられた場合の個別のコストで、以下のように計算されます（前述の通り）。
+            $$
+            \text{Cost}_{l,c} = w_{\text{travel}} \cdot \text{TravelCost}_{l,c} + \dots + \text{ScheduleViolationPenalty}_{l,c}
+            $$
+            (各コスト要素 $w_{\text{...}} \cdot \text{...Cost}$ の詳細は前述の通り)
+
+            また、
+            - $\text{extra\_effective\_assignments}_l$: 講師 $l$ のペナルティ対象となる追加の実効割り当て数（1を超えた分）。
+            - $\text{PenaltyPerExtra}_l$: 講師 $l$ の追加割り当て1回あたりのペナルティコスト。この値はUIの「複数回の割り当てを許容する」設定 (`allow_multiple_assignments_general_case_cb`) によって変動します。
+                - 許容しない場合: 非常に高いペナルティ (`VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT`)
+                - 許容する場合: 通常のペナルティ (`PENALTY_PER_EXTRA_ASSIGNMENT_RAW` をスケーリングしたもの)
+            """
+        )
+        st.markdown("**対応するPythonコード (抜粋):**")
+        st.code(
+            """
+# 各割り当て候補のコスト計算 (total_weighted_cost_int)
+# total_weighted_cost_float = (weight_travel * travel_cost + ...) + schedule_violation_penalty
+# total_weighted_cost_int = int(total_weighted_cost_float * 100) # 整数にスケーリング
+# possible_assignments.append({..., "cost": total_weighted_cost_int, ...})
+
+# 目的関数の設定
+assignment_costs = [pa["variable"] * pa["cost"] for pa in possible_assignments]
+objective_terms = list(assignment_costs) # コピーして開始
+
+# 講師ごとのループ内でペナルティ項を追加
+# for lecturer_item in lecturers_data:
+#     ... (extra_effective_assignments_l の計算) ...
+#     current_penalty_per_extra = ... # UI設定に基づいて決定
+#     if current_penalty_per_extra > 0:
+#         objective_terms.append(extra_effective_assignments_l * current_penalty_per_extra)
+
+if objective_terms:
+    model.Minimize(sum(objective_terms))
+else:
+    model.Minimize(0) # 目的項がない場合 (通常は発生しない)
+            """, language="python"
+        )
+        with st.expander("コード解説", expanded=False):
+            st.markdown(
+                """
+                - **各割り当て候補のコスト計算**:
+                    - `total_weighted_cost_int`: 各コスト要素（移動、年齢、頻度など）に重みを掛け、合計し、整数にスケーリングした値。スケジュール違反ペナルティも含む。
+                - **目的関数の設定**:
+                    - `assignment_costs = [pa["variable"] * pa["cost"] ... ]`: 各割り当て $x_{l,c}$ が選択された場合のコスト ($x_{l,c} \cdot \text{Cost}_{l,c}$) のリスト。
+                    - `objective_terms = list(assignment_costs)`: 目的関数の項を初期化。
+                    - `objective_terms.append(extra_effective_assignments_l * current_penalty_per_extra)`: 講師ごとのループ内で、計算された追加割り当てペナルティを目的関数の項に追加します。
+                    - `model.Minimize(sum(objective_terms))`: 全てのコスト項とペナルティ項の合計を最小化するようにソルバーに指示します。
+                """
+            )
+
+    elif st.session_state.view_mode == "optimization_result":
+        st.header("最適化結果") # ヘッダーは最初に表示
+
+        if not st.session_state.get("solution_executed", False):
               $$
               \sum_{c \in C} x_{l,c} \leq 1 \quad (\forall l \in L)
               $$
@@ -1278,32 +1439,28 @@ if objective_terms:
         else: # solution_executed is True
             if "solver_result_cache" not in st.session_state:
                 # solution_executed is True, but no cache (e.g., after viewing sample data, which clears the cache)
-                # この場合、再計算は行わず、キャッシュがない旨をユーザーに伝える (メッセージを簡潔に)
+                # この場合、再計算は行わず、キャッシュがない旨をユーザーに伝える
                 st.warning(
                     "最適化結果のデータは現在ありません。\n"
                     "再度結果を表示するには、サイドバーの「最適割り当てを実行」ボタンを押してください。"
                 )
             else: # solution_executed is True and solver_result_cache exists
-                # キャッシュされた結果（または計算直後の結果）を取得
-                # このブロックは、以前のコードで再計算ブロックの後から始まっていた部分に相当
                 solver_result = st.session_state.solver_result_cache
                 st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
                 if solver_result['objective_value'] is not None:
                     st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
 
-                # 「全ての講座が割り当てられました」メッセージをここに移動
-                if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
+                if solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                     if solver_result['assignments']:
                         assigned_course_ids_for_message = {res["講座ID"] for res in solver_result['assignments']}
                         unassigned_courses_for_message = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids_for_message]
                         if not unassigned_courses_for_message:
                             st.success("全ての講座が割り当てられました。")
-                    # assignments が空の場合のメッセージは後続のロジックで表示されるため、ここでは不要
 
                 if solver_result['assignments']:
-                    results_df = pd.DataFrame(solver_result['assignments']) # このdfはローカルでOK
+                    results_df = pd.DataFrame(solver_result['assignments'])
                     st.subheader("割り当て結果サマリー")
-                    
+                    # ... (サマリー表示ロジックは変更なしのため省略) ...
                     summary_data = []
                     schedule_compatible_count = results_df[results_df["スケジュール状況"] == "適合"].shape[0]
                     schedule_incompatible_count = results_df[results_df["スケジュール状況"] == "不適合"].shape[0]
@@ -1313,14 +1470,13 @@ if objective_terms:
                     total_travel_cost = results_df["移動コスト(元)"].sum()
                     summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
                     assigned_lecturer_ids = results_df["講師ID"].unique()
-                    # サマリー計算時も st.session_state のデータを使用
                     temp_assigned_lecturers = [l for l in st.session_state.DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
                     if temp_assigned_lecturers:
                         avg_age = sum(l.get("age", 0) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
                         summary_data.append(("**平均年齢**", f"{avg_age:.1f}才"))
                         avg_frequency = sum(len(l.get("past_assignments", [])) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
                         summary_data.append(("**平均頻度**", f"{avg_frequency:.1f}回"))
-
+                        # ... (ランク別、割り当て回数別サマリーも同様に省略) ...
                         # 一般資格ランク別割り当て状況
                         summary_data.append(("**一般資格ランク別割り当て**", "(講師が保有する一般資格ランク / 全講師中の同ランク保有者数)"))
                         general_rank_total_counts = {i: 0 for i in range(1, 6)}
@@ -1353,20 +1509,14 @@ if objective_terms:
                         for rank_num in range(1, 6):
                             summary_data.append((f"　特別ランク{rank_num}", f"{assigned_special_rank_counts.get(rank_num, 0)}人 / {special_rank_total_counts.get(rank_num, 0)}人中"))
 
-                    # 講師の割り当て回数別集計 (今回の最適化での担当講座数)
                     if '今回の割り当て回数' in results_df.columns:
-                        # 各講師が何回割り当てられたか (results_df には割り当てられた講師の情報しかない)
                         lecturer_assignment_counts_per_lecturer = results_df['講師ID'].value_counts()
-                        # 割り当て回数ごとに何人講師がいるか
                         counts_of_lecturers_by_assignment_num = lecturer_assignment_counts_per_lecturer.value_counts().sort_index()
-                        
                         summary_data.append(("**講師の割り当て回数別**", "(今回の最適化での担当講座数)"))
-                        has_multiple_assignments_summary = False
                         for num_assignments, num_lecturers in counts_of_lecturers_by_assignment_num.items():
-                            if num_assignments >= 1: # 1回以上担当した講師を表示
+                            if num_assignments >= 1:
                                 summary_data.append((f"　{num_assignments}回 担当した講師", f"{num_lecturers}人"))
-
-                    past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0] # st.session_state から取得
+                    past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0]
                     past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
                     summary_data.append(("**同教室への過去の割り当て**", ""))
                     summary_data.append(("　新規", f"{past_assignment_new_count}人"))
@@ -1377,20 +1527,18 @@ if objective_terms:
                     st.markdown(markdown_table)
                     st.markdown("---")
 
-                if solver_result['solver_raw_status_code'] == cp_model.OPTIMAL or solver_result['solver_raw_status_code'] == cp_model.FEASIBLE:
-                    if solver_result['assignments']: # 'assignments' が空でないことを確認
-                        results_df_display = pd.DataFrame(solver_result['assignments']) # 表示用に再度DataFrame作成
+                if solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                    if solver_result['assignments']:
+                        results_df_display = pd.DataFrame(solver_result['assignments'])
                         st.subheader("割り当て結果")
-                        st.dataframe(results_df_display) # type: ignore
+                        st.dataframe(results_df_display)
                         assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
                         unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
                         if unassigned_courses:
                             st.subheader("割り当てられなかった講座")
                             st.dataframe(pd.DataFrame(unassigned_courses))
                             st.caption("上記の講座は、スケジュール違反を許容しても、他の制約（資格ランクなど）により割り当て可能な講師が見つからなかったか、または他の割り当てと比較してコストが高すぎると判断された可能性があります。")
-                        # else: # 「全ての講座が割り当てられました」メッセージは上で表示済のため削除
-                            # st.success("全ての講座が割り当てられました。")
-                    else: # assignments が空の場合 (OPTIMAL/FEASIBLEだが割り当てなし)
+                    else:
                         st.error("解が見つかりましたが、実際の割り当ては行われませんでした。")
                         st.warning(
                             "考えられる原因:\n"
@@ -1401,19 +1549,16 @@ if objective_terms:
                         st.dataframe(pd.DataFrame(solver_result['all_courses']))
                 elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE:
                     st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
-                else: # UNKNOWN, MODEL_INVALID など
+                else:
                     st.error(solver_result['solution_status_str'])
 
-                # 「Gemini API によるログ解説を実行」ボタン
-                if GEMINI_API_KEY and "raw_log_on_server" in st.session_state and st.session_state.raw_log_on_server is not None:
+                if GEMINI_API_KEY and "raw_log_on_server" in st.session_state and st.session_state.raw_log_on_server:
                     if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation_button"):
-                        st.session_state.gemini_api_requested = True # 実行フラグ
-                        # 既存の解説があればクリア
+                        st.session_state.gemini_api_requested = True
                         if "gemini_explanation" in st.session_state: del st.session_state.gemini_explanation
                         if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
-                        st.rerun() # ボタン押下で再実行し、下のブロックでAPI呼び出しと表示
+                        st.rerun()
 
-                    # 生ログダウンロードボタン (Gemini APIボタンの下)
                     st.download_button(
                         label="ログのダウンロード",
                         data=st.session_state.raw_log_on_server,
@@ -1421,43 +1566,40 @@ if objective_terms:
                         mime="text/plain",
                         key="download_raw_log_button"
                     )
-                elif st.session_state.get("solution_executed"): # ボタンが表示されない場合のヒント (最適化実行後だが、raw_log_on_server がない場合など)
+                elif st.session_state.get("solution_executed"):
                     if not GEMINI_API_KEY:
                         st.info("Gemini APIキーが設定されていません。ログ関連機能を利用するには設定が必要です。")
-                    elif "raw_log_on_server" not in st.session_state or st.session_state.raw_log_on_server is None:
+                    elif not st.session_state.get("raw_log_on_server"):
                         st.warning("ログデータが利用できないため、ログ関連機能は表示されません。最適化処理が完了していないか、ログ取得に失敗した可能性があります。")
 
-                # Gemini API 呼び出しと結果表示 (ボタン押下後に実行される)
                 if st.session_state.get("gemini_api_requested") and \
                    "gemini_explanation" not in st.session_state and \
                    "gemini_api_error" not in st.session_state:
-                        with st.spinner("Gemini API でログを解説中..."):
-                            full_log_to_filter = st.session_state.raw_log_on_server # サーバー側の生ログを使用
-                            filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
+                    with st.spinner("Gemini API でログを解説中..."):
+                        full_log_to_filter = st.session_state.raw_log_on_server
+                        filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
+                        solver_cache = st.session_state.solver_result_cache
+                        solver_status = solver_cache["solution_status_str"]
+                        objective_value = solver_cache["objective_value"]
+                        assignments_list = solver_cache.get("assignments", [])
+                        assignments_summary_df = pd.DataFrame(assignments_list) if assignments_list else None
 
-                            # solver_result_cache から必要な情報を取得
-                            solver_cache = st.session_state.solver_result_cache # この時点では solver_result と同じ
-                            solver_status = solver_cache["solution_status_str"]
-                            objective_value = solver_cache["objective_value"]
-                            assignments_list = solver_cache.get("assignments", [])
-                            assignments_summary_df = pd.DataFrame(assignments_list) if assignments_list else None # type: ignore
+                        gemini_explanation_text = get_gemini_explanation(
+                            filtered_log_for_gemini, GEMINI_API_KEY,
+                            solver_status, objective_value, assignments_summary_df
+                        )
 
-                            gemini_explanation_text = get_gemini_explanation(
-                                filtered_log_for_gemini, GEMINI_API_KEY,
-                                solver_status, objective_value, assignments_summary_df
-                            )
+                        if gemini_explanation_text.startswith("Gemini APIエラー:"):
+                            st.session_state.gemini_api_error = gemini_explanation_text
+                        else:
+                            st.session_state.gemini_explanation = gemini_explanation_text
+                            if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
+                        st.session_state.gemini_api_requested = False
+                        st.rerun()
 
-                            if gemini_explanation_text.startswith("Gemini APIエラー:"):
-                                st.session_state.gemini_api_error = gemini_explanation_text
-                            else:
-                                st.session_state.gemini_explanation = gemini_explanation_text
-                                if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
-                            st.session_state.gemini_api_requested = False # 処理完了したのでフラグをリセット
-                            st.rerun() # 結果を表示するために再実行
-
-                if "gemini_api_error" in st.session_state and st.session_state.gemini_api_error: # エラーがあれば表示
+                if "gemini_api_error" in st.session_state and st.session_state.gemini_api_error:
                     st.error(st.session_state.gemini_api_error)
-                elif "gemini_explanation" in st.session_state and st.session_state.gemini_explanation: # 解説があれば表示
+                elif "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
                     with st.expander("Gemini API によるログ解説", expanded=True):
                         st.markdown(st.session_state.gemini_explanation)
 
