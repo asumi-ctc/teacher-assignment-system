@@ -902,7 +902,7 @@ var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
 possible_assignments.append({"variable": var, ...})
             """, language="python"
         )
-        with st.expander("コード解説"):
+        with st.expander("コード解説", expanded=True):
             st.markdown(
                 """
                 - `model.NewBoolVar(f'x_{lecturer_id}_{course_id}')` は、各講師 (`lecturer_id`) と各講座 (`course_id`) の組み合わせに対して、0または1の値を取るブール変数（決定変数）を作成します。
@@ -949,7 +949,7 @@ for lecturer_item in lecturers_data:
         model.Add(sum(assignments_for_lecturer) <= 1)
             """, language="python"
         )
-        with st.expander("コード解説"):
+        with st.expander("コード解説", expanded=True):
             st.markdown(
                 """
                 **各講座への割り当て制約:**
@@ -1006,7 +1006,7 @@ if objective_terms:
     model.Minimize(sum(objective_terms))
             """, language="python"
         )
-        with st.expander("コード解説"):
+        with st.expander("コード解説", expanded=True):
             st.markdown(
                 """
                 - **各割り当て候補のコスト計算**:
