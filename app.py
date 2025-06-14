@@ -397,8 +397,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
     # アプリケーションログを full_log_stream に直接書き込むように変更
     def log_to_stream(message):
-        # print(message, file=full_log_stream) # 一時的にログ出力を停止
-        pass
+        logger = logging.getLogger(__name__) # solve_assignment内でもロガーを取得
+        logger.info(f"[SolverAppLog] {message}") # 標準ログにも出力
+        print(message, file=full_log_stream) # StringIOにも書き込む
 
     # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
     lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
@@ -854,6 +855,7 @@ def main():
     logger.info("st.set_page_config() called.")
     initialize_app_data() # アプリケーションデータの初期化
     logger.info("initialize_app_data() finished.")
+
     # --- OIDC認証設定 ---
     GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
     GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
@@ -861,10 +863,12 @@ def main():
     ALLOWED_EMAIL = "asaumi.ctc@gmail.com" # 許可するメールアドレス
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 
+    logger.info("OIDC config loaded.")
     AUTHORIZE_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
     TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
     # REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke" # 必要に応じて
 
+    logger.info("Checking OIDC client secrets.")
     if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI]): # type: ignore
         st.error("Google OAuth の設定が不完全です。管理者にお問い合わせください。(.streamlit/secrets.toml を確認してください)")
         st.stop()
@@ -877,17 +881,23 @@ def main():
         refresh_token_endpoint=None,
         revoke_token_endpoint=None, # REVOKE_ENDPOINT,
     )
+    logger.info("OAuth2Component initialized.")
 
     # --- 認証とメインコンテンツの表示制御 ---
+    logger.info("Starting authentication check.")
     if 'token' not in st.session_state:
         st.session_state.token = None # 初期化
+        logger.info("Session state 'token' initialized to None.")
     if 'user_info' not in st.session_state:
         st.session_state.user_info = None # 初期化
+        logger.info("Session state 'user_info' initialized to None.")
 
     if not st.session_state.token:
         # --- 未認証の場合: ログインページ表示 ---
+        logger.info("No token in session_state. Displaying login page.")
         st.title("講師割り当てシステムへようこそ")
         st.write("続行するにはGoogleアカウントでログインしてください。")
+        logger.info("Calling oauth2.authorize_button.")
         result = oauth2.authorize_button(
             name="Googleでログイン",
             icon="https://www.google.com/favicon.ico",
@@ -896,8 +906,10 @@ def main():
             key="google_login_main", # 他のボタンとキーが衝突しないように変更
             extras_params={"access_type": "offline"} # "prompt": "consent" を削除
         )
+        logger.info(f"oauth2.authorize_button call completed. Result is not None: {result is not None}")
         if result and "token" in result: # type: ignore
             st.session_state.token = result.get("token")
+            logger.info("Token received from authorize_button. Verifying ID token.")
             try:
                 # IDトークンを取得して検証
                 id_token_str = st.session_state.token.get("id_token")
@@ -913,33 +925,41 @@ def main():
                             "email": user_email,
                             "name": id_info.get("name")
                         }
+                        logger.info(f"ID token verified. User '{user_email}' authorized.")
                     else:
                         st.error(f"このアプリケーションへのアクセスは許可されていません。({user_email})")
                         st.session_state.token = None # トークンをクリアしてログイン状態を解除
                         st.session_state.user_info = None
+                        logger.warning(f"User '{user_email}' not authorized. Token cleared.")
                 else:
                     st.error("IDトークンが取得できませんでした。")
                     st.session_state.token = None # トークンをクリア
                     st.session_state.user_info = {"email": "error@example.com", "name": "Unknown User"}
+                    logger.error("Failed to get ID token from token response.")
             except Exception as e:
                 st.error(f"ユーザー情報の取得/設定中にエラー: {e}")
                 st.session_state.token = None # トークンをクリア
                 st.session_state.user_info = {"email": "error@example.com"}
+                logger.error(f"Error during user info retrieval/setting: {e}", exc_info=True)
             st.rerun()
+        logger.info("Exiting unauthenticated block.")
         return # 未認証の場合はここで処理を終了し、メインUIは表示しない
 
     # --- 認証済みの場合: メインアプリケーションUI表示 ---
     # このブロックは st.session_state.token が存在する場合のみ実行されます
+    logger.info("User is authenticated. Proceeding to main UI.")
 
     # st.sidebar.header("最適化設定") # より詳細な構成に変更
 
     # --- セッション状態の初期化 (表示モード管理用) ---
+    logger.info("Initializing view_mode and solution_executed in session_state if not present.")
     if "view_mode" not in st.session_state:
         st.session_state.view_mode = "sample_data"  # デフォルトはサンプルデータ表示
     if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
 
     # --- メイン画面上部にナビゲーションボタンを配置 ---
+    logger.info("Setting up navigation buttons.")
     # ボタン幅を広げ、文字列が改行されないように比率を調整 (例: [1,1,5] -> [2,2,3])
     nav_cols = st.columns([2, 2, 2, 1])  # ボタン数を3つに合わせ、比率を調整
     with nav_cols[0]:
@@ -974,12 +994,14 @@ def main():
                 st.session_state.view_mode = "optimization_result"
                 st.rerun()
         # else: # solution_executed が False の場合 (初期状態など) は「最適化結果」ボタンをレンダリングしない
+    logger.info("Navigation buttons setup complete.")
 
+    logger.info("Setting up sidebar: description and execute button.")
     st.sidebar.markdown(
         "【制約】と【目的】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
         "また目的に重み付けすることでチューニングすることができます。"
     )
-    
+
     # 「最適割り当てを実行」ボタンを説明文の直下に移動
     if st.sidebar.button("最適割り当てを実行", type="primary", key="execute_optimization_main_button"):
         # 既存の計算結果関連のセッション変数をクリア
@@ -992,9 +1014,11 @@ def main():
         for key in keys_to_clear_on_execute:
             if key in st.session_state:
                 del st.session_state[key]
-        
+        logger.info("Cleared previous optimization results from session_state.")
+
         try:
             # ここで最適化計算を実行し、結果をキャッシュに保存する
+            logger.info("Starting optimization calculation (solve_assignment).")
             with st.spinner("最適化計算を実行中..."):
                 solver_output = solve_assignment(
                     st.session_state.DEFAULT_LECTURERS_DATA, st.session_state.DEFAULT_COURSES_DATA,
@@ -1009,9 +1033,11 @@ def main():
                     st.session_state.TODAY, # 追加
                     st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
                 ) # type: ignore
-            
+            logger.info("solve_assignment completed.")
+
             # solver_output の検証を追加
             if not isinstance(solver_output, dict):
+                logger.error(f"Invalid return type from solve_assignment: {type(solver_output)}")
                 st.error(f"最適化関数の戻り値が不正です (辞書ではありません)。型: {type(solver_output)}")
                 st.session_state.solution_executed = True
                 st.session_state.view_mode = "optimization_result"
@@ -1023,6 +1049,7 @@ def main():
                              "all_lecturers", "solver_raw_status_code"]
             missing_keys = [key for key in required_keys if key not in solver_output]
             if missing_keys:
+                logger.error(f"Missing keys in solver_output: {missing_keys}. Available keys: {list(solver_output.keys())}")
                 st.error(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}。取得キー: {list(solver_output.keys())}")
                 st.session_state.solution_executed = True
                 st.session_state.view_mode = "optimization_result"
@@ -1030,6 +1057,7 @@ def main():
                 return
 
             # 検証が通れば、結果を保存
+            logger.info("Solver output validated. Saving results to session_state.")
             st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
             # solver_result_cache には、SolverOutput のキーから full_application_and_solver_log を除いたものを格納
             st.session_state.solver_result_cache = {
@@ -1039,6 +1067,7 @@ def main():
             st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
 
         except Exception as e:
+            logger.error(f"Unexpected error during optimization process: {e}", exc_info=True)
             # エラーメッセージをセッション状態に保存
             error_message_summary = f"最適化処理中に予期せぬエラーが発生しました: {str(e)[:200]}..." # UI表示用に短縮
             import traceback
@@ -1054,7 +1083,9 @@ def main():
             st.session_state.view_mode = "optimization_result"
 
         st.rerun() # 再実行してメインエリアで処理と表示を行う
+    logger.info("Sidebar: execute button setup complete.")
 
+    logger.info("Setting up sidebar: constraints expander.")
     st.sidebar.markdown("---")
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("**ハード制約（絶対固定）**")
@@ -1091,7 +1122,9 @@ def main():
             key="allow_multiple_assignments_general_case_cb", # このキーで状態を管理
             help="チェックを外すと、一般講習と特別講習の連日開催の場合を除き、各講師は最大1つの講座しか担当しません（ペナルティが非常に高くなります）。" # ヘルプテキスト調整
         )
+    logger.info("Sidebar: constraints expander setup complete.")
 
+    logger.info("Setting up sidebar: objective expander.")
     with st.sidebar.expander("【目的】", expanded=False): # タイトルを元に戻す
         st.caption(
             "各目的の相対的な重要度を重みで設定します。\n"
@@ -1110,12 +1143,15 @@ def main():
         # 「講師の割り当て集中度を低くする」のスライダーは削除 (新しいソフト制約3で制御するため)
         # st.markdown("**講師の割り当て集中度を低くする**")
         # st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が複数の講座を担当することへのペナルティが大きくなります。値が高いほど、各講師は1つの講座に近づきます。", key="weight_lecturer_concentration_exp")
+    logger.info("Sidebar: objective expander setup complete.")
 
     # ログインユーザー情報とログアウトボタン
+    logger.info("Setting up sidebar: user info and logout button.")
     user_email = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
     st.sidebar.markdown("---")
     st.sidebar.write(f"ログイン中: {user_email}")
     if st.sidebar.button("ログアウト"):
+        logger.info(f"User '{user_email}' clicked logout.")
         st.session_state.token = None
         st.session_state.user_info = None
         # 関連するセッションステートもクリア (最適化結果キャッシュも含む)
@@ -1133,13 +1169,16 @@ def main():
             if key_to_clear in st.session_state:
                 del st.session_state[key_to_clear]
         st.rerun()
-    
+    logger.info("Sidebar: user info and logout button setup complete.")
 
+    logger.info("Setting main title.")
     st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
 
     # --- メインエリアの表示制御 ---
+    logger.info(f"Starting main area display. Current view_mode: {st.session_state.view_mode}")
     if st.session_state.view_mode == "sample_data":
         st.header("入力データ")
+        logger.info("Displaying sample data.")
         st.markdown(
             f"**現在の割り当て対象月:** {st.session_state.ASSIGNMENT_TARGET_MONTH_START.strftime('%Y年%m月%d日')} "
             f"～ {st.session_state.ASSIGNMENT_TARGET_MONTH_END.strftime('%Y年%m月%d日')}"
@@ -1178,8 +1217,10 @@ def main():
                 for k, v in st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX.items() # st.session_state から取得
             ])
             st.dataframe(df_travel_costs)
+        logger.info("Sample data display complete.")
 
     elif st.session_state.view_mode == "objective_function":
+        logger.info("Displaying objective function explanation.")
         st.header("ソルバーとmodelオブジェクト") # ヘッダー名を変更
 
         st.markdown(
@@ -1427,9 +1468,11 @@ else:
                     - `model.Minimize(sum(objective_terms))`: 全てのコスト項とペナルティ項の合計を最小化するようにソルバーに指示します。
                 """
             )
+        logger.info("Objective function explanation display complete.")
 
     elif st.session_state.view_mode == "optimization_result":
         st.header("最適化結果") # ヘッダーは最初に表示
+        logger.info("Displaying optimization result.")
 
         if not st.session_state.get("solution_executed", False):
             st.info("サイドバーの「最適割り当てを実行」ボタンを押して最適化を実行してください。")
@@ -1437,17 +1480,20 @@ else:
             if "solver_result_cache" not in st.session_state:
                 # solver_result_cache がない場合、まず保存されたエラーメッセージを確認
                 if "optimization_error_message" in st.session_state and st.session_state.optimization_error_message:
+                    logger.warning("Optimization error occurred. Displaying error message.")
                     st.error("最適化処理でエラーが発生しました。詳細は以下をご確認ください。")
                     # st.error(st.session_state.optimization_error_message) # エラーメッセージ全体を表示
                     with st.expander("エラー詳細", expanded=True):
                         st.code(st.session_state.optimization_error_message, language=None)
                 else:
+                    logger.info("No solver_result_cache and no optimization_error_message. Prompting user to run optimization.")
                     # エラーメッセージもなく、キャッシュもない場合は、従来通りのメッセージ
                     st.warning(
                         "最適化結果のデータは現在ありません。\n"
                         "再度結果を表示するには、サイドバーの「最適割り当てを実行」ボタンを押してください。"
                     )
             else: # solution_executed is True and solver_result_cache exists
+                logger.info("solver_result_cache found. Displaying results.")
                 solver_result = st.session_state.solver_result_cache
                 st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
                 if solver_result['objective_value'] is not None:
@@ -1572,12 +1618,14 @@ else:
                 elif st.session_state.get("solution_executed"):
                     if not GEMINI_API_KEY:
                         st.info("Gemini APIキーが設定されていません。ログ関連機能を利用するには設定が必要です。")
+                        logger.info("Gemini API key not set. Log features disabled.")
                     elif not st.session_state.get("raw_log_on_server"):
                         st.warning("ログデータが利用できないため、ログ関連機能は表示されません。最適化処理が完了していないか、ログ取得に失敗した可能性があります。")
 
                 if st.session_state.get("gemini_api_requested") and \
                    "gemini_explanation" not in st.session_state and \
                    "gemini_api_error" not in st.session_state:
+                    logger.info("Gemini API explanation requested. Calling API.")
                     with st.spinner("Gemini API でログを解説中..."):
                         full_log_to_filter = st.session_state.raw_log_on_server
                         filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
@@ -1593,21 +1641,27 @@ else:
                         )
 
                         if gemini_explanation_text.startswith("Gemini APIエラー:"):
+                            logger.error(f"Gemini API error: {gemini_explanation_text}")
                             st.session_state.gemini_api_error = gemini_explanation_text
                         else:
+                            logger.info("Gemini API explanation received successfully.")
                             st.session_state.gemini_explanation = gemini_explanation_text
                             if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
                         st.session_state.gemini_api_requested = False
                         st.rerun()
 
                 if "gemini_api_error" in st.session_state and st.session_state.gemini_api_error:
+                    logger.info("Displaying Gemini API error.")
                     st.error(st.session_state.gemini_api_error)
                 elif "gemini_explanation" in st.session_state and st.session_state.gemini_explanation:
+                    logger.info("Displaying Gemini API explanation.")
                     with st.expander("Gemini API によるログ解説", expanded=True):
                         st.markdown(st.session_state.gemini_explanation)
+            logger.info("Optimization result display complete.")
 
     else: # view_mode が予期せぬ値の場合 (フォールバック)
+        logger.warning(f"Unexpected view_mode: {st.session_state.view_mode}. Displaying fallback info.")
         st.info("サイドバーから表示するデータを選択してください。")
-
+    logger.info("Exiting main function.")
 if __name__ == "__main__":
     main()
