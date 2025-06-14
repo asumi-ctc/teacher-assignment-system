@@ -590,7 +590,10 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
                 if var_l_c1 is not None and var_l_c2 is not None:
                     is_assigned_to_fav_pair_var = model.NewBoolVar(f'is_fav_pair_{lecturer_id}_{c1_obj["id"]}_{c2_obj["id"]}')
-                    model.AddMultiplicationEquality(is_assigned_to_fav_pair_var, [var_l_c1, var_l_c2]) # type: ignore
+                    # 線形制約で AND を表現: is_assigned_to_fav_pair_var = var_l_c1 AND var_l_c2
+                    model.Add(is_assigned_to_fav_pair_var <= var_l_c1)
+                    model.Add(is_assigned_to_fav_pair_var <= var_l_c2)
+                    model.Add(is_assigned_to_fav_pair_var >= var_l_c1 + var_l_c2 - 1)
                     favored_pair_assignment_indicators.append(is_assigned_to_fav_pair_var)
             
             if favored_pair_assignment_indicators:
