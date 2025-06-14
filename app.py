@@ -11,6 +11,7 @@ from google.oauth2 import id_token # IDトークン検証用
 from google.auth.transport import requests as google_requests # IDトークン検証用
 import random # データ生成用
 import os # CPUコア数を取得するために追加
+import numpy as np # データ型変換のために追加
 # dateutil.relativedelta を使用するため、インストールが必要な場合があります。
 # pip install python-dateutil
 from dateutil.relativedelta import relativedelta
@@ -634,7 +635,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         if not assignments_for_lecturer_vars:
             continue
 
-        num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
+        num_total_assignments_l = model.NewIntVar(0, np.int64(len(courses_data)), f'num_total_assignments_{lecturer_id}')
         model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
 
         if lecturer_item.get("qualification_special_rank") is not None and \
@@ -674,7 +675,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
         # ペナルティ対象となる「追加の」実効的割り当て数 (1を超えた分)
         # 連日優遇による免除は考慮せず、総割り当て回数でペナルティを計算
-        extra_effective_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_eff_assign_{lecturer_id}')
+        extra_effective_assignments_l = model.NewIntVar(0, np.int64(len(courses_data)), f'extra_eff_assign_{lecturer_id}')
         model.Add(extra_effective_assignments_l >= num_total_assignments_l - 1) 
 
         current_penalty_per_extra = 0
