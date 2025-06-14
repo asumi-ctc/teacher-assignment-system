@@ -366,10 +366,6 @@ def get_region_hops(region1, region2, graph):
 # DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT
 # は initialize_app_data で st.session_state に格納される
 
-# スケジュール違反に対する固定ペナルティ (floatで定義し、他の重み付けコストと合算)
-# この値は、スケジュール違反を許容する場合に、他のコスト要因よりも優先度が低くなるように十分に大きく設定します。
-BASE_PENALTY_SCHEDULE_VIOLATION = 1000000.0  # 例: 100万
-
 # 過去の割り当てがない、または日付パース不能な場合に設定するデフォルトの経過日数 (ペナルティ計算上、十分に大きい値)
 # これは initialize_app_data で st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT に設定される
 
@@ -384,11 +380,10 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     full_application_and_solver_log: str
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms_data は現在未使用だが、将来のために残す
-                     travel_costs_matrix, # frequency_priority_costs を削除
+                     travel_costs_matrix,
                      weight_past_assignment_recency, weight_qualification,
-                     ignore_schedule_constraint: bool, # スケジュール制約を無視するかのフラグ
-                     weight_travel, weight_age, weight_frequency, # 既存の目的
-                     allow_multiple_assignments_general_case: bool, # 複数回割り当て許容フラグ
+                     weight_travel, weight_age, weight_frequency,
+                     allow_under_assignment: bool, # 割り当て不足を許容するかのフラグ
                      today_date, default_days_no_past_assignment) -> SolverOutput: # 引数追加
     model = cp_model.CpModel()
 
@@ -403,11 +398,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
     lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
     courses_dict = {course['id']: course for course in courses_data}
+    classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
 
-    # 講師の追加割り当てに対するペナルティの基準値 (スケーリング前) - 復元
-    # 他のコスト要素（移動コストなど）の代表的な値に基づいて設定
-    PENALTY_PER_EXTRA_ASSIGNMENT_RAW = 500 # 例: 5000 から 500 に調整 (スケーリング後 50000)
-    VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT = 100000 # 例: 1000万 から 10万に調整 - 復元
 
     # --- Main logic for model building and solving ---
     # possible_assignments をリストから辞書に変更
@@ -451,16 +443,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
             # スケジュールチェック
             schedule_available = course["schedule"] in lecturer["availability"]
-            actual_schedule_incompatibility_occurred = not schedule_available # 最終的な結果表示用
-            schedule_violation_penalty = 0.0
-
-            if not schedule_available: # スケジュールが合わない場合
-                if ignore_schedule_constraint: # スケジュール制約を無視する設定の場合
-                    schedule_violation_penalty = BASE_PENALTY_SCHEDULE_VIOLATION
-                    log_to_stream(f"  - Schedule incompatible (constraint ignored, penalty {schedule_violation_penalty} applied): {lecturer_id} for {course_id} (Course_schedule={course['schedule']}, Lecturer_avail_sample={lecturer['availability'][:3]}...)") # 講師の空き日は多すぎる可能性があるので一部表示
-                else: # スケジュール制約を無視しない設定の場合 -> 割り当て不可
-                    log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable and constraint NOT ignored: Course_schedule={course['schedule']}, Lecturer_avail_sample={lecturer['availability'][:3]}...)")
-                    continue
+            if not schedule_available:
+                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable: Course_schedule={course['schedule']}, Lecturer_avail_sample={lecturer['availability'][:3]}...)")
+                continue
             # else: スケジュールが合う場合はペナルティなし
 
             potential_assignment_count += 1
@@ -504,10 +489,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                                          weight_age * age_cost +
                                          weight_frequency * frequency_cost +
                                          weight_qualification * qualification_cost +
-                                         weight_past_assignment_recency * past_assignment_recency_cost
-                                        ) + schedule_violation_penalty
+                                         weight_past_assignment_recency * past_assignment_recency_cost)
             total_weighted_cost_int = int(total_weighted_cost_float * 100) # コストを整数にスケーリング
-            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol_penalty={schedule_violation_penalty}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
+            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             
             # 辞書に格納
             assignment_key = (lecturer_id, course_id)
@@ -515,7 +499,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                 "lecturer_id": lecturer_id, "course_id": course_id,
                 "variable": var, "cost": total_weighted_cost_int,
                 "qualification_cost_raw": qualification_cost, 
-                "is_schedule_incompatible": actual_schedule_incompatibility_occurred,
+                "is_schedule_incompatible": not schedule_available, # 割り当てられるものは常に False
                 "debug_past_assignment_recency_cost": past_assignment_recency_cost, # デバッグ/結果表示用
                 "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
             }
@@ -538,59 +522,37 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
     # --- 事前に割り当て変数をグループ化 ---
     assignments_by_course = {}
-    assignments_by_lecturer = {}
     for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
         variable_group = data_group["variable"]        
         # 講座IDでグループ化
         if course_id_group not in assignments_by_course:
             assignments_by_course[course_id_group] = []
         assignments_by_course[course_id_group].append(variable_group)
-
-        # 講師IDでグループ化 (ペナルティ計算用に復元)
-        if lecturer_id_group not in assignments_by_lecturer:
-            assignments_by_lecturer[lecturer_id_group] = []
-        assignments_by_lecturer[lecturer_id_group].append(variable_group)
-
+    
+    # 特定の都道府県リスト
+    TARGET_PREFECTURES_FOR_TWO_LECTURERS = ["東京都", "愛知県", "大阪府"]
+    
     for course_item in courses_dict.values(): # courses_data の代わりに courses_dict.values() を使用
         course_id = course_item["id"]
-        # 各講座は、担当可能な講師候補が存在する場合に限り、必ず1名割り当てる。
-        # 資格ランクなどのハード制約により候補がいない場合は、この強制割り当ての対象外とする。
         possible_assignments_for_course = assignments_by_course.get(course_id, [])
         if possible_assignments_for_course: # 担当可能な講師候補がいる場合のみ制約を追加
-            model.Add(sum(possible_assignments_for_course) == 1)
+            course_classroom_id = course_item["classroom_id"]
+            course_location = classrooms_dict[course_classroom_id]["location"]
+
+            target_assignment_count = 1
+            if course_location in TARGET_PREFECTURES_FOR_TWO_LECTURERS:
+                target_assignment_count = 2
+            
+            if allow_under_assignment:
+                # 割り当て不足を許容する場合 (0名、1名、または target_assignment_count 名まで)
+                model.Add(sum(possible_assignments_for_course) <= target_assignment_count)
+            else:
+                # 割り当て不足を許容しない場合 (必ず target_assignment_count 名)
+                model.Add(sum(possible_assignments_for_course) == target_assignment_count)
 
     # --- 目的関数の構築 ---
     # possible_assignments_dict の値からコスト項を生成
-    assignment_costs = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()]
-    objective_terms = list(assignment_costs) # 新しいリストとしてコピー
-
-    # --- 講師の割り当て回数ペナルティのロジック (復元・修正) ---
-    for lecturer_item in lecturers_dict.values():
-        lecturer_id = lecturer_item["id"]
-        assignments_for_lecturer_vars = assignments_by_lecturer.get(lecturer_id, [])
-        if not assignments_for_lecturer_vars:
-            continue
-
-        num_total_assignments_l = model.NewIntVar(0, np.int64(len(courses_data)), f'num_total_assignments_{lecturer_id}')
-        model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
-
-        # ペナルティ対象となる「追加の」割り当て数 (1回を超えた分)
-        extra_assignments_l = model.NewIntVar(0, np.int64(len(courses_data)), f'extra_assign_{lecturer_id}')
-        model.Add(extra_assignments_l >= num_total_assignments_l - 1)
-        model.Add(extra_assignments_l >= 0) # 念のため明示
-
-        # UIの設定に基づいてペナルティ値を決定
-        current_penalty_per_extra_raw = 0
-        if not allow_multiple_assignments_general_case: # 複数回割り当てを許容しない場合
-            current_penalty_per_extra_raw = VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT
-        else: # 複数回割り当てを許容する場合
-            current_penalty_per_extra_raw = PENALTY_PER_EXTRA_ASSIGNMENT_RAW
-        
-        scaled_penalty_per_extra = int(current_penalty_per_extra_raw * 100)
-
-        if scaled_penalty_per_extra > 0:
-            objective_terms.append(extra_assignments_l * scaled_penalty_per_extra)
-            log_to_stream(f"  - Lecturer {lecturer_id}: Penalty for extra assignments (>{1}) is {scaled_penalty_per_extra} per assignment. (Allow multiple: {allow_multiple_assignments_general_case})")
+    objective_terms = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()]
 
     if objective_terms:
         model.Minimize(sum(objective_terms))
@@ -936,11 +898,10 @@ def main():
                     st.session_state.DEFAULT_CLASSROOMS_DATA, st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX,
                     st.session_state.get("weight_past_assignment_exp", 0.5), # スライダーのキー名で取得
                     st.session_state.get("weight_qualification_exp", 0.5),  # スライダーのキー名で取得
-                    st.session_state.get("allow_schedule_violation_cb", True), # UIのキー名に合わせる
                     st.session_state.get("weight_travel_exp", 0.5),         # スライダーのキー名で取得
                     st.session_state.get("weight_age_exp", 0.5),            # スライダーのキー名で取得
                     st.session_state.get("weight_frequency_exp", 0.5),       # スライダーのキー名で取得
-                    st.session_state.get("allow_multiple_assignments_general_case_cb", True), # 変更: 複数割り当て許容フラグ
+                    st.session_state.get("allow_under_assignment_cb", True), # 新しい許容条件
                     st.session_state.TODAY, # 追加
                     st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
                 ) # type: ignore
@@ -1000,31 +961,24 @@ def main():
     st.sidebar.markdown("---")
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("**ハード制約（絶対固定）**")
-        st.markdown("- 講師は資格ランクに応じた講座しか割り当てできません。")
-        # st.markdown("- 講師は（今回の割り当てでは）1つの講座しか担当できません。") # この行を削除
+        st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない") # 文言変更
+        st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。") # 追加
+        st.markdown("- 3.講師は、東京、名古屋、大阪の教室には2名を割り当て、それ以外には1名を割り当てる。") # 追加
 
-        st.markdown("**ソフト制約（割り当てできない場合に許容できる）**") # 変更なし
+    logger.info("Sidebar: constraints expander setup complete.")
+    logger.info("Setting up sidebar: allowance conditions expander.") # ログメッセージ変更
+    with st.sidebar.expander("【許容条件】", expanded=False): # 「ソフト制約」を「許容条件」に変更
         st.markdown(
             "以下の項目は原則として守られますが、チェックボックスで許容することで、"
             "より多くの講座に講師を割り当てられる可能性があります。"
         )
-        
         st.markdown("---") # 区切り線
-        st.markdown("**1. 講師の個人スケジュールを尊重する**")
-        st.checkbox( # st.session_state.allow_schedule_violation への代入を削除
-            "ただし、割り当て出来ない場合にスケジュール違反を許容する",
-            value=st.session_state.get("allow_schedule_violation_cb", True), # key引数で指定したキーから読み込む
-            key="allow_schedule_violation_cb", # このキーで状態を管理
-            help="チェックを外すと、講師の空きスケジュールに完全に合致しない割り当ては行われません。"
-        )
-        st.markdown("---") # 区切り線
-        # 削除: 制約2に関連するUI要素
-        st.markdown("**3. 同一講師の割り当て回数は1回にする。**") # 文言変更: 「一般講習と...除き」を削除
+        st.markdown("**1. 講師が割り当て出来ない場合を許容する**") # 新しい許容条件
         st.checkbox(
-            "上記原則に反して、複数回の割り当てを許容する", # 文言調整: 「（連日開催の例外以外でも）」を削除
-            value=st.session_state.get("allow_multiple_assignments_general_case_cb", True), # key引数で指定したキーから読み込む
-            key="allow_multiple_assignments_general_case_cb", # このキーで状態を管理
-            help="チェックを外すと、各講師は最大1つの講座しか担当しません（ペナルティが非常に高くなります）。" # ヘルプテキスト調整: 「一般講習と...除き」を削除
+            "上記ハード制約3に対し、割り当て不足を許容する",
+            value=st.session_state.get("allow_under_assignment_cb", True),
+            key="allow_under_assignment_cb",
+            help="チェックを入れると、東京・名古屋・大阪の教室は最大2名（0名または1名も可）、その他の教室は最大1名（0名も可）の割り当てとなります。チェックを外すと、必ず指定された人数（東京・名古屋・大阪は2名、他は1名）を割り当てようとします（担当可能な講師がいない場合は割り当てられません）。"
         )
     logger.info("Sidebar: constraints expander setup complete.")
 
@@ -1374,10 +1328,13 @@ else:
                     # ... (サマリー表示ロジックは変更なしのため省略) ...
                     summary_data = []
                     schedule_compatible_count = results_df[results_df["スケジュール状況"] == "適合"].shape[0]
-                    schedule_incompatible_count = results_df[results_df["スケジュール状況"] == "不適合"].shape[0]
-                    summary_data.append(("**スケジュール**", ""))
-                    summary_data.append(("　適合", f"{schedule_compatible_count}人"))
-                    summary_data.append(("　不適合（講師の空きスケジュールに不適合）", f"{schedule_incompatible_count}人"))
+                    # スケジュールは常に適合するようになったため、不適合の表示は不要になるか、常に0件と表示される
+                    # schedule_incompatible_count = results_df[results_df["スケジュール状況"] == "不適合"].shape[0]
+                    # summary_data.append(("**スケジュール**", ""))
+                    # summary_data.append(("　適合", f"{schedule_compatible_count}人"))
+                    # summary_data.append(("　不適合（講師の空きスケジュールに不適合）", f"{schedule_incompatible_count}人"))
+                    summary_data.append(("**スケジュール適合割り当て数**", f"{schedule_compatible_count}件"))
+
                     total_travel_cost = results_df["移動コスト(元)"].sum()
                     summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
                     assigned_lecturer_ids = results_df["講師ID"].unique()
