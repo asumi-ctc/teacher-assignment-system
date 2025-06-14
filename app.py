@@ -580,8 +580,10 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
 
         # --- 「一般講習と特別講習が連日開催される場合の優先割り当て」ロジックを一時的にコメントアウト ---
-        num_favored_consecutive_pairs_l = model.NewIntVar(0, len(all_consecutive_gs_pairs_info), f'num_fav_pairs_{lecturer_id}')
-        model.Add(num_favored_consecutive_pairs_l == 0) # 連日優遇を常に0とする
+        # num_favored_consecutive_pairs_l 変数の定義自体もコメントアウトし、
+        # 後続処理での意図しない参照の可能性を完全に排除します。
+        # num_favored_consecutive_pairs_l = model.NewIntVar(0, len(all_consecutive_gs_pairs_info), f'num_fav_pairs_{lecturer_id}')
+        # model.Add(num_favored_consecutive_pairs_l == 0)
         
         # if lecturer_item.get("qualification_special_rank") is not None and all_consecutive_gs_pairs_info and not allow_ignore_favored_consecutive:
         #     favored_pair_assignment_indicators = []
