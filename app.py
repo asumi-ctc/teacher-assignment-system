@@ -608,8 +608,12 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
         # ペナルティ対象となる実効的な割り当て数
         # (総割り当て数 - 優遇される連日ペア数) がペナルティ計算のベース
+        # 連日優遇ロジックをコメントアウトしたため、effective_assignments_for_penalty_l は num_total_assignments_l と同じになる
         effective_assignments_for_penalty_l = model.NewIntVar(0, len(courses_data), f'eff_assign_penalty_{lecturer_id}')
-        model.Add(effective_assignments_for_penalty_l == num_total_assignments_l - num_favored_consecutive_pairs_l)
+        # model.Add(effective_assignments_for_penalty_l == num_total_assignments_l - num_favored_consecutive_pairs_l) # 元の計算
+        model.Add(effective_assignments_for_penalty_l == num_total_assignments_l) # 修正: 連日優遇がない場合は総割り当て数と等しい
+
+
         model.Add(effective_assignments_for_penalty_l >= 0) # 念のため
 
         # ペナルティ対象となる「追加の」実効的割り当て数 (1を超えた分)
