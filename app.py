@@ -388,7 +388,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                      ignore_schedule_constraint: bool, # スケジュール制約を無視するかのフラグ
                      weight_travel, weight_age, weight_frequency, # 既存の目的
                      allow_ignore_favored_consecutive: bool,
-                     allow_multiple_assignments_general_case: bool, # UIからのソフト制約フラグ
                      today_date, default_days_no_past_assignment) -> SolverOutput: # 引数追加
     model = cp_model.CpModel()
     # solve_assignment 内の print 文も解説対象に含めるために、
@@ -678,16 +677,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         extra_effective_assignments_l = model.NewIntVar(0, np.int64(len(courses_data)), f'extra_eff_assign_{lecturer_id}')
         model.Add(extra_effective_assignments_l >= num_total_assignments_l - 1) 
 
-        current_penalty_per_extra = 0
-        if not allow_multiple_assignments_general_case: # 「許容しない」場合 = 原則1回 (連日例外除く)
-            current_penalty_per_extra = VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT
-            # log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (more than 1) will incur VERY HIGH penalty: {current_penalty_per_extra}") # ログ量考慮
-        else: # 「許容する」場合
-            current_penalty_per_extra = int(PENALTY_PER_EXTRA_ASSIGNMENT_RAW * 100) # 通常のペナルティ
-            # log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (more than 1) allowed with penalty: {current_penalty_per_extra}") # ログ量考慮
-
-        if current_penalty_per_extra > 0:
-            objective_terms.append(extra_effective_assignments_l * current_penalty_per_extra)
 
     if objective_terms:
         model.Minimize(sum(objective_terms))
