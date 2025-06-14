@@ -406,11 +406,11 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
     # 講師の追加割り当てに対するペナルティの基準値 (スケーリング前)
     # 他のコスト要素（移動コストなど）の代表的な値に基づいて設定
-    PENALTY_PER_EXTRA_ASSIGNMENT_RAW = 5000 
+    PENALTY_PER_EXTRA_ASSIGNMENT_RAW = 500 # 例: 5000 から 500 に調整 (スケーリング後 50000)
     # 優遇される連日ペアに割り当てられた場合のボーナス値 (スケーリング前、ペナルティと同程度の絶対値で設定)
     # 目的関数は最小化なので、ボーナスは負のコストとして加える
-    BONUS_PER_FAVORED_PAIR_RAW = -5000 
-    VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT = 10000000 # 実質的な禁止のための高いペナルティ
+    BONUS_PER_FAVORED_PAIR_RAW = -500 # 例: -5000 から -500 に調整 (スケーリング後 -50000)
+    VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT = 100000 # 例: 1000万 から 10万に調整
 
     # Helper function to check for consecutive general/special course pairs
     def is_consecutive_general_special_pair(course1, course2):
