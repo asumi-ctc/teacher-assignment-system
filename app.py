@@ -892,7 +892,9 @@ def main():
     if st.sidebar.button("最適割り当てを実行", type="primary", key="execute_optimization_main_button"):
         # 既存の計算結果関連のセッション変数をクリア
         keys_to_clear_on_execute = [
-            "solver_result_cache", "raw_log_on_server", "gemini_explanation",
+            "solver_result_cache", "raw_log_on_server", 
+            "optimization_error_message", # 追加: 前回の実行時エラーをクリア
+            "gemini_explanation",
             "gemini_api_requested", "gemini_api_error"
         ]
         for key in keys_to_clear_on_execute:
@@ -946,15 +948,18 @@ def main():
             st.session_state.view_mode = "optimization_result" # 表示モードを最適化結果に
 
         except Exception as e:
-            st.error(f"最適化処理中に予期せぬエラーが発生しました。")
-            st.error(f"エラー詳細: {str(e)[:1000]}") # エラーメッセージを少し長く表示
-            # エラーが発生しても、実行試行済みとし、結果表示画面へ遷移させる
-            # solver_result_cache は設定されないため、結果表示画面で「データなし」の警告が表示される
-            # デバッグ用にスタックトレースをログに出力（UIには出さない）
+            # エラーメッセージをセッション状態に保存
+            error_message_summary = f"最適化処理中に予期せぬエラーが発生しました: {str(e)[:200]}..." # UI表示用に短縮
             import traceback
             error_trace = traceback.format_exc()
-            st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{error_trace}" # ログにエラーを記録
-            st.session_state.solution_executed = True 
+            # 詳細なエラー情報をセッションステートに保存
+            st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
+            
+            st.error(error_message_summary) # UIにも即時表示
+
+            # ログにもエラーを記録 (エラー発生時はログもエラー情報で上書き)
+            st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
+            st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
 
         st.rerun() # 再実行してメインエリアで処理と表示を行う
@@ -1341,12 +1346,18 @@ else:
             st.info("サイドバーの「最適割り当てを実行」ボタンを押して最適化を実行してください。")
         else: # solution_executed is True
             if "solver_result_cache" not in st.session_state:
-                # solution_executed is True, but no cache (e.g., after viewing sample data, which clears the cache)
-                # この場合、再計算は行わず、キャッシュがない旨をユーザーに伝える
-                st.warning(
-                    "最適化結果のデータは現在ありません。\n"
-                    "再度結果を表示するには、サイドバーの「最適割り当てを実行」ボタンを押してください。"
-                )
+                # solver_result_cache がない場合、まず保存されたエラーメッセージを確認
+                if "optimization_error_message" in st.session_state and st.session_state.optimization_error_message:
+                    st.error("最適化処理でエラーが発生しました。詳細は以下をご確認ください。")
+                    # st.error(st.session_state.optimization_error_message) # エラーメッセージ全体を表示
+                    with st.expander("エラー詳細", expanded=True):
+                        st.code(st.session_state.optimization_error_message, language=None)
+                else:
+                    # エラーメッセージもなく、キャッシュもない場合は、従来通りのメッセージ
+                    st.warning(
+                        "最適化結果のデータは現在ありません。\n"
+                        "再度結果を表示するには、サイドバーの「最適割り当てを実行」ボタンを押してください。"
+                    )
             else: # solution_executed is True and solver_result_cache exists
                 solver_result = st.session_state.solver_result_cache
                 st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
