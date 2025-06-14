@@ -401,6 +401,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     # 講師の追加割り当てに対するペナルティの基準値 (スケーリング前)
     # 他のコスト要素（移動コストなど）の代表的な値に基づいて設定
     PENALTY_PER_EXTRA_ASSIGNMENT_RAW = 5000 
+    # 優遇される連日ペアに割り当てられた場合のボーナス値 (スケーリング前、ペナルティと同程度の絶対値で設定)
+    # 目的関数は最小化なので、ボーナスは負のコストとして加える
+    BONUS_PER_FAVORED_PAIR_RAW = -5000 
     VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT = 10000000 # 実質的な禁止のための高いペナルティ
 
     # Helper function to check for consecutive general/special course pairs
@@ -579,55 +582,47 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
         model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
 
-        # --- 「一般講習と特別講習が連日開催される場合の優先割り当て」ロジックを一時的にコメントアウト ---
-        # num_favored_consecutive_pairs_l 変数の定義自体もコメントアウトし、
-        # 後続処理での意図しない参照の可能性を完全に排除します。
-        # num_favored_consecutive_pairs_l = model.NewIntVar(0, len(all_consecutive_gs_pairs_info), f'num_fav_pairs_{lecturer_id}')
-        # model.Add(num_favored_consecutive_pairs_l == 0)
-        
-        # if lecturer_item.get("qualification_special_rank") is not None and all_consecutive_gs_pairs_info and not allow_ignore_favored_consecutive:
-        #     favored_pair_assignment_indicators = []
-        #     for pair_info in all_consecutive_gs_pairs_info:
-        #         c1_obj, c2_obj = pair_info['c1'], pair_info['c2']
-        #         var_l_c1 = get_assignment_var(lecturer_id, c1_obj['id'], possible_assignments)
-        #         var_l_c2 = get_assignment_var(lecturer_id, c2_obj['id'], possible_assignments)
-
-        #         if var_l_c1 is not None and var_l_c2 is not None:
-        #             is_assigned_to_fav_pair_var = model.NewBoolVar(f'is_fav_pair_{lecturer_id}_{c1_obj["id"]}_{c2_obj["id"]}')
-        #             # 線形制約で AND を表現: is_assigned_to_fav_pair_var = var_l_c1 AND var_l_c2
-        #             model.Add(is_assigned_to_fav_pair_var <= var_l_c1)
-        #             model.Add(is_assigned_to_fav_pair_var <= var_l_c2)
-        #             model.Add(is_assigned_to_fav_pair_var >= var_l_c1 + var_l_c2 - 1)
-        #             favored_pair_assignment_indicators.append(is_assigned_to_fav_pair_var)
+        # --- 「一般講習と特別講習が連日開催される場合の優遇」をボーナス方式で目的関数に反映 ---
+        if lecturer_item.get("qualification_special_rank") is not None and \
+           all_consecutive_gs_pairs_info and \
+           not allow_ignore_favored_consecutive: # UIで「無視しない」が選択されている場合
             
-        #     if favored_pair_assignment_indicators:
-        #         model.Add(num_favored_consecutive_pairs_l == sum(favored_pair_assignment_indicators)) # type: ignore
-        #     else:
-        #         model.Add(num_favored_consecutive_pairs_l == 0)
-        # else: # 特別資格なし、または連日優遇を無視する場合
-        #     model.Add(num_favored_consecutive_pairs_l == 0)
-        # --- ここまでコメントアウト ---
+            scaled_bonus_per_favored_pair = int(BONUS_PER_FAVORED_PAIR_RAW * 100)
+            log_to_stream(f"  - Lecturer {lecturer_id}: Favored consecutive pairs will receive a bonus: {scaled_bonus_per_favored_pair} per pair.")
 
-        # ペナルティ対象となる実効的な割り当て数
-        # (総割り当て数 - 優遇される連日ペア数) がペナルティ計算のベース
-        # 連日優遇ロジックをコメントアウトしたため、effective_assignments_for_penalty_l は num_total_assignments_l と同じになる
-        # effective_assignments_for_penalty_l 変数の定義自体もコメントアウトし、後続処理での意図しない参照の可能性を完全に排除します。
-        # effective_assignments_for_penalty_l = model.NewIntVar(0, len(courses_data), f'eff_assign_penalty_{lecturer_id}')
-        # model.Add(effective_assignments_for_penalty_l == num_total_assignments_l - num_favored_consecutive_pairs_l) # 元の計算
-        # model.Add(effective_assignments_for_penalty_l == num_total_assignments_l) # 修正: 連日優遇がない場合は総割り当て数と等しい
-        # model.Add(effective_assignments_for_penalty_l >= 0) # 念のため
+            for pair_info in all_consecutive_gs_pairs_info:
+                c1_obj, c2_obj = pair_info['c1'], pair_info['c2']
+                var_l_c1 = get_assignment_var(lecturer_id, c1_obj['id'], possible_assignments)
+                var_l_c2 = get_assignment_var(lecturer_id, c2_obj['id'], possible_assignments)
+
+                if var_l_c1 is not None and var_l_c2 is not None:
+                    # 講師lがこの優遇ペア(c1,c2)に割り当てられたかを示すブール変数
+                    is_assigned_to_this_fav_pair_var = model.NewBoolVar(
+                        f'is_fav_pair_{lecturer_id}_{c1_obj["id"]}_{c2_obj["id"]}'
+                    )
+                    # 線形制約で AND を表現: is_assigned_to_this_fav_pair_var = var_l_c1 AND var_l_c2
+                    model.Add(is_assigned_to_this_fav_pair_var <= var_l_c1)
+                    model.Add(is_assigned_to_this_fav_pair_var <= var_l_c2)
+                    model.Add(is_assigned_to_this_fav_pair_var >= var_l_c1 + var_l_c2 - 1)
+                    
+                    # 目的関数にボーナス項を追加 (ボーナスは負のコスト)
+                    objective_terms.append(is_assigned_to_this_fav_pair_var * scaled_bonus_per_favored_pair)
+        else:
+            log_to_stream(f"  - Lecturer {lecturer_id}: No bonus for favored consecutive pairs (not applicable or ignored by UI).")
+
 
         # ペナルティ対象となる「追加の」実効的割り当て数 (1を超えた分)
+        # 連日優遇による免除は考慮せず、総割り当て回数でペナルティを計算
         extra_effective_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_eff_assign_{lecturer_id}')
         model.Add(extra_effective_assignments_l >= num_total_assignments_l - 1) 
 
         current_penalty_per_extra = 0
         if not allow_multiple_assignments_general_case: # 「許容しない」場合 = 原則1回 (連日例外除く)
             current_penalty_per_extra = VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT
-            log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (beyond favored pairs) will incur VERY HIGH penalty: {current_penalty_per_extra}")
+            log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (more than 1) will incur VERY HIGH penalty: {current_penalty_per_extra}")
         else: # 「許容する」場合
             current_penalty_per_extra = int(PENALTY_PER_EXTRA_ASSIGNMENT_RAW * 100) # 通常のペナルティ
-            log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (beyond favored pairs) allowed with penalty: {current_penalty_per_extra}")
+            log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (more than 1) allowed with penalty: {current_penalty_per_extra}")
 
         if current_penalty_per_extra > 0:
             objective_terms.append(extra_effective_assignments_l * current_penalty_per_extra)
