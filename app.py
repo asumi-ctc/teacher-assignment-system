@@ -553,14 +553,28 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             full_application_and_solver_log=all_captured_logs
         )
 
+    # --- 事前に割り当て変数をグループ化 ---
+    assignments_by_course = {}
+    assignments_by_lecturer = {}
+    for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
+        variable_group = data_group["variable"]
+        
+        # 講座IDでグループ化
+        if course_id_group not in assignments_by_course:
+            assignments_by_course[course_id_group] = []
+        assignments_by_course[course_id_group].append(variable_group)
+        
+        # 講師IDでグループ化
+        if lecturer_id_group not in assignments_by_lecturer:
+            assignments_by_lecturer[lecturer_id_group] = []
+        assignments_by_lecturer[lecturer_id_group].append(variable_group)
+
     for course_item in courses_dict.values(): # courses_data の代わりに courses_dict.values() を使用
         course_id = course_item["id"]
         # 各講座は、担当可能な講師候補が存在する場合に限り、必ず1名割り当てる。
         # 資格ランクなどのハード制約により候補がいない場合は、この強制割り当ての対象外とする。
-        # possible_assignments_dict から該当する変数を収集
-        possible_assignments_for_course = [
-            data["variable"] for (lid, cid), data in possible_assignments_dict.items() if cid == course_id
-        ]
+        # 事前にグループ化された辞書から取得
+        possible_assignments_for_course = assignments_by_course.get(course_id, [])
         if possible_assignments_for_course: # 担当可能な講師候補がいる場合のみ制約を追加
             model.Add(sum(possible_assignments_for_course) == 1)
             
@@ -615,10 +629,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
     for lecturer_item in lecturers_dict.values(): # lecturers_data の代わりに lecturers_dict.values() を使用
         lecturer_id = lecturer_item["id"]
-        # possible_assignments_dict から該当する変数を収集
-        assignments_for_lecturer_vars = [
-            data["variable"] for (lid, cid), data in possible_assignments_dict.items() if lid == lecturer_id
-        ]
+        # 事前にグループ化された辞書から取得
+        assignments_for_lecturer_vars = assignments_by_lecturer.get(lecturer_id, [])
         if not assignments_for_lecturer_vars:
             continue
 
