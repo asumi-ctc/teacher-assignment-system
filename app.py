@@ -698,11 +698,11 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         model.Minimize(0) # 目的項がない場合は0を最小化 (エラー回避)
     solver = cp_model.CpSolver()
     solver.parameters.log_search_progress = True
-    # --- ソルバーの並列処理有効化 ---
-    num_workers = os.cpu_count()
-    if num_workers: # os.cpu_count() が None や 0 を返す可能性を考慮
-        solver.parameters.num_search_workers = num_workers
-        log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
+    # --- ソルバーの並列処理有効化 (一旦コメントアウトして安定性を確認) ---
+    # num_workers = os.cpu_count()
+    # if num_workers: # os.cpu_count() が None や 0 を返す可能性を考慮
+    #     solver.parameters.num_search_workers = num_workers
+    #     log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
 
     log_to_stream("--- Solver Log (Captured by app.py) ---")
     
