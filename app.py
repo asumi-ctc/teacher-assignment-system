@@ -989,28 +989,28 @@ def main():
         
         st.markdown("---") # 区切り線
         st.markdown("**1. 講師の個人スケジュールを尊重する**")
-        st.session_state.allow_schedule_violation = st.checkbox(
+        st.checkbox(
             "ただし、割り当て出来ない場合にスケジュール違反を許容する",
-            value=st.session_state.get("allow_schedule_violation", True), # デフォルトは許容
-            key="allow_schedule_violation_cb",
+            value=st.session_state.get("allow_schedule_violation_cb", True), # key引数で指定したキーから読み込む
+            key="allow_schedule_violation_cb", # このキーで状態を管理
             help="チェックを外すと、講師の空きスケジュールに完全に合致しない割り当ては行われません。"
         )
 
         st.markdown("---") # 区切り線
         st.markdown("**2. 一般講習と特別講習が連日開催される場合は、特別資格を持つ同一講師を優先的に割り当てる**")
-        st.session_state.allow_ignore_favored_consecutive = st.checkbox(
+        st.checkbox(
             "ただし、この優先割り当てを無視して他の講師の割り当てを許容する",
-            value=st.session_state.get("allow_ignore_favored_consecutive", False), # デフォルトは優先
-            key="allow_ignore_favored_consecutive_cb",
+            value=st.session_state.get("allow_ignore_favored_consecutive_cb", False), # key引数で指定したキーから読み込む
+            key="allow_ignore_favored_consecutive_cb", # このキーで状態を管理
             help="チェックを入れると、連日開催の優遇を行わず、他の割り当て基準が優先されることがあります。"
         )
 
         st.markdown("---") # 区切り線
         st.markdown("**3. 一般講習と特別講習が連日開催される場合を除き、同一講師の割り当て回数は1回にする。**") # 文言変更
-        st.session_state.allow_multiple_assignments_general_case = st.checkbox(
+        st.checkbox(
             "上記原則に反して、複数回の割り当てを許容する（連日開催の例外以外でも）", # 文言調整
-            value=st.session_state.get("allow_multiple_assignments_general_case", True), # デフォルトは許容
-            key="allow_multiple_assignments_general_case_cb", # キー名を変更して意図を明確に
+            value=st.session_state.get("allow_multiple_assignments_general_case_cb", True), # key引数で指定したキーから読み込む
+            key="allow_multiple_assignments_general_case_cb", # このキーで状態を管理
             help="チェックを外すと、一般講習と特別講習の連日開催の場合を除き、各講師は最大1つの講座しか担当しません（ペナルティが非常に高くなります）。" # ヘルプテキスト調整
         )
 
