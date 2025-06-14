@@ -396,7 +396,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
     # アプリケーションログを full_log_stream に直接書き込むように変更
     def log_to_stream(message):
-        print(message, file=full_log_stream)
+        # print(message, file=full_log_stream) # 一時的にログ出力を停止
+        pass
 
     # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
     lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
@@ -687,7 +688,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         log_to_stream("Warning: Objective terms list was empty. Minimizing 0.")
         model.Minimize(0) # 目的項がない場合は0を最小化 (エラー回避)
     solver = cp_model.CpSolver()
-    solver.parameters.log_search_progress = True
+    # solver.parameters.log_search_progress = True # ソルバーのログ出力を一時的に停止
     # --- ソルバーの並列処理有効化 (一旦コメントアウトして安定性を確認) ---
     # num_workers = os.cpu_count()
     # if num_workers: # os.cpu_count() が None や 0 を返す可能性を考慮
