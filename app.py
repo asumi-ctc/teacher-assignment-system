@@ -602,8 +602,11 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     is_assigned_to_this_fav_pair_var = model.NewBoolVar(
                         f'is_fav_pair_{lecturer_id}_{c1_obj["id"]}_{c2_obj["id"]}'
                     )
-                    # CP-SATネイティブなAND表現 (is_assigned_to_this_fav_pair_var = var_l_c1 AND var_l_c2)
-                    model.AddMultiplicationEquality(is_assigned_to_this_fav_pair_var, [var_l_c1, var_l_c2])
+                    # 線形制約によるAND表現:
+                    # is_assigned_to_this_fav_pair_var = var_l_c1 AND var_l_c2
+                    model.Add(is_assigned_to_this_fav_pair_var <= var_l_c1)
+                    model.Add(is_assigned_to_this_fav_pair_var <= var_l_c2)
+                    model.Add(is_assigned_to_this_fav_pair_var >= var_l_c1 + var_l_c2 - 1)
                     
                     # 目的関数にボーナス項を追加 (ボーナスは負のコスト)
                     objective_terms.append(is_assigned_to_this_fav_pair_var * scaled_bonus_per_favored_pair)
