@@ -385,14 +385,13 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms_data は現在未使用だが、将来のために残す
                      travel_costs_matrix, # frequency_priority_costs を削除
-                     weight_past_assignment_recency, weight_qualification, 
+                     weight_past_assignment_recency, weight_qualification,
                      ignore_schedule_constraint: bool, # スケジュール制約を無視するかのフラグ
                      weight_travel, weight_age, weight_frequency, # 既存の目的
-                     allow_ignore_favored_consecutive: bool,
+                     allow_multiple_assignments_general_case: bool, # 複数回割り当て許容フラグ
                      today_date, default_days_no_past_assignment) -> SolverOutput: # 引数追加
     model = cp_model.CpModel()
-    # solve_assignment 内の print 文も解説対象に含めるために、
-    # ここで stdout のキャプチャを開始する
+
     full_log_stream = io.StringIO()
 
     # アプリケーションログを full_log_stream に直接書き込むように変更
@@ -404,31 +403,12 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
     lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
     courses_dict = {course['id']: course for course in courses_data}
-        # print(message) # ターミナルにも表示（デバッグ用） - 大量ログの場合、パフォーマンスに影響する可能性
 
-    # 講師の追加割り当てに対するペナルティの基準値 (スケーリング前)
+    # 講師の追加割り当てに対するペナルティの基準値 (スケーリング前) - 復元
     # 他のコスト要素（移動コストなど）の代表的な値に基づいて設定
     PENALTY_PER_EXTRA_ASSIGNMENT_RAW = 500 # 例: 5000 から 500 に調整 (スケーリング後 50000)
-    # 優遇される連日ペアに割り当てられた場合のボーナス値 (スケーリング前、ペナルティと同程度の絶対値で設定)
-    # 目的関数は最小化なので、ボーナスは負のコストとして加える
-    BONUS_PER_FAVORED_PAIR_RAW = -500 # 例: -5000 から -500 に調整 (スケーリング後 -50000)
-    VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT = 100000 # 例: 1000万 から 10万に調整
+    VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT = 100000 # 例: 1000万 から 10万に調整 - 復元
 
-    # Helper function to check for consecutive general/special course pairs
-    def is_consecutive_general_special_pair(course1, course2):
-        try:
-            date1 = datetime.datetime.strptime(course1['schedule'], "%Y-%m-%d").date()
-            date2 = datetime.datetime.strptime(course2['schedule'], "%Y-%m-%d").date()
-        except (ValueError, KeyError): # KeyErrorも捕捉
-            return False
-        if abs((date2 - date1).days) == 1:
-            c1_type = course1.get('course_type')
-            c2_type = course2.get('course_type')
-            if c1_type and c2_type: # タイプが存在することを確認
-                is_gs = (c1_type == 'general' and c2_type == 'special')
-                is_sg = (c1_type == 'special' and c2_type == 'general')
-                return is_gs or is_sg
-        return False
     # --- Main logic for model building and solving ---
     # possible_assignments をリストから辞書に変更
     # キー: (lecturer_id, course_id) タプル
@@ -560,14 +540,13 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     assignments_by_course = {}
     assignments_by_lecturer = {}
     for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
-        variable_group = data_group["variable"]
-        
+        variable_group = data_group["variable"]        
         # 講座IDでグループ化
         if course_id_group not in assignments_by_course:
             assignments_by_course[course_id_group] = []
         assignments_by_course[course_id_group].append(variable_group)
-        
-        # 講師IDでグループ化
+
+        # 講師IDでグループ化 (ペナルティ計算用に復元)
         if lecturer_id_group not in assignments_by_lecturer:
             assignments_by_lecturer[lecturer_id_group] = []
         assignments_by_lecturer[lecturer_id_group].append(variable_group)
@@ -576,63 +555,18 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         course_id = course_item["id"]
         # 各講座は、担当可能な講師候補が存在する場合に限り、必ず1名割り当てる。
         # 資格ランクなどのハード制約により候補がいない場合は、この強制割り当ての対象外とする。
-        # 事前にグループ化された辞書から取得
         possible_assignments_for_course = assignments_by_course.get(course_id, [])
         if possible_assignments_for_course: # 担当可能な講師候補がいる場合のみ制約を追加
             model.Add(sum(possible_assignments_for_course) == 1)
-            
+
     # --- 目的関数の構築 ---
     # possible_assignments_dict の値からコスト項を生成
     assignment_costs = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()]
     objective_terms = list(assignment_costs) # 新しいリストとしてコピー
 
-    # --- 効率化された連日ペア探索 ---
-    log_to_stream("Optimizing consecutive general-special pair finding...")
-    courses_by_schedule_str_map = {} 
-    for c_item_for_pairs in courses_dict.values(): # courses_data の代わりに courses_dict.values()
-        schedule_val = c_item_for_pairs.get("schedule")
-        if schedule_val and isinstance(schedule_val, str):
-            try:
-                datetime.datetime.strptime(schedule_val, "%Y-%m-%d") # Validate format
-                courses_by_schedule_str_map.setdefault(schedule_val, []).append(c_item_for_pairs)
-            except ValueError:
-                log_to_stream(f"  Warning: Invalid date format for course {c_item_for_pairs.get('id')} ('{schedule_val}') during pair pre-processing.")
-                continue
-        else:
-            log_to_stream(f"  Warning: Missing or invalid schedule for course {c_item_for_pairs.get('id')} during pair pre-processing.")
-
-    all_consecutive_gs_pairs_info = []
-    added_pairs_set_optimized = set() # To store tuple(sorted(c1_id, c2_id)) of added pairs
-
-    for c1_schedule_str_loop, courses_on_c1_date in courses_by_schedule_str_map.items():
-        try:
-            c1_date_obj_loop = datetime.datetime.strptime(c1_schedule_str_loop, "%Y-%m-%d").date()
-        except ValueError:
-            continue 
-
-        next_day_obj_loop = c1_date_obj_loop + datetime.timedelta(days=1)
-        next_day_str_loop = next_day_obj_loop.strftime("%Y-%m-%d")
-
-        if next_day_str_loop in courses_by_schedule_str_map:
-            courses_on_c2_date = courses_by_schedule_str_map[next_day_str_loop]
-            for c1_loop in courses_on_c1_date:
-                for c2_loop in courses_on_c2_date:
-                    if is_consecutive_general_special_pair(c1_loop, c2_loop):
-                        c1_id_loop, c2_id_loop = c1_loop.get('id'), c2_loop.get('id')
-                        if not c1_id_loop or not c2_id_loop: continue
-
-                        pair_key_optimized = tuple(sorted((c1_id_loop, c2_id_loop)))
-                        if pair_key_optimized not in added_pairs_set_optimized:
-                            all_consecutive_gs_pairs_info.append({'c1': c1_loop, 'c2': c2_loop})
-                            added_pairs_set_optimized.add(pair_key_optimized)
-
-    log_to_stream(f"Found {len(all_consecutive_gs_pairs_info)} potential consecutive general-special course pairs for penalty adjustment.")
-
-    # get_assignment_var 関数は不要になったため削除
-
-    for lecturer_item in lecturers_dict.values(): # lecturers_data の代わりに lecturers_dict.values() を使用
+    # --- 講師の割り当て回数ペナルティのロジック (復元・修正) ---
+    for lecturer_item in lecturers_dict.values():
         lecturer_id = lecturer_item["id"]
-        # 事前にグループ化された辞書から取得
         assignments_for_lecturer_vars = assignments_by_lecturer.get(lecturer_id, [])
         if not assignments_for_lecturer_vars:
             continue
@@ -640,46 +574,23 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         num_total_assignments_l = model.NewIntVar(0, np.int64(len(courses_data)), f'num_total_assignments_{lecturer_id}')
         model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
 
-        if lecturer_item.get("qualification_special_rank") is not None and \
-           all_consecutive_gs_pairs_info and \
-           not allow_ignore_favored_consecutive: # UIで「無視しない」が選択されている場合
-            
-            scaled_bonus_per_favored_pair = int(BONUS_PER_FAVORED_PAIR_RAW * 100)
-            # log_to_stream(f"  - Lecturer {lecturer_id}: Favored consecutive pairs will receive a bonus: {scaled_bonus_per_favored_pair} per pair.") # ログは多くなる可能性があるのでコメントアウトも検討
+        # ペナルティ対象となる「追加の」割り当て数 (1回を超えた分)
+        extra_assignments_l = model.NewIntVar(0, np.int64(len(courses_data)), f'extra_assign_{lecturer_id}')
+        model.Add(extra_assignments_l >= num_total_assignments_l - 1)
+        model.Add(extra_assignments_l >= 0) # 念のため明示
 
-            for pair_info in all_consecutive_gs_pairs_info:
-                c1_obj, c2_obj = pair_info['c1'], pair_info['c2']
-                # 辞書から直接変数を取得
-                key_c1 = (lecturer_id, c1_obj['id'])
-                pa_c1_data = possible_assignments_dict.get(key_c1)
-                var_l_c1 = pa_c1_data["variable"] if pa_c1_data else None
+        # UIの設定に基づいてペナルティ値を決定
+        current_penalty_per_extra_raw = 0
+        if not allow_multiple_assignments_general_case: # 複数回割り当てを許容しない場合
+            current_penalty_per_extra_raw = VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT
+        else: # 複数回割り当てを許容する場合
+            current_penalty_per_extra_raw = PENALTY_PER_EXTRA_ASSIGNMENT_RAW
+        
+        scaled_penalty_per_extra = int(current_penalty_per_extra_raw * 100)
 
-                key_c2 = (lecturer_id, c2_obj['id'])
-                pa_c2_data = possible_assignments_dict.get(key_c2)
-                var_l_c2 = pa_c2_data["variable"] if pa_c2_data else None
-
-                if var_l_c1 is not None and var_l_c2 is not None:
-                    # 講師lがこの優遇ペア(c1,c2)に割り当てられたかを示すブール変数
-                    is_assigned_to_this_fav_pair_var = model.NewBoolVar(
-                        f'is_fav_pair_{lecturer_id}_{c1_obj["id"]}_{c2_obj["id"]}'
-                    )
-                    # 線形制約によるAND表現:
-                    # is_assigned_to_this_fav_pair_var = var_l_c1 AND var_l_c2
-                    model.Add(is_assigned_to_this_fav_pair_var <= var_l_c1)
-                    model.Add(is_assigned_to_this_fav_pair_var <= var_l_c2)
-                    model.Add(is_assigned_to_this_fav_pair_var >= var_l_c1 + var_l_c2 - 1)
-                    
-                    # 目的関数にボーナス項を追加 (ボーナスは負のコスト)
-                    objective_terms.append(is_assigned_to_this_fav_pair_var * scaled_bonus_per_favored_pair)
-        # else: # ログは多くなる可能性があるのでコメントアウトも検討
-            # log_to_stream(f"  - Lecturer {lecturer_id}: No bonus for favored consecutive pairs (not applicable or ignored by UI).")
-
-
-        # ペナルティ対象となる「追加の」実効的割り当て数 (1を超えた分)
-        # 連日優遇による免除は考慮せず、総割り当て回数でペナルティを計算
-        extra_effective_assignments_l = model.NewIntVar(0, np.int64(len(courses_data)), f'extra_eff_assign_{lecturer_id}')
-        model.Add(extra_effective_assignments_l >= num_total_assignments_l - 1) 
-
+        if scaled_penalty_per_extra > 0:
+            objective_terms.append(extra_assignments_l * scaled_penalty_per_extra)
+            log_to_stream(f"  - Lecturer {lecturer_id}: Penalty for extra assignments (>{1}) is {scaled_penalty_per_extra} per assignment. (Allow multiple: {allow_multiple_assignments_general_case})")
 
     if objective_terms:
         model.Minimize(sum(objective_terms))
@@ -1029,7 +940,7 @@ def main():
                     st.session_state.get("weight_travel_exp", 0.5),         # スライダーのキー名で取得
                     st.session_state.get("weight_age_exp", 0.5),            # スライダーのキー名で取得
                     st.session_state.get("weight_frequency_exp", 0.5),       # スライダーのキー名で取得
-                    st.session_state.get("allow_ignore_favored_consecutive_cb", False),
+                    st.session_state.get("allow_multiple_assignments_general_case_cb", True), # 変更: 複数割り当て許容フラグ
                     st.session_state.TODAY, # 追加
                     st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
                 ) # type: ignore
@@ -1107,20 +1018,13 @@ def main():
             help="チェックを外すと、講師の空きスケジュールに完全に合致しない割り当ては行われません。"
         )
         st.markdown("---") # 区切り線
-        st.markdown("**2. 一般講習と特別講習が連日開催される場合は、特別資格を持つ同一講師を優先的に割り当てる**")
-        st.checkbox( # st.session_state.allow_ignore_favored_consecutive への代入を削除
-            "ただし、この優先割り当てを無視して他の講師の割り当てを許容する",
-            value=st.session_state.get("allow_ignore_favored_consecutive_cb", False), # key引数で指定したキーから読み込む
-            key="allow_ignore_favored_consecutive_cb", # このキーで状態を管理
-            help="チェックを入れると、連日開催の優遇を行わず、他の割り当て基準が優先されることがあります。"
-        )
-        st.markdown("---") # 区切り線
-        st.markdown("**3. 一般講習と特別講習が連日開催される場合を除き、同一講師の割り当て回数は1回にする。**") # 文言変更
-        st.checkbox( # st.session_state.allow_multiple_assignments_general_case への代入を削除
-            "上記原則に反して、複数回の割り当てを許容する（連日開催の例外以外でも）", # 文言調整
+        # 削除: 制約2に関連するUI要素
+        st.markdown("**3. 同一講師の割り当て回数は1回にする。**") # 文言変更: 「一般講習と...除き」を削除
+        st.checkbox(
+            "上記原則に反して、複数回の割り当てを許容する", # 文言調整: 「（連日開催の例外以外でも）」を削除
             value=st.session_state.get("allow_multiple_assignments_general_case_cb", True), # key引数で指定したキーから読み込む
             key="allow_multiple_assignments_general_case_cb", # このキーで状態を管理
-            help="チェックを外すと、一般講習と特別講習の連日開催の場合を除き、各講師は最大1つの講座しか担当しません（ペナルティが非常に高くなります）。" # ヘルプテキスト調整
+            help="チェックを外すと、各講師は最大1つの講座しか担当しません（ペナルティが非常に高くなります）。" # ヘルプテキスト調整: 「一般講習と...除き」を削除
         )
     logger.info("Sidebar: constraints expander setup complete.")
 
@@ -1283,10 +1187,7 @@ def main():
             **補助変数 (主に整数変数またはブール変数):**
             これらは基本決定変数 $x_{l,c}$ から導出され、制約の定義や目的関数の計算を容易にするために使用されます。
             - $\text{num\_total\_assignments}_l$: 講師 $l$ の総割り当て数。
-            - $\text{is\_assigned\_to\_fav\_pair}_{l,p}$: 講師 $l$ が特定の優遇連日ペア $p$ (例: 一般講座とその翌日の特別講座) に割り当てられているかを示すブール変数。($x_{l,c1_p} \land x_{l,c2_p}$ と等価)
-            - $\text{num\_fav\_pairs}_l$: 講師 $l$ が担当する優遇連日ペアの数。
-            - $\text{effective\_assignments\_for\_penalty}_l$: 講師 $l$ のペナルティ計算対象となる実効割り当て数 (総割り当て数から優遇ペア数を引いたもの)。
-            - $\text{extra\_effective\_assignments}_l$: 講師 $l$ のペナルティ対象となる「追加の」実効割り当て数 (実効割り当て数が1を超えた分)。
+            - $\text{extra\_assignments}_l$: 講師 $l$ のペナルティ対象となる「追加の」割り当て数 (総割り当て数が1を超えた分)。
             """
         )
         st.markdown("**対応するPythonコード (抜粋):**")
@@ -1294,16 +1195,10 @@ def main():
             """
 # ... ループ内で各講師と講座の組み合わせに対して ...
 var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
-possible_assignments.append({"lecturer_id": lecturer_id, "course_id": course_id, "variable": var, ...})
 
 # 補助変数の例
-# num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
-# model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
-
-# is_assigned_to_fav_pair_var = model.NewBoolVar(f'is_fav_pair_{lecturer_id}_{c1_id}_{c2_id}')
-# model.AddMultiplicationEquality(is_assigned_to_fav_pair_var, [var_l_c1, var_l_c2])
-
-# extra_effective_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_eff_assign_{lecturer_id}')
+num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
+extra_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_assign_{lecturer_id}')
             """, language="python"
         )
         with st.expander("コード解説", expanded=False):
@@ -1312,9 +1207,8 @@ possible_assignments.append({"lecturer_id": lecturer_id, "course_id": course_id,
                 - `model.NewBoolVar(f'x_{lecturer_id}_{course_id}')`: 各講師と講座のペアに対する基本決定変数 $x_{l,c}$ を作成します。
                 - 変数名は、デバッグしやすいように講師IDと講座IDを含む一意な文字列 (`x_L1_C1` など）としています。
                 - 作成された変数は、他の情報（講師ID、講座ID、後で計算されるコストなど）と共に `possible_assignments` リストに辞書として格納され、後で制約や目的関数の定義に使用されます。
-                - `model.NewIntVar(...)`: 補助的な整数変数（例: 割り当て回数）を定義します。範囲 (最小値、最大値) と名前を指定します。
+                - `model.NewIntVar(...)`: 補助的な整数変数（例: 総割り当て回数 `num_total_assignments_l`、追加割り当て回数 `extra_assignments_l`）を定義します。範囲 (最小値、最大値) と名前を指定します。
                 - `model.Add(...)`: 変数間の関係を定義する制約を追加します。例えば、`num_total_assignments_l` がその講師に割り当てられた $x_{l,c}$ の合計と等しくなるようにします。
-                - `model.AddMultiplicationEquality(target, [var1, var2])`: `target = var1 * var2` という制約を追加します。ブール変数に対して使うと論理AND (`target = var1 AND var2`) を表現できます。これは `is_assigned_to_fav_pair_var` の計算に使用されます。
                 """
             )
 
@@ -1331,21 +1225,14 @@ possible_assignments.append({"lecturer_id": lecturer_id, "course_id": course_id,
               $$
               ここで、$L_c$ は講座 $c$ を担当可能な講師の集合（資格ランクやスケジュール（無視設定でない場合）を考慮）。
 
-            - **講師の割り当て回数に関するソフト制約と関連変数定義:**
-              講師の割り当て回数については、UIの設定（「連日開催の優先割り当てを無視」「複数回割り当てを許容」）に応じて、ハードな制約ではなく、目的関数でのペナルティによって制御されます。
+            - **講師の割り当て回数に関するソフト制約（ペナルティ）と関連変数定義:**
+              講師の割り当て回数については、UIの設定（「複数回割り当てを許容」）に応じて、目的関数でのペナルティによって制御されます。
               - **講師ごとの総割り当て数:**
                 $$ \text{num\_total\_assignments}_l = \sum_{c \in C} x_{l,c} \quad (\forall l \in L) $$
-              - **優遇される連日ペアへの割り当て:** (UIで「連日開催の優先割り当てを無視」がオフの場合)
-                特定の講師 $l$ が、隣接する一般講座 $c_1$ と特別講座 $c_2$ のペア $p$ に両方割り当てられているかを示す変数 $\text{is\_assigned\_to\_fav\_pair}_{l,p}$ を定義します。
-                $$ \text{is\_assigned\_to\_fav\_pair}_{l,p} \iff x_{l,c_1} \land x_{l,c_2} $$
-                その合計が、講師 $l$ の優遇連日ペア割り当て数 $\text{num\_fav\_pairs}_l$ となります。
-                $$ \text{num\_fav\_pairs}_l = \sum_{p \in \text{FavPairs}} \text{is\_assigned\_to\_fav\_pair}_{l,p} $$
-              - **ペナルティ計算のための実効割り当て数:**
-                $$ \text{effective\_assignments\_for\_penalty}_l = \text{num\_total\_assignments}_l - \text{num\_fav\_pairs}_l $$
-              - **ペナルティ対象の「追加の」実効割り当て数:** (1回を超える分)
-                $$ \text{extra\_effective\_assignments}_l \ge \text{effective\_assignments\_for\_penalty}_l - 1 $$
-                $$ \text{extra\_effective\_assignments}_l \ge 0 $$
-              これらの `extra_effective_assignments_l` に基づいて、目的関数でペナルティが加算されます。
+              - **ペナルティ対象の「追加の」割り当て数:** (総割り当て数が1回を超える分)
+                $$ \text{extra\_assignments}_l \ge \text{num\_total\_assignments}_l - 1 $$
+                $$ \text{extra\_assignments}_l \ge 0 $$
+              この `extra_assignments_l` に基づいて、目的関数でペナルティが加算されます。
 
             - **暗黙的な制約:**
               ソースコード上では、講師の資格ランクが講座の要求ランクを満たさない場合や、スケジュールが適合しない（かつスケジュール制約を無視する設定でない）組み合わせは、そもそも決定変数 $x_{l,c}$ が生成される前の段階で除外されます。これは、それらの組み合わせに対する $x_{l,c}$ が実質的に 0 に固定される制約と見なせます。
@@ -1363,32 +1250,11 @@ for course_item in courses_data:
 # 講師の割り当て回数関連の制約 (講師ごとのループ内)
 for lecturer_item in lecturers_data:
     lecturer_id = lecturer_item["id"]
-    assignments_for_lecturer_vars = [pa["variable"] for pa in possible_assignments if pa["lecturer_id"] == lecturer_id]
-    
+    assignments_for_lecturer_vars = assignments_by_lecturer.get(lecturer_id, []) # 修正: 事前グループ化利用
     num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
     model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
-
-    num_favored_consecutive_pairs_l = model.NewIntVar(0, ..., f'num_fav_pairs_{lecturer_id}')
-    if not allow_ignore_favored_consecutive and lecturer_has_special_qualification:
-        favored_pair_assignment_indicators = []
-        for pair_info in all_consecutive_gs_pairs_info: # 事前に計算された連日ペア情報
-            var_l_c1 = get_assignment_var(lecturer_id, pair_info['c1']['id'], possible_assignments)
-            var_l_c2 = get_assignment_var(lecturer_id, pair_info['c2']['id'], possible_assignments)
-            if var_l_c1 and var_l_c2:
-                is_assigned_to_fav_pair_var = model.NewBoolVar(...)
-                model.AddMultiplicationEquality(is_assigned_to_fav_pair_var, [var_l_c1, var_l_c2])
-                favored_pair_assignment_indicators.append(is_assigned_to_fav_pair_var)
-        model.Add(num_favored_consecutive_pairs_l == sum(favored_pair_assignment_indicators))
-    else:
-        model.Add(num_favored_consecutive_pairs_l == 0)
-
-    effective_assignments_for_penalty_l = model.NewIntVar(0, ..., f'eff_assign_penalty_{lecturer_id}')
-    model.Add(effective_assignments_for_penalty_l == num_total_assignments_l - num_favored_consecutive_pairs_l)
-    
-    extra_effective_assignments_l = model.NewIntVar(0, ..., f'extra_eff_assign_{lecturer_id}')
-    model.Add(extra_effective_assignments_l >= effective_assignments_for_penalty_l - 1)
-    # extra_effective_assignments_l >= 0 はIntVarの定義でカバーされることが多い
-
+    extra_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_assign_{lecturer_id}')
+    model.Add(extra_assignments_l >= num_total_assignments_l - 1)
             """, language="python"
         )
         with st.expander("コード解説", expanded=False):
@@ -1400,12 +1266,8 @@ for lecturer_item in lecturers_data:
                 **講師の割り当て回数関連:**
                 - `num_total_assignments_l = model.NewIntVar(...)`: 講師ごとの総割り当て数を格納する整数変数を定義します。
                 - `model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))`: 総割り当て数を、その講師に関連する全ての $x_{l,c}$ 変数の合計として定義します。
-                - `is_assigned_to_fav_pair_var = model.NewBoolVar(...)`: 講師が特定の連日ペアに割り当てられたかを示すブール変数。
-                - `model.AddMultiplicationEquality(...)`: ブール変数間のAND演算を表現し、連日ペアへの同時割り当てを検出します。
-                - `num_favored_consecutive_pairs_l = model.NewIntVar(...)`: 優遇される連日ペアの数を定義します。
-                - `effective_assignments_for_penalty_l`: ペナルティ計算の基準となる実効的な割り当て数を計算します（総数 - 優遇ペア数）。
-                - `extra_effective_assignments_l`: 実効割り当て数が1を超えた部分（ペナルティ対象）を計算します。この変数が目的関数でペナルティコストと乗算されます。
-                - UIの `allow_ignore_favored_consecutive` や `allow_multiple_assignments_general_case` の設定が、これらの計算や後述の目的関数でのペナルティ値に影響します。
+                - `extra_assignments_l`: 総割り当て数が1を超えた部分（ペナルティ対象）を計算します。この変数が目的関数でペナルティコストと乗算されます。
+                - UIの `allow_multiple_assignments_general_case_cb` の設定が、これらの計算や後述の目的関数でのペナルティ値に影響します。
                 """
             )
 
@@ -1415,7 +1277,7 @@ for lecturer_item in lecturers_data:
             目的関数は、最適化の目標を定義する数式です。この問題では、割り当ての総コストと、複数割り当てに対するペナルティの合計を最小化することが目的です。
 
             $$
-            \text{Minimize} \quad Z = \sum_{l \in L} \sum_{c \in C} (x_{l,c} \cdot \text{Cost}_{l,c}) + \sum_{l \in L} (\text{extra\_effective\_assignments}_l \cdot \text{PenaltyPerExtra}_l)
+            \text{Minimize} \quad Z = \sum_{l \in L} \sum_{c \in C} (x_{l,c} \cdot \text{Cost}_{l,c}) + \sum_{l \in L} (\text{extra\_assignments}_l \cdot \text{PenaltyPerExtra}_l)
             $$
 
             ここで、$\text{Cost}_{l,c}$ は講師 $l$ が講座 $c$ に割り当てられた場合の個別のコストで、以下のように計算されます（前述の通り）。
@@ -1425,7 +1287,7 @@ for lecturer_item in lecturers_data:
             (各コスト要素 $w_{\text{...}} \cdot \text{...Cost}$ の詳細は前述の通り)
 
             また、
-            - $\text{extra\_effective\_assignments}_l$: 講師 $l$ のペナルティ対象となる追加の実効割り当て数（1を超えた分）。
+            - $\text{extra\_assignments}_l$: 講師 $l$ のペナルティ対象となる追加の割り当て数（総割り当て数が1を超えた分）。
             - $\text{PenaltyPerExtra}_l$: 講師 $l$ の追加割り当て1回あたりのペナルティコスト。この値はUIの「複数回の割り当てを許容する」設定 (`allow_multiple_assignments_general_case_cb`) によって変動します。
                 - 許容しない場合: 非常に高いペナルティ (`VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT`)
                 - 許容する場合: 通常のペナルティ (`PENALTY_PER_EXTRA_ASSIGNMENT_RAW` をスケーリングしたもの)
@@ -1445,10 +1307,10 @@ objective_terms = list(assignment_costs) # コピーして開始
 
 # 講師ごとのループ内でペナルティ項を追加
 # for lecturer_item in lecturers_data:
-#     ... (extra_effective_assignments_l の計算) ...
+#     ... (extra_assignments_l の計算) ...
 #     current_penalty_per_extra = ... # UI設定に基づいて決定
 #     if current_penalty_per_extra > 0:
-#         objective_terms.append(extra_effective_assignments_l * current_penalty_per_extra)
+#         objective_terms.append(extra_assignments_l * current_penalty_per_extra)
 
 if objective_terms:
     model.Minimize(sum(objective_terms))
@@ -1464,7 +1326,7 @@ else:
                 - **目的関数の設定**:
                     - `assignment_costs = [pa["variable"] * pa["cost"] ... ]`: 各割り当て $x_{l,c}$ が選択された場合のコスト ($x_{l,c} \cdot \text{Cost}_{l,c}$) のリスト。
                     - `objective_terms = list(assignment_costs)`: 目的関数の項を初期化。
-                    - `objective_terms.append(extra_effective_assignments_l * current_penalty_per_extra)`: 講師ごとのループ内で、計算された追加割り当てペナルティを目的関数の項に追加します。
+                    - `objective_terms.append(extra_assignments_l * current_penalty_per_extra)`: 講師ごとのループ内で、計算された追加割り当てペナルティを目的関数の項に追加します。
                     - `model.Minimize(sum(objective_terms))`: 全てのコスト項とペナルティ項の合計を最小化するようにソルバーに指示します。
                 """
             )
