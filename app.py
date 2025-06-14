@@ -503,9 +503,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                         past_assignment_recency_cost = raw_recency_cost
                     except ValueError:
                         log_to_stream(f"    Warning: Could not parse date '{latest_assignment_date_str}' for {lecturer_id} and classroom {course['classroom_id']}")
-                        days_since_last_assignment_to_classroom = DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # パース失敗時
-            
-            total_weighted_cost_float = (weight_travel * travel_cost +
+                        days_since_last_assignment_to_classroom = default_days_no_past_assignment # パース失敗時
+                        total_weighted_cost_float = (weight_travel * travel_cost +
                                          weight_age * age_cost +
                                          weight_frequency * frequency_cost +
                                          weight_qualification * qualification_cost + # 資格コストを追加
@@ -600,10 +599,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     is_assigned_to_this_fav_pair_var = model.NewBoolVar(
                         f'is_fav_pair_{lecturer_id}_{c1_obj["id"]}_{c2_obj["id"]}'
                     )
-                    # 線形制約で AND を表現: is_assigned_to_this_fav_pair_var = var_l_c1 AND var_l_c2
-                    model.Add(is_assigned_to_this_fav_pair_var <= var_l_c1)
-                    model.Add(is_assigned_to_this_fav_pair_var <= var_l_c2)
-                    model.Add(is_assigned_to_this_fav_pair_var >= var_l_c1 + var_l_c2 - 1)
+                    # CP-SATネイティブなAND表現 (is_assigned_to_this_fav_pair_var = var_l_c1 AND var_l_c2)
+                    model.AddMultiplicationEquality(is_assigned_to_this_fav_pair_var, [var_l_c1, var_l_c2])
                     
                     # 目的関数にボーナス項を追加 (ボーナスは負のコスト)
                     objective_terms.append(is_assigned_to_this_fav_pair_var * scaled_bonus_per_favored_pair)
