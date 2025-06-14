@@ -10,6 +10,7 @@ from streamlit_oauth import OAuth2Component # OIDC認証用
 from google.oauth2 import id_token # IDトークン検証用
 from google.auth.transport import requests as google_requests # IDトークン検証用
 import random # データ生成用
+import os # CPUコア数を取得するために追加
 # dateutil.relativedelta を使用するため、インストールが必要な場合があります。
 # pip install python-dateutil
 from dateutil.relativedelta import relativedelta
@@ -396,6 +397,10 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     # アプリケーションログを full_log_stream に直接書き込むように変更
     def log_to_stream(message):
         print(message, file=full_log_stream)
+
+    # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
+    lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
+    courses_dict = {course['id']: course for course in courses_data}
         # print(message) # ターミナルにも表示（デバッグ用） - 大量ログの場合、パフォーマンスに影響する可能性
 
     # 講師の追加割り当てに対するペナルティの基準値 (スケーリング前)
@@ -422,14 +427,19 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                 return is_gs or is_sg
         return False
     # --- Main logic for model building and solving ---
-    possible_assignments = []
+    # possible_assignments をリストから辞書に変更
+    # キー: (lecturer_id, course_id) タプル
+    # 値: {"variable": var, "cost": cost, ...} の辞書
+    possible_assignments_dict = {}
     potential_assignment_count = 0
     log_to_stream(f"Initial lecturers: {len(lecturers_data)}, Initial courses: {len(courses_data)}")
 
-    for lecturer in lecturers_data:
-        for course in courses_data:
+    # lecturers_data と courses_data の代わりに、事前に作成した辞書の値を反復処理
+    for lecturer_id_loop, lecturer in lecturers_dict.items(): # lecturers_data の代わりに lecturers_dict.values() を使用
+        for course_id_loop, course in courses_dict.items():   # courses_data の代わりに courses_dict.values() を使用
             lecturer_id = lecturer["id"]
             course_id = course["id"]
+
 
             # 新しい資格ランクチェックロジック
             course_type = course["course_type"]
@@ -513,20 +523,24 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                                          weight_qualification * qualification_cost +
                                          weight_past_assignment_recency * past_assignment_recency_cost
                                         ) + schedule_violation_penalty
-            total_weighted_cost_int = int(total_weighted_cost_float * 100) # コストを整数にスケーリング # type: ignore
+            total_weighted_cost_int = int(total_weighted_cost_float * 100) # コストを整数にスケーリング
             log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol_penalty={schedule_violation_penalty}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
-            possible_assignments.append({
+            
+            # 辞書に格納
+            assignment_key = (lecturer_id, course_id)
+            possible_assignments_dict[assignment_key] = {
                 "lecturer_id": lecturer_id, "course_id": course_id,
                 "variable": var, "cost": total_weighted_cost_int,
-                "qualification_cost_raw": qualification_cost, "is_schedule_incompatible": actual_schedule_incompatibility_occurred, # キー名を is_schedule_violation から変更
+                "qualification_cost_raw": qualification_cost, 
+                "is_schedule_incompatible": actual_schedule_incompatibility_occurred,
                 "debug_past_assignment_recency_cost": past_assignment_recency_cost, # デバッグ/結果表示用
                 "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
-            })
+            }
 
     log_to_stream(f"Total potential assignments after filtering: {potential_assignment_count}")
-    log_to_stream(f"Length of possible_assignments list (with variables): {len(possible_assignments)}")
+    log_to_stream(f"Number of entries in possible_assignments_dict: {len(possible_assignments_dict)}")
 
-    if not possible_assignments:
+    if not possible_assignments_dict:
         log_to_stream("No possible assignments found after filtering. Optimization will likely result in no assignments.")
         all_captured_logs = full_log_stream.getvalue()
         return SolverOutput(
@@ -539,63 +553,95 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             full_application_and_solver_log=all_captured_logs
         )
 
-    for course_item in courses_data:
+    for course_item in courses_dict.values(): # courses_data の代わりに courses_dict.values() を使用
         course_id = course_item["id"]
         # 各講座は、担当可能な講師候補が存在する場合に限り、必ず1名割り当てる。
         # 資格ランクなどのハード制約により候補がいない場合は、この強制割り当ての対象外とする。
-        possible_assignments_for_course = [pa["variable"] for pa in possible_assignments if pa["course_id"] == course_id]
+        # possible_assignments_dict から該当する変数を収集
+        possible_assignments_for_course = [
+            data["variable"] for (lid, cid), data in possible_assignments_dict.items() if cid == course_id
+        ]
         if possible_assignments_for_course: # 担当可能な講師候補がいる場合のみ制約を追加
             model.Add(sum(possible_assignments_for_course) == 1)
             
     # --- 目的関数の構築 ---
-    assignment_costs = [pa["variable"] * pa["cost"] for pa in possible_assignments]
+    # possible_assignments_dict の値からコスト項を生成
+    assignment_costs = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()]
     objective_terms = list(assignment_costs) # 新しいリストとしてコピー
 
-    # ソフト制約3: 同一講師の割り当て回数に関するペナルティ
-    # Pre-calculate all potential consecutive day course pairs (general-special)
+    # --- 効率化された連日ペア探索 ---
+    log_to_stream("Optimizing consecutive general-special pair finding...")
+    courses_by_schedule_str_map = {} 
+    for c_item_for_pairs in courses_dict.values(): # courses_data の代わりに courses_dict.values()
+        schedule_val = c_item_for_pairs.get("schedule")
+        if schedule_val and isinstance(schedule_val, str):
+            try:
+                datetime.datetime.strptime(schedule_val, "%Y-%m-%d") # Validate format
+                courses_by_schedule_str_map.setdefault(schedule_val, []).append(c_item_for_pairs)
+            except ValueError:
+                log_to_stream(f"  Warning: Invalid date format for course {c_item_for_pairs.get('id')} ('{schedule_val}') during pair pre-processing.")
+                continue
+        else:
+            log_to_stream(f"  Warning: Missing or invalid schedule for course {c_item_for_pairs.get('id')} during pair pre-processing.")
+
     all_consecutive_gs_pairs_info = []
-    processed_course_pair_ids = set()
-    for i in range(len(courses_data)):
-        for j in range(i + 1, len(courses_data)):
-            c1, c2 = courses_data[i], courses_data[j]
-            c1_id, c2_id = c1.get('id'), c2.get('id')
-            if not c1_id or not c2_id: continue
-            pair_key = tuple(sorted((c1_id, c2_id)))
-            if pair_key not in processed_course_pair_ids:
-                if is_consecutive_general_special_pair(c1, c2):
-                    all_consecutive_gs_pairs_info.append({'c1': c1, 'c2': c2})
-                processed_course_pair_ids.add(pair_key)
-    
+    added_pairs_set_optimized = set() # To store tuple(sorted(c1_id, c2_id)) of added pairs
+
+    for c1_schedule_str_loop, courses_on_c1_date in courses_by_schedule_str_map.items():
+        try:
+            c1_date_obj_loop = datetime.datetime.strptime(c1_schedule_str_loop, "%Y-%m-%d").date()
+        except ValueError:
+            continue 
+
+        next_day_obj_loop = c1_date_obj_loop + datetime.timedelta(days=1)
+        next_day_str_loop = next_day_obj_loop.strftime("%Y-%m-%d")
+
+        if next_day_str_loop in courses_by_schedule_str_map:
+            courses_on_c2_date = courses_by_schedule_str_map[next_day_str_loop]
+            for c1_loop in courses_on_c1_date:
+                for c2_loop in courses_on_c2_date:
+                    if is_consecutive_general_special_pair(c1_loop, c2_loop):
+                        c1_id_loop, c2_id_loop = c1_loop.get('id'), c2_loop.get('id')
+                        if not c1_id_loop or not c2_id_loop: continue
+
+                        pair_key_optimized = tuple(sorted((c1_id_loop, c2_id_loop)))
+                        if pair_key_optimized not in added_pairs_set_optimized:
+                            all_consecutive_gs_pairs_info.append({'c1': c1_loop, 'c2': c2_loop})
+                            added_pairs_set_optimized.add(pair_key_optimized)
+
     log_to_stream(f"Found {len(all_consecutive_gs_pairs_info)} potential consecutive general-special course pairs for penalty adjustment.")
 
-    # Helper to get assignment variable
-    def get_assignment_var(lecturer_id, course_id, pa_list):
-        for pa_dict in pa_list:
-            if pa_dict['lecturer_id'] == lecturer_id and pa_dict['course_id'] == course_id:
-                return pa_dict['variable']
-        return None
+    # get_assignment_var 関数は不要になったため削除
 
-    for lecturer_item in lecturers_data:
+    for lecturer_item in lecturers_dict.values(): # lecturers_data の代わりに lecturers_dict.values() を使用
         lecturer_id = lecturer_item["id"]
-        assignments_for_lecturer_vars = [pa["variable"] for pa in possible_assignments if pa["lecturer_id"] == lecturer_id]
+        # possible_assignments_dict から該当する変数を収集
+        assignments_for_lecturer_vars = [
+            data["variable"] for (lid, cid), data in possible_assignments_dict.items() if lid == lecturer_id
+        ]
         if not assignments_for_lecturer_vars:
             continue
 
         num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
         model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
 
-        # --- 「一般講習と特別講習が連日開催される場合の優遇」をボーナス方式で目的関数に反映 ---
         if lecturer_item.get("qualification_special_rank") is not None and \
            all_consecutive_gs_pairs_info and \
            not allow_ignore_favored_consecutive: # UIで「無視しない」が選択されている場合
             
             scaled_bonus_per_favored_pair = int(BONUS_PER_FAVORED_PAIR_RAW * 100)
-            log_to_stream(f"  - Lecturer {lecturer_id}: Favored consecutive pairs will receive a bonus: {scaled_bonus_per_favored_pair} per pair.")
+            # log_to_stream(f"  - Lecturer {lecturer_id}: Favored consecutive pairs will receive a bonus: {scaled_bonus_per_favored_pair} per pair.") # ログは多くなる可能性があるのでコメントアウトも検討
 
             for pair_info in all_consecutive_gs_pairs_info:
                 c1_obj, c2_obj = pair_info['c1'], pair_info['c2']
-                var_l_c1 = get_assignment_var(lecturer_id, c1_obj['id'], possible_assignments)
-                var_l_c2 = get_assignment_var(lecturer_id, c2_obj['id'], possible_assignments)
+                # 辞書から直接変数を取得
+                key_c1 = (lecturer_id, c1_obj['id'])
+                pa_c1_data = possible_assignments_dict.get(key_c1)
+                var_l_c1 = pa_c1_data["variable"] if pa_c1_data else None
+
+                key_c2 = (lecturer_id, c2_obj['id'])
+                pa_c2_data = possible_assignments_dict.get(key_c2)
+                var_l_c2 = pa_c2_data["variable"] if pa_c2_data else None
 
                 if var_l_c1 is not None and var_l_c2 is not None:
                     # 講師lがこの優遇ペア(c1,c2)に割り当てられたかを示すブール変数
@@ -610,8 +656,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     
                     # 目的関数にボーナス項を追加 (ボーナスは負のコスト)
                     objective_terms.append(is_assigned_to_this_fav_pair_var * scaled_bonus_per_favored_pair)
-        else:
-            log_to_stream(f"  - Lecturer {lecturer_id}: No bonus for favored consecutive pairs (not applicable or ignored by UI).")
+        # else: # ログは多くなる可能性があるのでコメントアウトも検討
+            # log_to_stream(f"  - Lecturer {lecturer_id}: No bonus for favored consecutive pairs (not applicable or ignored by UI).")
 
 
         # ペナルティ対象となる「追加の」実効的割り当て数 (1を超えた分)
@@ -622,10 +668,10 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         current_penalty_per_extra = 0
         if not allow_multiple_assignments_general_case: # 「許容しない」場合 = 原則1回 (連日例外除く)
             current_penalty_per_extra = VERY_HIGH_PENALTY_FOR_FORBIDDEN_MULTIPLE_ASSIGNMENT
-            log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (more than 1) will incur VERY HIGH penalty: {current_penalty_per_extra}")
+            # log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (more than 1) will incur VERY HIGH penalty: {current_penalty_per_extra}") # ログ量考慮
         else: # 「許容する」場合
             current_penalty_per_extra = int(PENALTY_PER_EXTRA_ASSIGNMENT_RAW * 100) # 通常のペナルティ
-            log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (more than 1) allowed with penalty: {current_penalty_per_extra}")
+            # log_to_stream(f"  - Lecturer {lecturer_id}: Multiple assignments (more than 1) allowed with penalty: {current_penalty_per_extra}") # ログ量考慮
 
         if current_penalty_per_extra > 0:
             objective_terms.append(extra_effective_assignments_l * current_penalty_per_extra)
@@ -640,6 +686,11 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         model.Minimize(0) # 目的項がない場合は0を最小化 (エラー回避)
     solver = cp_model.CpSolver()
     solver.parameters.log_search_progress = True
+    # --- ソルバーの並列処理有効化 ---
+    num_workers = os.cpu_count()
+    if num_workers: # os.cpu_count() が None や 0 を返す可能性を考慮
+        solver.parameters.num_search_workers = num_workers
+        log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
 
     log_to_stream("--- Solver Log (Captured by app.py) ---")
     
@@ -662,30 +713,31 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         
         # まず、今回の割り当てで各講師が何回割り当てられたかを計算
         lecturer_assignment_counts_this_round = {}
-        for pa_count_check in possible_assignments:
-            if solver.Value(pa_count_check["variable"]) == 1:
-                lecturer_id_for_count = pa_count_check["lecturer_id"]
+        for pa_data_count_check in possible_assignments_dict.values():
+            if solver.Value(pa_data_count_check["variable"]) == 1:
+                lecturer_id_for_count = pa_data_count_check["lecturer_id"]
                 lecturer_assignment_counts_this_round[lecturer_id_for_count] = \
                     lecturer_assignment_counts_this_round.get(lecturer_id_for_count, 0) + 1
 
-        for pa in possible_assignments:
-            if solver.Value(pa["variable"]) == 1:
-                lecturer = next(l for l in lecturers_data if l["id"] == pa["lecturer_id"])
-                course = next(c for c in courses_data if c["id"] == pa["course_id"])
+        # possible_assignments_dict を反復処理して結果を構築
+        for (lecturer_id_res, course_id_res), pa_data in possible_assignments_dict.items():
+            if solver.Value(pa_data["variable"]) == 1:
+                lecturer = lecturers_dict[lecturer_id_res] # 事前処理した辞書から取得
+                course = courses_dict[course_id_res]       # 事前処理した辞書から取得
                 results.append({
                     "講師ID": lecturer["id"],
                     "講師名": lecturer["name"],
                     "講座ID": course["id"],
                     "講座名": course["name"],
                     "教室ID": course["classroom_id"],
-                    "スケジュール": course['schedule'], # 日付文字列を直接使用
-                    "算出コスト(x100)": pa["cost"], # pa["cost"] は重み付け後の整数コスト
+                    "スケジュール": course['schedule'],
+                    "算出コスト(x100)": pa_data["cost"],
                     "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
                     "年齢コスト(元)": lecturer.get("age", 99),
-                    "頻度コスト(元)": len(lecturer.get("past_assignments", [])), # 実際の総割り当て回数
-                    "スケジュール状況": "不適合" if pa.get("is_schedule_incompatible") else "適合", # "不適合" に変更
-                    "資格コスト(元)": pa.get("qualification_cost_raw"), # この割り当てで評価された資格コスト
-                    "当該教室最終割当日からの日数": pa.get("debug_days_since_last_assignment"),
+                    "頻度コスト(元)": len(lecturer.get("past_assignments", [])),
+                    "スケジュール状況": "不適合" if pa_data.get("is_schedule_incompatible") else "適合",
+                    "資格コスト(元)": pa_data.get("qualification_cost_raw"),
+                    "当該教室最終割当日からの日数": pa_data.get("debug_days_since_last_assignment"),
                     "講師一般ランク": lecturer.get("qualification_general_rank"),
                     "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
                     "講座タイプ": course.get("course_type"),
