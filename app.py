@@ -504,12 +504,15 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     except ValueError:
                         log_to_stream(f"    Warning: Could not parse date '{latest_assignment_date_str}' for {lecturer_id} and classroom {course['classroom_id']}")
                         days_since_last_assignment_to_classroom = default_days_no_past_assignment # パース失敗時
-                        total_weighted_cost_float = (weight_travel * travel_cost +
+                        past_assignment_recency_cost = 0 # パース失敗時は近接コスト0
+
+            # total_weighted_cost_float の計算をここに移動 (if lecturer.get("past_assignments") ブロックの外)
+            total_weighted_cost_float = (weight_travel * travel_cost +
                                          weight_age * age_cost +
                                          weight_frequency * frequency_cost +
-                                         weight_qualification * qualification_cost + # 資格コストを追加
+                                         weight_qualification * qualification_cost +
                                          weight_past_assignment_recency * past_assignment_recency_cost
-                                        ) + schedule_violation_penalty # スケジュール違反ペナルティを加算
+                                        ) + schedule_violation_penalty
             total_weighted_cost_int = int(total_weighted_cost_float * 100) # コストを整数にスケーリング # type: ignore
             log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, sched_viol_penalty={schedule_violation_penalty}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
             possible_assignments.append({
