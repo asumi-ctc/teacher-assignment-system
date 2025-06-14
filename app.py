@@ -15,6 +15,7 @@ import numpy as np # データ型変換のために追加
 # dateutil.relativedelta を使用するため、インストールが必要な場合があります。
 # pip install python-dateutil
 from dateutil.relativedelta import relativedelta
+import logging # logging モジュールをインポート
 from typing import TypedDict, List, Optional, Any, Tuple # 他のimport文と合わせて先頭に移動
 
 # --- 1. データ定義 (LOG_EXPLANATIONS と _get_log_explanation は削除) ---
@@ -765,29 +766,30 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 # --- 3. Streamlit UI ---
 def initialize_app_data():
     """アプリケーションの初期データを生成し、セッション状態に保存する。"""
-    print("DEBUG: Entering initialize_app_data()") # 追加
+    logger = logging.getLogger(__name__)
+    logger.info("Entering initialize_app_data()")
     if "app_data_initialized" not in st.session_state:
-        print("DEBUG: 'app_data_initialized' not in session_state. Starting data generation.") # 追加
+        logger.info("'app_data_initialized' not in session_state. Starting data generation.")
         st.session_state.TODAY = datetime.date.today()
         st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 100000
-        print("DEBUG: TODAY and DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT set.") # 追加
+        logger.info("TODAY and DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT set.")
 
         # 割り当て対象月の設定 (現在の4ヶ月後)
         assignment_target_month_start_val = (st.session_state.TODAY + relativedelta(months=4)).replace(day=1)
         st.session_state.ASSIGNMENT_TARGET_MONTH_START = assignment_target_month_start_val
         next_month_val = assignment_target_month_start_val + relativedelta(months=1)
         st.session_state.ASSIGNMENT_TARGET_MONTH_END = next_month_val - datetime.timedelta(days=1)
-        print(f"DEBUG: Assignment target month set: {st.session_state.ASSIGNMENT_TARGET_MONTH_START} to {st.session_state.ASSIGNMENT_TARGET_MONTH_END}") # 追加
+        logger.info(f"Assignment target month set: {st.session_state.ASSIGNMENT_TARGET_MONTH_START} to {st.session_state.ASSIGNMENT_TARGET_MONTH_END}")
 
         PREFECTURES_val, PREFECTURE_CLASSROOM_IDS_val = generate_prefectures_data()
-        print(f"DEBUG: generate_prefectures_data() completed. {len(PREFECTURES_val)} prefectures.") # 追加
+        logger.info(f"generate_prefectures_data() completed. {len(PREFECTURES_val)} prefectures.")
         st.session_state.PREFECTURES = PREFECTURES_val
         st.session_state.PREFECTURE_CLASSROOM_IDS = PREFECTURE_CLASSROOM_IDS_val
 
         st.session_state.DEFAULT_CLASSROOMS_DATA = generate_classrooms_data(
             st.session_state.PREFECTURES, st.session_state.PREFECTURE_CLASSROOM_IDS
         )
-        print(f"DEBUG: generate_classrooms_data() completed. {len(st.session_state.DEFAULT_CLASSROOMS_DATA)} classrooms.") # 追加
+        logger.info(f"generate_classrooms_data() completed. {len(st.session_state.DEFAULT_CLASSROOMS_DATA)} classrooms.")
         st.session_state.ALL_CLASSROOM_IDS_COMBINED = st.session_state.PREFECTURE_CLASSROOM_IDS
 
         st.session_state.DEFAULT_LECTURERS_DATA = generate_lecturers_data(
@@ -795,13 +797,13 @@ def initialize_app_data():
             st.session_state.ASSIGNMENT_TARGET_MONTH_START, # 追加
             st.session_state.ASSIGNMENT_TARGET_MONTH_END    # 追加
         )
-        print(f"DEBUG: generate_lecturers_data() completed. {len(st.session_state.DEFAULT_LECTURERS_DATA)} lecturers.") # 追加
+        logger.info(f"generate_lecturers_data() completed. {len(st.session_state.DEFAULT_LECTURERS_DATA)} lecturers.")
         st.session_state.DEFAULT_COURSES_DATA = generate_courses_data(
             st.session_state.PREFECTURES, st.session_state.PREFECTURE_CLASSROOM_IDS,
             st.session_state.ASSIGNMENT_TARGET_MONTH_START, # 追加
             st.session_state.ASSIGNMENT_TARGET_MONTH_END    # 追加
         )
-        print(f"DEBUG: generate_courses_data() completed. {len(st.session_state.DEFAULT_COURSES_DATA)} courses.") # 追加
+        logger.info(f"generate_courses_data() completed. {len(st.session_state.DEFAULT_COURSES_DATA)} courses.")
 
         REGIONS = {
             "Hokkaido": ["北海道"], "Tohoku": ["青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県"],
@@ -812,7 +814,7 @@ def initialize_app_data():
             "Shikoku": ["徳島県", "香川県", "愛媛県", "高知県"],
             "Kyushu_Okinawa": ["福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"]
         }
-        print("DEBUG: REGIONS defined.") # 追加
+        logger.info("REGIONS defined.")
         st.session_state.PREFECTURE_TO_REGION = {pref: region for region, prefs in REGIONS.items() for pref in prefs}
         st.session_state.REGION_GRAPH = {
             "Hokkaido": {"Tohoku"}, "Tohoku": {"Hokkaido", "Kanto", "Chubu"},
@@ -820,7 +822,7 @@ def initialize_app_data():
             "Kinki": {"Chubu", "Chugoku", "Shikoku"}, "Chugoku": {"Kinki", "Shikoku", "Kyushu_Okinawa"},
             "Shikoku": {"Kinki", "Chugoku", "Kyushu_Okinawa"}, "Kyushu_Okinawa": {"Chugoku", "Shikoku"}
         }
-        print("DEBUG: PREFECTURE_TO_REGION and REGION_GRAPH defined.") # 追加
+        logger.info("PREFECTURE_TO_REGION and REGION_GRAPH defined.")
         st.session_state.CLASSROOM_ID_TO_PREF_NAME = {
             item["id"]: item["location"] for item in st.session_state.DEFAULT_CLASSROOMS_DATA
         }
@@ -830,19 +832,28 @@ def initialize_app_data():
             st.session_state.PREFECTURE_TO_REGION,
             st.session_state.REGION_GRAPH
         )
-        print(f"DEBUG: generate_travel_costs_matrix() completed. {len(st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX)} entries.") # 追加
+        logger.info(f"generate_travel_costs_matrix() completed. {len(st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX)} entries.")
         st.session_state.app_data_initialized = True
-        print("DEBUG: 'app_data_initialized' set to True.") # 追加
+        logger.info("'app_data_initialized' set to True.")
     else:
-        print("DEBUG: 'app_data_initialized' already in session_state. Skipping data generation.") # 追加
-    print("DEBUG: Exiting initialize_app_data()") # 追加
+        logger.info("'app_data_initialized' already in session_state. Skipping data generation.")
+    logger.info("Exiting initialize_app_data()")
 
 def main():
-    print("DEBUG: Entering main()") # 追加
+    # --- ロガーの基本設定 ---
+    # Streamlit Cloudのログに出力するために、標準出力/エラーに出力するハンドラを使用
+    # フォーマット例: 2023-10-27 10:30:00,123 - __main__ - INFO - Log message
+    logging.basicConfig(
+        level=logging.INFO, # INFOレベル以上のログを出力 (DEBUGにするとより詳細)
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    logger = logging.getLogger(__name__) # このモジュール用のロガーを取得
+    logger.info("Entering main()")
     st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
-    print("DEBUG: st.set_page_config() called.") # 追加
+    logger.info("st.set_page_config() called.")
     initialize_app_data() # アプリケーションデータの初期化
-    print("DEBUG: initialize_app_data() finished.") # 追加
+    logger.info("initialize_app_data() finished.")
     # --- OIDC認証設定 ---
     GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
     GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
