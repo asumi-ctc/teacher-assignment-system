@@ -588,7 +588,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                 var_l_c1 = get_assignment_var(lecturer_id, c1_obj['id'], possible_assignments)
                 var_l_c2 = get_assignment_var(lecturer_id, c2_obj['id'], possible_assignments)
 
-                if var_l_c1 and var_l_c2:
+                if var_l_c1 is not None and var_l_c2 is not None:
                     is_assigned_to_fav_pair_var = model.NewBoolVar(f'is_fav_pair_{lecturer_id}_{c1_obj["id"]}_{c2_obj["id"]}')
                     model.AddMultiplicationEquality(is_assigned_to_fav_pair_var, [var_l_c1, var_l_c2]) # type: ignore
                     favored_pair_assignment_indicators.append(is_assigned_to_fav_pair_var)
