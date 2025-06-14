@@ -579,29 +579,32 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
         model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
 
+        # --- 「一般講習と特別講習が連日開催される場合の優先割り当て」ロジックを一時的にコメントアウト ---
         num_favored_consecutive_pairs_l = model.NewIntVar(0, len(all_consecutive_gs_pairs_info), f'num_fav_pairs_{lecturer_id}')
+        model.Add(num_favored_consecutive_pairs_l == 0) # 連日優遇を常に0とする
         
-        if lecturer_item.get("qualification_special_rank") is not None and all_consecutive_gs_pairs_info and not allow_ignore_favored_consecutive:
-            favored_pair_assignment_indicators = []
-            for pair_info in all_consecutive_gs_pairs_info:
-                c1_obj, c2_obj = pair_info['c1'], pair_info['c2']
-                var_l_c1 = get_assignment_var(lecturer_id, c1_obj['id'], possible_assignments)
-                var_l_c2 = get_assignment_var(lecturer_id, c2_obj['id'], possible_assignments)
+        # if lecturer_item.get("qualification_special_rank") is not None and all_consecutive_gs_pairs_info and not allow_ignore_favored_consecutive:
+        #     favored_pair_assignment_indicators = []
+        #     for pair_info in all_consecutive_gs_pairs_info:
+        #         c1_obj, c2_obj = pair_info['c1'], pair_info['c2']
+        #         var_l_c1 = get_assignment_var(lecturer_id, c1_obj['id'], possible_assignments)
+        #         var_l_c2 = get_assignment_var(lecturer_id, c2_obj['id'], possible_assignments)
 
-                if var_l_c1 is not None and var_l_c2 is not None:
-                    is_assigned_to_fav_pair_var = model.NewBoolVar(f'is_fav_pair_{lecturer_id}_{c1_obj["id"]}_{c2_obj["id"]}')
-                    # 線形制約で AND を表現: is_assigned_to_fav_pair_var = var_l_c1 AND var_l_c2
-                    model.Add(is_assigned_to_fav_pair_var <= var_l_c1)
-                    model.Add(is_assigned_to_fav_pair_var <= var_l_c2)
-                    model.Add(is_assigned_to_fav_pair_var >= var_l_c1 + var_l_c2 - 1)
-                    favored_pair_assignment_indicators.append(is_assigned_to_fav_pair_var)
+        #         if var_l_c1 is not None and var_l_c2 is not None:
+        #             is_assigned_to_fav_pair_var = model.NewBoolVar(f'is_fav_pair_{lecturer_id}_{c1_obj["id"]}_{c2_obj["id"]}')
+        #             # 線形制約で AND を表現: is_assigned_to_fav_pair_var = var_l_c1 AND var_l_c2
+        #             model.Add(is_assigned_to_fav_pair_var <= var_l_c1)
+        #             model.Add(is_assigned_to_fav_pair_var <= var_l_c2)
+        #             model.Add(is_assigned_to_fav_pair_var >= var_l_c1 + var_l_c2 - 1)
+        #             favored_pair_assignment_indicators.append(is_assigned_to_fav_pair_var)
             
-            if favored_pair_assignment_indicators:
-                model.Add(num_favored_consecutive_pairs_l == sum(favored_pair_assignment_indicators)) # type: ignore
-            else:
-                model.Add(num_favored_consecutive_pairs_l == 0)
-        else: # 特別資格なし、または連日優遇を無視する場合
-            model.Add(num_favored_consecutive_pairs_l == 0)
+        #     if favored_pair_assignment_indicators:
+        #         model.Add(num_favored_consecutive_pairs_l == sum(favored_pair_assignment_indicators)) # type: ignore
+        #     else:
+        #         model.Add(num_favored_consecutive_pairs_l == 0)
+        # else: # 特別資格なし、または連日優遇を無視する場合
+        #     model.Add(num_favored_consecutive_pairs_l == 0)
+        # --- ここまでコメントアウト ---
 
         # ペナルティ対象となる実効的な割り当て数
         # (総割り当て数 - 優遇される連日ペア数) がペナルティ計算のベース
