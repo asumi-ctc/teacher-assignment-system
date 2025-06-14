@@ -619,7 +619,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
         # ペナルティ対象となる「追加の」実効的割り当て数 (1を超えた分)
         extra_effective_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_eff_assign_{lecturer_id}')
-        model.Add(extra_effective_assignments_l >= num_total_assignments_l - 1) # 修正: num_total_assignments_l を直接使用
+        model.Add(extra_effective_assignments_l >= num_total_assignments_l - 1) 
 
         current_penalty_per_extra = 0
         if not allow_multiple_assignments_general_case: # 「許容しない」場合 = 原則1回 (連日例外除く)
