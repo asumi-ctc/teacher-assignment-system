@@ -1389,7 +1389,7 @@ else:
         )
         with st.expander("コード解説", expanded=False):
             st.markdown(
-                """
+                r"""
                 - **各割り当て候補のコスト計算**:
                     - `total_weighted_cost_int`: 各コスト要素（移動、年齢、頻度など）に重みを掛け、合計し、整数にスケーリングした値。スケジュール違反ペナルティも含む。
                 - **目的関数の設定**:
