@@ -385,6 +385,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                      weight_travel, weight_age, weight_frequency, # 既存の重み
                      weight_assignment_shortage, # 追加: 割り当て不足ペナルティの重み
                      weight_lecturer_concentration, # 追加: 講師割り当て集中ペナルティの重み
+                     weight_consecutive_assignment, # 追加: 連日割り当て報酬の重み
                      allow_under_assignment: bool, # 割り当て不足を許容するかのフラグ
                      today_date, default_days_no_past_assignment) -> SolverOutput: # 引数追加
     model = cp_model.CpModel()
@@ -401,6 +402,44 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
     courses_dict = {course['id']: course for course in courses_data}
     classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
+
+    # --- ステップ1: 連日講座ペアのリストアップ ---
+    consecutive_day_pairs = []
+    log_to_stream("Starting search for consecutive general-special course pairs.")
+    parsed_courses_for_pairing = []
+    for course_id_loop, course_item_loop in courses_dict.items(): # courses_data の代わりに courses_dict.values() を使用
+        try:
+            schedule_date = datetime.datetime.strptime(course_item_loop['schedule'], "%Y-%m-%d").date()
+            # courses_dict の値を直接変更せず、新しいリストに情報を追加
+            parsed_courses_for_pairing.append({**course_item_loop, 'schedule_date_obj': schedule_date})
+        except ValueError:
+            log_to_stream(f"  Warning: Could not parse schedule date {course_item_loop['schedule']} for course {course_item_loop['id']} during pair finding. Skipping.")
+            continue
+
+    courses_by_classroom_for_pairing = {}
+    for course_in_list in parsed_courses_for_pairing:
+        cid = course_in_list['classroom_id']
+        if cid not in courses_by_classroom_for_pairing:
+            courses_by_classroom_for_pairing[cid] = []
+        courses_by_classroom_for_pairing[cid].append(course_in_list)
+
+    for cid_loop, classroom_courses_list in courses_by_classroom_for_pairing.items():
+        classroom_courses_list.sort(key=lambda c: c['schedule_date_obj'])
+        for i in range(len(classroom_courses_list) - 1):
+            course1 = classroom_courses_list[i]
+            course2 = classroom_courses_list[i+1]
+            
+            is_general_special_pair = (course1['course_type'] == 'general' and course2['course_type'] == 'special') or \
+                                      (course1['course_type'] == 'special' and course2['course_type'] == 'general')
+            
+            if is_general_special_pair and (course2['schedule_date_obj'] - course1['schedule_date_obj']).days == 1:
+                pair_c1_obj, pair_c2_obj = course1, course2 # 日付順
+                consecutive_day_pairs.append({
+                    "pair_id": f"CDP_{pair_c1_obj['id']}_{pair_c2_obj['id']}",
+                    "course1_id": pair_c1_obj['id'], "course2_id": pair_c2_obj['id'],
+                    "classroom_id": cid_loop
+                })
+                log_to_stream(f"  + Found consecutive day pair: {pair_c1_obj['id']} ({pair_c1_obj['schedule']}) and {pair_c2_obj['id']} ({pair_c2_obj['schedule']}) at {cid_loop}")
 
 
     # --- Main logic for model building and solving ---
@@ -607,6 +646,56 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                 objective_terms.append(extra_assignments_l * actual_penalty_concentration)
                 log_to_stream(f"  + Lecturer {lecturer_id_loop}: Added concentration penalty term (extra_assign * {actual_penalty_concentration}).")
     
+    # --- ステップ3: 連日割り当ての報酬と制約 ---
+    consecutive_assignment_pair_vars_details = [] # ペア割り当て変数とその詳細を格納
+    if weight_consecutive_assignment > 0 and consecutive_day_pairs:
+        log_to_stream(f"Processing {len(consecutive_day_pairs)} consecutive day pairs for special assignment reward.")
+        for pair_info in consecutive_day_pairs:
+            pair_id = pair_info["pair_id"]
+            c1_id = pair_info["course1_id"]
+            c2_id = pair_info["course2_id"]
+            # course1_obj = courses_dict[c1_id] # courses_dict から取得
+            # course2_obj = courses_dict[c2_id] # courses_dict から取得
+
+            for lecturer_id_loop_pair, lecturer_pair in lecturers_dict.items():
+                # 1. 講師が特別資格を持っているか
+                if lecturer_pair.get("qualification_special_rank") is None:
+                    continue
+
+                # 2. 講師が両方の講座の資格要件とスケジュールを満たすか (possible_assignments_dict で確認)
+                key1 = (lecturer_id_loop_pair, c1_id)
+                key2 = (lecturer_id_loop_pair, c2_id)
+                if key1 not in possible_assignments_dict or key2 not in possible_assignments_dict:
+                    continue
+
+                log_to_stream(f"  + Potential consecutive pair assignment: Lecturer {lecturer_id_loop_pair} for pair {pair_id} ({c1_id}, {c2_id})")
+                pair_var_name = f"y_{lecturer_id_loop_pair}_{pair_id}"
+                pair_var = model.NewBoolVar(pair_var_name)
+                consecutive_assignment_pair_vars_details.append({
+                    "variable": pair_var, "lecturer_id": lecturer_id_loop_pair,
+                    "course1_id": c1_id, "course2_id": c2_id, "pair_id": pair_id
+                })
+
+                # 関連付け制約: pair_var = 1 => x_lecturer_c1 = 1 AND x_lecturer_c2 = 1
+                individual_var_c1 = possible_assignments_dict[key1]["variable"]
+                individual_var_c2 = possible_assignments_dict[key2]["variable"]
+                model.Add(pair_var <= individual_var_c1) # If pair_var is true, individual_var_c1 must be true
+                model.Add(pair_var <= individual_var_c2) # If pair_var is true, individual_var_c2 must be true
+                # (ソルバーは報酬のために pair_var を True にしようとし、この制約が個別の割り当ても True にする)
+
+                # 目的関数への追加 (報酬)
+                # 集中ペナルティ (例:200万) を考慮し、それを上回る可能性のある報酬を設定
+                base_reward_consecutive_scaled = 30000 * 100 # 例: 300万 (スケーリング後)
+                actual_reward_for_pair = int(weight_consecutive_assignment * base_reward_consecutive_scaled)
+                
+                if actual_reward_for_pair > 0:
+                    objective_terms.append(pair_var * -actual_reward_for_pair) # 最小化なので負のコスト
+                    log_to_stream(f"    Added reward {-actual_reward_for_pair} for pair_var {pair_var_name}")
+    else:
+        if weight_consecutive_assignment > 0:
+            log_to_stream("No consecutive day pairs found, or weight_consecutive_assignment is zero. Skipping reward logic.")
+
+
     if objective_terms:
         model.Minimize(sum(objective_terms))
     else:
@@ -650,6 +739,18 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                 lecturer_assignment_counts_this_round[lecturer_id_for_count] = \
                     lecturer_assignment_counts_this_round.get(lecturer_id_for_count, 0) + 1
 
+        # 解決された連続ペア割り当てをマップに格納
+        solved_consecutive_assignments_map = {} # key: (lecturer_id, course_id), value: pair_id
+        if weight_consecutive_assignment > 0 and consecutive_assignment_pair_vars_details:
+            for pair_detail in consecutive_assignment_pair_vars_details:
+                if solver.Value(pair_detail["variable"]) == 1:
+                    lect_id = pair_detail["lecturer_id"]
+                    c1_id_res = pair_detail["course1_id"]
+                    c2_id_res = pair_detail["course2_id"]
+                    p_id_res = pair_detail["pair_id"]
+                    solved_consecutive_assignments_map[(lect_id, c1_id_res)] = p_id_res
+                    solved_consecutive_assignments_map[(lect_id, c2_id_res)] = p_id_res
+                    log_to_stream(f"  Confirmed consecutive assignment for L:{lect_id} on Pair:{p_id_res} (C1:{c1_id_res}, C2:{c2_id_res})")
         # possible_assignments_dict を反復処理して結果を構築
         for (lecturer_id_res, course_id_res), pa_data in possible_assignments_dict.items():
             if solver.Value(pa_data["variable"]) == 1:
@@ -673,8 +774,14 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
                     "講座タイプ": course.get("course_type"),
                     "講座ランク": course.get("rank"),
-                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0)
-                })
+                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0),
+                    "連続ペア割当": "なし" # デフォルト
+                }
+                pair_assignment_id = solved_consecutive_assignments_map.get((lecturer["id"], course["id"]))
+                if pair_assignment_id:
+                    results[-1]["連続ペア割当"] = pair_assignment_id # 直前の要素に追加
+
+                results.append(assignment_details) # この行は元のままで、上の修正は不要だった。修正します。
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
     else:
@@ -688,6 +795,35 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         all_lecturers=lecturers_data,
         solver_raw_status_code=status_code,
         full_application_and_solver_log=full_captured_logs # 全ログ
+    )
+
+# `results.append` の修正を元に戻し、正しい方法で `assignment_details` に追加します。
+# 上記の `results.append(assignment_details)` の前の `results[-1]["連続ペア割当"] = pair_assignment_id` は誤りでした。
+# 正しくは、`assignment_details` 辞書を構築する際に含めます。
+
+    # (solver.Solve後の結果処理部分の修正)
+    # ... (lecturer_assignment_counts_this_round の計算は同じ) ...
+    # ... (solved_consecutive_assignments_map の計算も同じ) ...
+    if status_code == cp_model.OPTIMAL or status_code == cp_model.FEASIBLE:
+        # (solution_status_str, objective_value の設定は同じ)
+        # (lecturer_assignment_counts_this_round の計算は同じ)
+        # (solved_consecutive_assignments_map の計算も同じ)
+        for (lecturer_id_res, course_id_res), pa_data in possible_assignments_dict.items():
+            if solver.Value(pa_data["variable"]) == 1:
+                lecturer = lecturers_dict[lecturer_id_res]
+                course = courses_dict[course_id_res]
+                assignment_details = { # ここで辞書を一度だけ作成
+                    "講師ID": lecturer["id"], "講師名": lecturer["name"], "講座ID": course["id"],
+                    "講座名": course["name"], "教室ID": course["classroom_id"], "スケジュール": course['schedule'],
+                    "算出コスト(x100)": pa_data["cost"], "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
+                    "年齢コスト(元)": lecturer.get("age", 99), "頻度コスト(元)": len(lecturer.get("past_assignments", [])),
+                    "スケジュール状況": "不適合" if pa_data.get("is_schedule_incompatible") else "適合", "資格コスト(元)": pa_data.get("qualification_cost_raw"),
+                    "当該教室最終割当日からの日数": pa_data.get("debug_days_since_last_assignment"), "講師一般ランク": lecturer.get("qualification_general_rank"),
+                    "講師特別ランク": lecturer.get("qualification_special_rank", "なし"), "講座タイプ": course.get("course_type"), "講座ランク": course.get("rank"),
+                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0),
+                    "連続ペア割当": solved_consecutive_assignments_map.get((lecturer["id"], course["id"]), "なし") # ここで追加
+                }
+                results.append(assignment_details)
     )
 
 # --- 3. Streamlit UI ---
@@ -956,6 +1092,7 @@ def main():
                     st.session_state.get("weight_frequency_exp", 0.5),      # スライダーのキー名で取得
                     st.session_state.get("weight_assignment_shortage_exp", 0.5), # 追加したスライダー
                     st.session_state.get("weight_lecturer_concentration_exp", 0.5), # 追加したスライダー
+                    st.session_state.get("weight_consecutive_assignment_exp", 0.3), # 追加したスライダー
                     st.session_state.get("allow_under_assignment_cb", True), # 新しい許容条件
                     st.session_state.TODAY, # 追加
                     st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
@@ -1058,6 +1195,8 @@ def main():
         st.markdown("**講師の割り当て集中度を低くする（今回の割り当て内）**") # 新しい目的
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が今回の最適化で複数の講座を担当することへのペナルティが大きくなります。", key="weight_lecturer_concentration_exp")
 
+        st.markdown("**連日講座への連続割り当てを優先**") 
+        st.slider("重み", 0.0, 1.0, 0.3, 0.1, format="%.1f", help="高いほど、特別資格を持つ講師が一般講座と特別講座の連日ペアをまとめて担当することを重視します（報酬が増加）。", key="weight_consecutive_assignment_exp")
     logger.info("Sidebar: objective expander setup complete.")
 
     # ログインユーザー情報とログアウトボタン
