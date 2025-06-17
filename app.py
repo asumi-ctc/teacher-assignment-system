@@ -1,5 +1,6 @@
 import streamlit as st
 from ortools.sat.python import cp_model
+import streamlit.components.v1 as components # ★ この行を追加
 import pandas as pd
 import io
 import contextlib
@@ -923,14 +924,11 @@ def main():
     # --- 認証とメインコンテンツの表示制御 ---
     logger.info("Starting authentication check.")
     if 'token' not in st.session_state:
-        st.session_state.token = None # 初期化
-        logger.info("Session state 'token' initialized to None.")
+        st.session_state.token = None
     if 'user_info' not in st.session_state:
-        st.session_state.user_info = None # 初期化
-        logger.info("Session state 'user_info' initialized to None.")
+        st.session_state.user_info = None
     if 'auth_error_message' not in st.session_state: # 認証エラーメッセージ用
         st.session_state.auth_error_message = None
-        logger.info("Session state 'auth_error_message' initialized to None.")
 
     if not st.session_state.token:
         # --- 未認証の場合: ログインページ表示 ---
