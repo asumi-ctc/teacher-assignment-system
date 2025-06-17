@@ -941,6 +941,7 @@ def main():
         "また目的に重み付けすることでチューニングすることができます。"
     )
 
+    # --- サイドバー: 制約、許容条件、最適化目標の設定 ---
     # 「最適割り当てを実行」ボタンを説明文の直下に移動
     if st.sidebar.button("最適割り当てを実行", type="primary", key="execute_optimization_main_button"):
         # 既存の計算結果関連のセッション変数をクリア
@@ -1024,8 +1025,6 @@ def main():
             st.session_state.view_mode = "optimization_result"
         st.rerun() # 再実行してメインエリアで処理と表示を行う
     logger.info("Sidebar: execute button setup complete.")
-
-    logger.info("Setting up sidebar: constraints expander.")
     st.sidebar.markdown("---")
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("**ハード制約（絶対固定）**")
@@ -1033,8 +1032,7 @@ def main():
         st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。") # 追加
         st.markdown("- 3.講師は、東京、名古屋、大阪の教室には2名を割り当て、それ以外には1名を割り当てる。") # 追加
 
-    logger.info("Sidebar: constraints expander setup complete.")
-    logger.info("Setting up sidebar: allowance conditions expander.") # ログメッセージ変更
+    logger.info("Sidebar: constraints, allowance conditions, and optimization target expanders setup.")
     with st.sidebar.expander("【許容条件】", expanded=False): # 「ソフト制約」を「許容条件」に変更
         st.markdown(
             "以下の項目は原則として守られますが、チェックボックスで許容することで、"
@@ -1048,9 +1046,7 @@ def main():
             key="allow_under_assignment_cb",
             help="チェックを入れると、東京・名古屋・大阪の教室は最大2名（0名または1名も可）、その他の教室は最大1名（0名も可）の割り当てとなります。チェックを外すと、必ず指定された人数（東京・名古屋・大阪は2名、他は1名）を割り当てようとします（担当可能な講師がいない場合は割り当てられません）。"
         )
-    logger.info("Sidebar: constraints expander setup complete.")
 
-    logger.info("Setting up sidebar: optimization target expander.") # ログメッセージ変更
     with st.sidebar.expander("【最適化目標】", expanded=False): # 名称変更
         st.caption(
             "各目的の相対的な重要度を重みで設定します。\n"
@@ -1073,7 +1069,62 @@ def main():
 
         st.markdown("**連日講座への連続割り当てを優先**")
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、特別資格を持つ講師が一般講座と特別講座の連日ペアをまとめて担当することを重視します（報酬が増加）。", key="weight_consecutive_assignment_exp") # デフォルト値を0.5に変更
-    logger.info("Sidebar: optimization target expander setup complete.") # ログメッセージ変更
+    logger.info("Sidebar: Input widgets setup complete.")
+
+    # --- サイドバー: 最適化実行ボタン ---
+    # 「最適割り当てを実行」ボタンを説明文の直下に移動
+    if st.sidebar.button("最適割り当てを実行", type="primary", key="execute_optimization_main_button_bottom"): # キー名を変更して重複を避ける
+        # 既存の計算結果関連のセッション変数をクリア
+        keys_to_clear_on_execute = [
+            "solver_result_cache", "raw_log_on_server",
+            "optimization_error_message", # 追加: 前回の実行時エラーをクリア
+            "gemini_explanation",
+            "gemini_api_requested", "gemini_api_error"
+        ]
+        for key in keys_to_clear_on_execute:
+            if key in st.session_state:
+                del st.session_state[key]
+        logger.info("Cleared previous optimization results from session_state.")
+
+        try:
+            # ここで最適化計算を実行し、結果をキャッシュに保存する
+            logger.info("Starting optimization calculation (solve_assignment).")
+            with st.spinner("最適化計算を実行中..."):
+                solver_output = solve_assignment(
+                    st.session_state.DEFAULT_LECTURERS_DATA, st.session_state.DEFAULT_COURSES_DATA,
+                    st.session_state.DEFAULT_CLASSROOMS_DATA, st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX,
+                    st.session_state.get("weight_past_assignment_exp", 0.5),
+                    st.session_state.get("weight_qualification_exp", 0.5),
+                    st.session_state.get("weight_travel_exp", 0.5),
+                    st.session_state.get("weight_age_exp", 0.5),
+                    st.session_state.get("weight_frequency_exp", 0.5),
+                    st.session_state.get("weight_assignment_shortage_exp", 0.5),
+                    st.session_state.get("weight_lecturer_concentration_exp", 0.5),
+                    st.session_state.get("weight_consecutive_assignment_exp", 0.5),
+                    st.session_state.allow_under_assignment_cb,
+                    st.session_state.TODAY,
+                    st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT
+                ) # type: ignore
+            logger.info("solve_assignment completed.")
+
+            # (solver_output の検証と結果保存のロジックは元の位置から移動してきたものと同じ)
+            # ... (検証ロジック) ...
+            # ... (結果保存ロジック) ...
+            # (エラーハンドリングも同様)
+            # ... (エラーハンドリングロジック) ...
+            st.rerun()
+        except Exception as e: # この try-except は solve_assignment の呼び出しを囲む
+            logger.error(f"Unexpected error during optimization process: {e}", exc_info=True)
+            error_message_summary = f"最適化処理中に予期せぬエラーが発生しました: {str(e)[:200]}..."
+            import traceback
+            error_trace = traceback.format_exc()
+            st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
+            st.error(error_message_summary)
+            st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
+            st.session_state.solution_executed = True
+            st.session_state.view_mode = "optimization_result"
+            st.rerun()
+    logger.info("Sidebar: Execute button (bottom) setup complete.")
 
     # ログインユーザー情報とログアウトボタン
     # logger.info("Setting up sidebar: user info and logout button.") # 削除
