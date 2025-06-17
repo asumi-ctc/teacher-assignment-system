@@ -963,11 +963,14 @@ def main():
                             "name": id_info.get("name")
                         }
                         logger.info(f"ID token verified. User '{user_email}' authorized (in ALLOWED_EMAILS_LIST).")
+                        st.rerun() # 認証成功後、メインUI表示のために再実行
                     else:
                         st.error(f"このアプリケーションへのアクセスは許可されていません。({user_email})")
                         st.session_state.token = None # トークンをクリアしてログイン状態を解除
                         st.session_state.user_info = None
                         logger.warning(f"User '{user_email}' not authorized. Token cleared.")
+                        # ここで処理を中断し、エラーメッセージのみを表示させる
+                        return # メインUIの描画に進まないようにする
                 else:
                     st.error("IDトークンが取得できませんでした。")
                     st.session_state.token = None # トークンをクリア
@@ -975,11 +978,13 @@ def main():
                     logger.error("Failed to get ID token from token response.")
             except Exception as e:
                 st.error(f"ユーザー情報の取得/設定中にエラー: {e}")
-                st.session_state.token = None # トークンをクリア
-                st.session_state.user_info = {"email": "error@example.com"}
+                # 認証プロセス中にエラーが発生した場合もトークンとユーザー情報をクリア
+                if 'token' in st.session_state: st.session_state.token = None
+                if 'user_info' in st.session_state: st.session_state.user_info = None
                 logger.error(f"Error during user info retrieval/setting: {e}", exc_info=True)
-            st.rerun()
+            # st.rerun() # 認証失敗時はここで rerun しない方が良い場合がある。エラーメッセージ表示後にユーザー操作を待つ。
         logger.info("Exiting unauthenticated block.")
+        # 認証フローのどこかでエラーが発生した場合や未認証の場合は、ここで処理を終了
         return # 未認証の場合はここで処理を終了し、メインUIは表示しない
 
     # --- 認証済みの場合: メインアプリケーションUI表示 ---
