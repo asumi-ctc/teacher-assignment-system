@@ -871,85 +871,19 @@ def initialize_app_data():
     logger.info("Exiting initialize_app_data()")
 
 def main():
-    # --- ロガーやデータ初期化など（変更なし）---
+    # --- ロガーやデータ初期化など ---
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     logger = logging.getLogger(__name__)
     st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
     initialize_app_data()
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
-    # ★★★ ここから認証関連のコードをすべて削除 ★★★
 
-    # --- ここから、これまでのメインアプリケーションのUI表示コード ---
-    # st.sidebar.header("最適化設定") 
-    
-    # 認証がなくなったため、ログインユーザー情報の表示は削除または固定の表示に変更
-    # user_email_display = "（管理者）" # 例
-    # st.sidebar.write(f"ログイン中: {user_email_display}")
-    # ログアウトボタンも不要になるため削除
-    
-    logger.info("Proceeding to main UI.")
-        
-    # --- セッション状態の初期化 (表示モード管理用) ---
-    if "view_mode" not in st.session_state: # インデントを修正
-        st.session_state.view_mode = "sample_data"
-    if "solution_executed" not in st.session_state:
-        st.session_state.solution_executed = False
-    if "allow_under_assignment_cb" not in st.session_state: # 追加: チェックボックスの初期値をセッションステートに設定
-        st.session_state.allow_under_assignment_cb = True
-
-    # --- メイン画面上部にナビゲーションボタンを配置 ---
-    logger.info("Setting up navigation buttons.")
-    # ボタン幅を広げ、文字列が改行されないように比率を調整 (例: [1,1,5] -> [2,2,3])
-    nav_cols = st.columns([2, 2, 2, 1])  # ボタン数を3つに合わせ、比率を調整
-    with nav_cols[0]:
-        # サンプルデータボタン
-        button_type_sample = "primary" if st.session_state.view_mode == "sample_data" else "secondary"
-        if st.button("サンプルデータ", key="nav_sample_data_button", use_container_width=True, type=button_type_sample):
-            st.session_state.view_mode = "sample_data"
-            # サンプルデータ表示時、最適化結果の主要キャッシュ(solver_result_cache, raw_log_on_server)は保持する。
-            # Gemini API関連のキャッシュのみクリアする。
-            keys_to_clear_for_sample_view = [
-                "gemini_explanation",
-                "gemini_api_requested",
-                "gemini_api_error",
-            ]
-            for key_to_clear in keys_to_clear_for_sample_view:
-                if key_to_clear in st.session_state:
-                    del st.session_state[key_to_clear]
-            st.rerun()
-
-    with nav_cols[1]:
-        # 目的関数の数式ボタン
-        button_type_objective = "primary" if st.session_state.view_mode == "objective_function" else "secondary"
-        if st.button("ソルバーとmodelオブジェクト", key="nav_solver_model_object_button", use_container_width=True, type=button_type_objective): # ボタン名を変更
-            st.session_state.view_mode = "objective_function"
-            st.rerun()
-
-    with nav_cols[2]:
-        # 「最適化結果」ボタンは、最適化が一度でも実行された後にのみ表示
-        if st.session_state.get("solution_executed", False): 
-            button_type_result = "primary" if st.session_state.view_mode == "optimization_result" else "secondary"
-            if st.button("最適化結果", key="nav_optimization_result_button", use_container_width=True, type=button_type_result):
-                st.session_state.view_mode = "optimization_result"
-                st.rerun()
-        # else: # solution_executed が False の場合 (初期状態など) は「最適化結果」ボタンをレンダリングしない
-    logger.info("Navigation buttons setup complete.")
-
-    logger.info("Setting up sidebar: description and execute button.")
-    st.sidebar.markdown(
-        "【制約】と【目的】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
-        "また目的に重み付けすることでチューニングすることができます。"
-    )
-
-    # --- サイドバー: 制約、許容条件、最適化目標の設定 ---
-    # 「最適割り当てを実行」ボタンを説明文の直下に移動
-    if st.sidebar.button("最適割り当てを実行", type="primary", key="execute_optimization_main_button"):
-        # 既存の計算結果関連のセッション変数をクリア
+    # --- コールバック関数の定義 ---
+    def run_optimization():
+        """最適化を実行し、結果をセッション状態に保存するコールバック関数"""
         keys_to_clear_on_execute = [
-            "solver_result_cache", "raw_log_on_server", 
-            "optimization_error_message", # 追加: 前回の実行時エラーをクリア
-            "gemini_explanation",
-            "gemini_api_requested", "gemini_api_error"
+            "solver_result_cache", "raw_log_on_server", "optimization_error_message",
+            "gemini_explanation", "gemini_api_requested", "gemini_api_error"
         ]
         for key in keys_to_clear_on_execute:
             if key in st.session_state:
@@ -957,92 +891,91 @@ def main():
         logger.info("Cleared previous optimization results from session_state.")
 
         try:
-            # ここで最適化計算を実行し、結果をキャッシュに保存する
             logger.info("Starting optimization calculation (solve_assignment).")
             with st.spinner("最適化計算を実行中..."):
                 solver_output = solve_assignment(
                     st.session_state.DEFAULT_LECTURERS_DATA, st.session_state.DEFAULT_COURSES_DATA,
                     st.session_state.DEFAULT_CLASSROOMS_DATA, st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX,
-                    st.session_state.get("weight_past_assignment_exp", 0.5), # スライダーのキー名で取得
-                    st.session_state.get("weight_qualification_exp", 0.5),  # スライダーのキー名で取得
-                    st.session_state.get("weight_travel_exp", 0.5),         # スライダーのキー名で取得
-                    st.session_state.get("weight_age_exp", 0.5),            # スライダーのキー名で取得
-                    st.session_state.get("weight_frequency_exp", 0.5),      # スライダーのキー名で取得
-                    st.session_state.get("weight_assignment_shortage_exp", 0.5), # 追加したスライダー
-                    st.session_state.get("weight_lecturer_concentration_exp", 0.5), # 追加したスライダー
-                    st.session_state.get("weight_consecutive_assignment_exp", 0.5), # 追加したスライダー、デフォルト値を0.5に変更
-                    st.session_state.allow_under_assignment_cb, # 新しい許容条件 (st.session_stateから直接参照)
-                    st.session_state.TODAY, # 追加
-                    st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
-                ) # type: ignore
+                    st.session_state.get("weight_past_assignment_exp", 0.5),
+                    st.session_state.get("weight_qualification_exp", 0.5),
+                    st.session_state.get("weight_travel_exp", 0.5),
+                    st.session_state.get("weight_age_exp", 0.5),
+                    st.session_state.get("weight_frequency_exp", 0.5),
+                    st.session_state.get("weight_assignment_shortage_exp", 0.5),
+                    st.session_state.get("weight_lecturer_concentration_exp", 0.5),
+                    st.session_state.get("weight_consecutive_assignment_exp", 0.5),
+                    st.session_state.allow_under_assignment_cb,
+                    st.session_state.TODAY,
+                    st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT
+                )
             logger.info("solve_assignment completed.")
 
-            # solver_output の検証を追加
             if not isinstance(solver_output, dict):
-                logger.error(f"Invalid return type from solve_assignment: {type(solver_output)}")
-                st.error(f"最適化関数の戻り値が不正です (辞書ではありません)。型: {type(solver_output)}")
-                st.session_state.solution_executed = True
-                st.session_state.view_mode = "optimization_result"
-                st.rerun()
-                return # tryブロックを抜ける (st.rerunがあるので実際には不要だが念のため)
+                raise TypeError(f"最適化関数の戻り値が不正です。型: {type(solver_output)}")
 
-            required_keys = ["full_application_and_solver_log", "solution_status_str", 
-                                "objective_value", "assignments", "all_courses", 
-                                "all_lecturers", "solver_raw_status_code"]
+            required_keys = ["full_application_and_solver_log", "solution_status_str", "objective_value", "assignments", "all_courses", "all_lecturers", "solver_raw_status_code"]
             missing_keys = [key for key in required_keys if key not in solver_output]
             if missing_keys:
-                logger.error(f"Missing keys in solver_output: {missing_keys}. Available keys: {list(solver_output.keys())}")
-                st.error(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}。取得キー: {list(solver_output.keys())}")
-                st.session_state.solution_executed = True
-                st.session_state.view_mode = "optimization_result"
-                st.rerun()
-                return
+                raise KeyError(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}")
 
-            # 検証が通れば、結果を保存
-            logger.info("Solver output validated. Saving results to session_state.")
             st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
-            # solver_result_cache には、SolverOutput のキーから full_application_and_solver_log を除いたものを格納
-            st.session_state.solver_result_cache = {
-                k: solver_output[k] for k in required_keys if k != "full_application_and_solver_log" # type: ignore
-            }
+            st.session_state.solver_result_cache = {k: v for k, v in solver_output.items() if k != "full_application_and_solver_log"}
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
 
         except Exception as e:
             logger.error(f"Unexpected error during optimization process: {e}", exc_info=True)
-            # エラーメッセージをセッション状態に保存
-            error_message_summary = f"最適化処理中に予期せぬエラーが発生しました: {str(e)[:200]}..." # UI表示用に短縮
             import traceback
             error_trace = traceback.format_exc()
-            # 詳細なエラー情報をセッションステートに保存
             st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
-            
-            st.error(error_message_summary) # UIにも即時表示
-
-            # ログにもエラーを記録 (エラー発生時はログもエラー情報で上書き)
             st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
-        st.rerun() # 再実行してメインエリアで処理と表示を行う
-    logger.info("Sidebar: execute button setup complete.")
+
+    # --- セッション状態の初期化 ---
+    if "view_mode" not in st.session_state:
+        st.session_state.view_mode = "sample_data"
+    if "solution_executed" not in st.session_state:
+        st.session_state.solution_executed = False
+    if "allow_under_assignment_cb" not in st.session_state: # 追加: チェックボックスの初期値をセッションステートに設定
+        st.session_state.allow_under_assignment_cb = True
+
+    # --- UIの描画 ---
+    st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
+
+    # --- ナビゲーションボタン ---
+    nav_cols = st.columns([2, 2, 2, 1])  # ボタン数を3つに合わせ、比率を調整
+    with nav_cols[0]:
+        if st.button("サンプルデータ", use_container_width=True, type="primary" if st.session_state.view_mode == "sample_data" else "secondary"):
+            st.session_state.view_mode = "sample_data"
+            st.rerun()
+    with nav_cols[1]:
+        if st.button("ソルバーとmodelオブジェクト", use_container_width=True, type="primary" if st.session_state.view_mode == "objective_function" else "secondary"):
+            st.session_state.view_mode = "objective_function"
+            st.rerun()
+    with nav_cols[2]:
+        if st.session_state.get("solution_executed", False): 
+            if st.button("最適化結果", use_container_width=True, type="primary" if st.session_state.view_mode == "optimization_result" else "secondary"):
+                st.session_state.view_mode = "optimization_result"
+                st.rerun()
+
+    # --- サイドバー ---
+    st.sidebar.markdown(
+        "【制約】と【目的】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
+        "また目的に重み付けすることでチューニングすることができます。"
+    )
+    st.sidebar.button("最適割り当てを実行", type="primary", on_click=run_optimization)
     st.sidebar.markdown("---")
+    
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("**ハード制約（絶対固定）**")
         st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない") # 文言変更
         st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。") # 追加
         st.markdown("- 3.講師は、東京、名古屋、大阪の教室には2名を割り当て、それ以外には1名を割り当てる。") # 追加
 
-    logger.info("Sidebar: constraints, allowance conditions, and optimization target expanders setup.")
     with st.sidebar.expander("【許容条件】", expanded=False): # 「ソフト制約」を「許容条件」に変更
-        st.markdown(
-            "以下の項目は原則として守られますが、チェックボックスで許容することで、"
-            "より多くの講座に講師を割り当てられる可能性があります。"
-        )
-        st.markdown("---") # 区切り線
-        st.markdown("**1. 講師が割り当て出来ない場合を許容する**") # 新しい許容条件
         st.checkbox(
             "上記ハード制約3に対し、割り当て不足を許容する",
-            value=st.session_state.allow_under_assignment_cb, # 変更: st.session_state から直接値を取得
             key="allow_under_assignment_cb",
             help="チェックを入れると、東京・名古屋・大阪の教室は最大2名（0名または1名も可）、その他の教室は最大1名（0名も可）の割り当てとなります。チェックを外すと、必ず指定された人数（東京・名古屋・大阪は2名、他は1名）を割り当てようとします（担当可能な講師がいない場合は割り当てられません）。"
         )
@@ -1069,75 +1002,11 @@ def main():
 
         st.markdown("**連日講座への連続割り当てを優先**")
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、特別資格を持つ講師が一般講座と特別講座の連日ペアをまとめて担当することを重視します（報酬が増加）。", key="weight_consecutive_assignment_exp") # デフォルト値を0.5に変更
-    logger.info("Sidebar: Input widgets setup complete.")
-
-    # --- サイドバー: 最適化実行ボタン ---
-    # 「最適割り当てを実行」ボタンを説明文の直下に移動
-    if st.sidebar.button("最適割り当てを実行", type="primary", key="execute_optimization_main_button_bottom"): # キー名を変更して重複を避ける
-        # 既存の計算結果関連のセッション変数をクリア
-        keys_to_clear_on_execute = [
-            "solver_result_cache", "raw_log_on_server",
-            "optimization_error_message", # 追加: 前回の実行時エラーをクリア
-            "gemini_explanation",
-            "gemini_api_requested", "gemini_api_error"
-        ]
-        for key in keys_to_clear_on_execute:
-            if key in st.session_state:
-                del st.session_state[key]
-        logger.info("Cleared previous optimization results from session_state.")
-
-        try:
-            # ここで最適化計算を実行し、結果をキャッシュに保存する
-            logger.info("Starting optimization calculation (solve_assignment).")
-            with st.spinner("最適化計算を実行中..."):
-                solver_output = solve_assignment(
-                    st.session_state.DEFAULT_LECTURERS_DATA, st.session_state.DEFAULT_COURSES_DATA,
-                    st.session_state.DEFAULT_CLASSROOMS_DATA, st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX,
-                    st.session_state.get("weight_past_assignment_exp", 0.5),
-                    st.session_state.get("weight_qualification_exp", 0.5),
-                    st.session_state.get("weight_travel_exp", 0.5),
-                    st.session_state.get("weight_age_exp", 0.5),
-                    st.session_state.get("weight_frequency_exp", 0.5),
-                    st.session_state.get("weight_assignment_shortage_exp", 0.5),
-                    st.session_state.get("weight_lecturer_concentration_exp", 0.5),
-                    st.session_state.get("weight_consecutive_assignment_exp", 0.5),
-                    st.session_state.allow_under_assignment_cb,
-                    st.session_state.TODAY,
-                    st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT
-                ) # type: ignore
-            logger.info("solve_assignment completed.")
-
-            # (solver_output の検証と結果保存のロジックは元の位置から移動してきたものと同じ)
-            # ... (検証ロジック) ...
-            # ... (結果保存ロジック) ...
-            # (エラーハンドリングも同様)
-            # ... (エラーハンドリングロジック) ...
-            st.rerun()
-        except Exception as e: # この try-except は solve_assignment の呼び出しを囲む
-            logger.error(f"Unexpected error during optimization process: {e}", exc_info=True)
-            error_message_summary = f"最適化処理中に予期せぬエラーが発生しました: {str(e)[:200]}..."
-            import traceback
-            error_trace = traceback.format_exc()
-            st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
-            st.error(error_message_summary)
-            st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
-            st.session_state.solution_executed = True
-            st.session_state.view_mode = "optimization_result"
-            st.rerun()
-    logger.info("Sidebar: Execute button (bottom) setup complete.")
-
-    # ログインユーザー情報とログアウトボタン
-    # logger.info("Setting up sidebar: user info and logout button.") # 削除
-    # st.sidebar.markdown("---") # 削除
-    # st.sidebar.write(f"ログイン中: {user_email_display}") # 削除
-    # if st.sidebar.button("ログアウト"): ... のブロックを削除
-
-    logger.info("Setting main title.")
-    st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
 
     # --- メインエリアの表示制御 ---
     logger.info(f"Starting main area display. Current view_mode: {st.session_state.view_mode}")
     if st.session_state.view_mode == "sample_data":
+        # (サンプルデータ表示ロジックは省略)
         st.header("入力データ")
         logger.info("Displaying sample data.")
         st.markdown(
@@ -1660,9 +1529,10 @@ else:
             logger.info("Optimization result display complete.")
 
     else: # view_mode が予期せぬ値の場合 (フォールバック)
+        # (解説表示ロジックは省略)
+        st.header("ソルバーとmodelオブジェクト") # objective_function の場合
         logger.warning(f"Unexpected view_mode: {st.session_state.view_mode}. Displaying fallback info.")
         st.info("サイドバーから表示するデータを選択してください。")
     logger.info("Exiting main function.")
-
 if __name__ == "__main__":
     main()
