@@ -970,7 +970,7 @@ def main():
                         st.session_state.user_info = None
                         logger.warning(f"User '{user_email}' not authorized. Token cleared.")
                         # ここで処理を中断し、エラーメッセージのみを表示させる
-                        return # メインUIの描画に進まないようにする
+                        st.stop() # アプリケーションの実行を完全に停止
                 else:
                     st.error("IDトークンが取得できませんでした。")
                     st.session_state.token = None # トークンをクリア
@@ -985,7 +985,7 @@ def main():
             # st.rerun() # 認証失敗時はここで rerun しない方が良い場合がある。エラーメッセージ表示後にユーザー操作を待つ。
         logger.info("Exiting unauthenticated block.")
         # 認証フローのどこかでエラーが発生した場合や未認証の場合は、ここで処理を終了
-        return # 未認証の場合はここで処理を終了し、メインUIは表示しない
+        st.stop() # 未認証の場合はここで処理を終了し、メインUIは表示しない
 
     # --- 認証済みの場合: メインアプリケーションUI表示 ---
     # このブロックは st.session_state.token が存在する場合のみ実行されます
