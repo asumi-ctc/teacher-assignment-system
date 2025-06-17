@@ -1,15 +1,15 @@
 import streamlit as st
 from ortools.sat.python import cp_model
-import streamlit.components.v1 as components # ★ この行を追加
+# import streamlit.components.v1 as components # 削除
 import pandas as pd
 import io
 import contextlib
 import re # 正規表現モジュール
 import datetime # 日付処理用に追加
 import google.generativeai as genai # Gemini API 用
-from streamlit_oauth import OAuth2Component # OIDC認証用
-from google.oauth2 import id_token # IDトークン検証用
-from google.auth.transport import requests as google_requests # IDトークン検証用
+# from streamlit_oauth import OAuth2Component # OIDC認証用 # 削除
+# from google.oauth2 import id_token # IDトークン検証用 # 削除
+# from google.auth.transport import requests as google_requests # IDトークン検証用 # 削除
 import random # データ生成用
 import os # CPUコア数を取得するために追加
 import numpy as np # データ型変換のために追加
@@ -876,102 +876,24 @@ def main():
     logger = logging.getLogger(__name__)
     st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
     initialize_app_data()
-
-    # --- OIDC認証設定 ---
-    GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
-    GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
-    REDIRECT_URI = st.secrets.get("REDIRECT_URI")
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
-    allowed_emails_str = st.secrets.get("ALLOWED_EMAILS")
-    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI, allowed_emails_str]): # type: ignore
-        st.error("OAuthの設定が不完全です。secrets.tomlを確認してください。")
-        st.stop()
-    ALLOWED_EMAILS_LIST = {email.strip().lower() for email in allowed_emails_str.split(',') if email.strip()}
+    # ★★★ ここから認証関連のコードをすべて削除 ★★★
+
+    # --- ここから、これまでのメインアプリケーションのUI表示コード ---
+    # st.sidebar.header("最適化設定") 
     
-    oauth2 = OAuth2Component(
-        client_id=GOOGLE_CLIENT_ID,
-        client_secret=GOOGLE_CLIENT_SECRET,
-        authorize_endpoint="https://accounts.google.com/o/oauth2/v2/auth",
-        token_endpoint="https://oauth2.googleapis.com/token",
-    )
-
-    # --- セッション状態の初期化 ---
-    if 'token' not in st.session_state:
-        st.session_state.token = None
-    if 'user_info' not in st.session_state:
-        st.session_state.user_info = None
-    if 'auth_error' not in st.session_state:
-        st.session_state.auth_error = None
-
-    # ★★★【ロジック再構築】★★★
-    # STEP 1: Googleからのリダイレクト（コールバック）かを最優先で判定
-    # 'state'パラメータの有無で判定するのが最も確実
-    if 'state' in st.query_params:
-        # これはコールバック処理。トークンを取得し、クリーンなURLにリダイレクトさせる。
-        logger.info("Callback detected ('state' in query_params).")
-        try:
-            # ここで認証コードをトークンに交換
-            result = oauth2.authorize_button(
-                name="Googleでログイン", # このボタンは実際には表示されない
-                redirect_uri=REDIRECT_URI,
-                scope="email profile openid",
-                key="google_login_callback", # 表示用とは別のキー
-                extras_params={"prompt": "select_account", "access_type": "offline"}
-            )
-            
-            if result and "token" in result:
-                logger.info("Token successfully obtained from callback.")
-                st.session_state.token = result["token"]
-                id_info = id_token.verify_oauth2_token(
-                    st.session_state.token["id_token"], google_requests.Request(), GOOGLE_CLIENT_ID # type: ignore
-                )
-                user_email = id_info.get("email", "").lower()
-
-                if user_email in ALLOWED_EMAILS_LIST:
-                    logger.info(f"User '{user_email}' authorized.")
-                    st.session_state.user_info = {"email": user_email, "name": id_info.get("name")}
-                    st.session_state.auth_error = None
-                else:
-                    logger.warning(f"User '{user_email}' not in ALLOWED_EMAILS_LIST.")
-                    st.session_state.auth_error = f"アクセス権がありません: {user_email}"
-                    st.session_state.token = None # 権限がないのでトークンを破棄
-            
-            elif 'error' in st.query_params:
-                 logger.warning(f"OAuth error in callback: {st.query_params['error']}")
-                 st.session_state.auth_error = f"認証が拒否されました: {st.query_params['error']}"
-                 st.session_state.token = None # エラーなのでトークンはなし
-            else:
-                # result is None or token not in result, and no 'error' in query_params
-                # This might happen if the authorize_button itself had an issue before redirect or state mismatch
-                logger.error("Callback processing failed: No token and no error in query_params. Result from authorize_button was not as expected.")
-                st.session_state.auth_error = "認証コールバック処理中に予期せぬ状況が発生しました。"
-                st.session_state.token = None
-
-        except Exception as e:
-            logger.error(f"Exception during callback processing: {e}", exc_info=True)
-            st.session_state.auth_error = f"認証エラーが発生しました: {e}"
-            st.session_state.token = None
+    # 認証がなくなったため、ログインユーザー情報の表示は削除または固定の表示に変更
+    # user_email_display = "（管理者）" # 例
+    # st.sidebar.write(f"ログイン中: {user_email_display}")
+    # ログアウトボタンも不要になるため削除
+    
+    logger.info("Proceeding to main UI.")
         
-        # 処理が完了したら、URLから認証パラメータを消すためにトップページにリダイレクト
-        logger.info("Callback processing complete. Redirecting to '/' to clear URL params.")
-        components.html("<script>window.location.href = '/';</script>", height=0)
-        st.stop() # スクリプトを停止してリダイレクトを待つ
-
-    # STEP 2: 認証済みか、未認証（クリーンなURL）かで処理を分岐
-    if st.session_state.token:
-        # --- 認証済みの場合のメインアプリ表示 ---
-        user_email_display = st.session_state.user_info.get('email', '不明なユーザー') if st.session_state.user_info else '不明なユーザー'
-        logger.info(f"User '{user_email_display}' is authenticated. Proceeding to main UI.")
-        
-        # --- ここから、これまでのメインアプリケーションのUI表示コード ---
-        # st.sidebar.header("最適化設定") # より詳細な構成に変更
-
-        # --- セッション状態の初期化 (表示モード管理用) ---
-        logger.info("Initializing view_mode and solution_executed in session_state if not present.")
-        if "view_mode" not in st.session_state:
-            st.session_state.view_mode = "sample_data"  # デフォルトはサンプルデータ表示
-        if "solution_executed" not in st.session_state:
-            st.session_state.solution_executed = False
+    # --- セッション状態の初期化 (表示モード管理用) ---
+    if "view_mode" not in st.session_state:
+        st.session_state.view_mode = "sample_data"
+    if "solution_executed" not in st.session_state:
+        st.session_state.solution_executed = False
 
         # --- メイン画面上部にナビゲーションボタンを配置 ---
         logger.info("Setting up navigation buttons.")
@@ -1152,31 +1074,10 @@ def main():
         logger.info("Sidebar: optimization target expander setup complete.") # ログメッセージ変更
 
         # ログインユーザー情報とログアウトボタン
-        logger.info("Setting up sidebar: user info and logout button.")
-        # user_email_display はこのブロックの先頭で定義済み
-        st.sidebar.markdown("---")
-        st.sidebar.write(f"ログイン中: {user_email_display}")
-        if st.sidebar.button("ログアウト"):
-            logger.info(f"User '{user_email_display}' clicked logout.")
-            st.session_state.token = None
-            st.session_state.user_info = None
-            st.session_state.auth_error = None # エラーメッセージもクリア
-            # 関連するセッションステートもクリア (最適化結果キャッシュも含む)
-            keys_to_clear = [
-                "gemini_explanation", 
-                "solution_executed", 
-                "solver_result_cache",
-                "raw_log_on_server",
-                "app_data_initialized", # アプリデータ初期化フラグもクリアして再生成を促す
-                "gemini_api_requested", # Gemini API実行フラグ
-                "gemini_api_error",     # Gemini APIエラーメッセージ
-                "view_mode"             # 表示モードも初期化
-            ]
-            for key_to_clear in keys_to_clear:
-                if key_to_clear in st.session_state:
-                    del st.session_state[key_to_clear]
-            st.rerun()
-        logger.info("Sidebar: user info and logout button setup complete.")
+        # logger.info("Setting up sidebar: user info and logout button.") # 削除
+        # st.sidebar.markdown("---") # 削除
+        # st.sidebar.write(f"ログイン中: {user_email_display}") # 削除
+        # if st.sidebar.button("ログアウト"): ... のブロックを削除
 
         logger.info("Setting main title.")
         st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
@@ -1711,30 +1612,6 @@ def main():
             logger.warning(f"Unexpected view_mode: {st.session_state.view_mode}. Displaying fallback info.")
             st.info("サイドバーから表示するデータを選択してください。")
         logger.info("Exiting main function.")
-        # --- ここまでが、これまでのメインアプリケーションのUI表示コード ---
-
-    else:
-        # --- 未認証（クリーンなURL）の場合のログインページ表示 ---
-        logger.info("No token and not a callback. Displaying login page.")
-        st.title("講師割り当てシステムへようこそ")
-
-        # セッションにエラーメッセージがあれば表示
-        if st.session_state.auth_error:
-            st.error(st.session_state.auth_error)
-            st.session_state.auth_error = None # 一度表示したらクリア
-
-        st.write("続行するにはGoogleアカウントでログインしてください。")
-
-        oauth2.authorize_button(
-            name="Googleでログイン",
-            icon="https://www.google.com/favicon.ico",
-            redirect_uri=REDIRECT_URI,
-            scope="email profile openid",
-            key="google_login_main", # コールバック処理とは別のキー
-            extras_params={"prompt": "select_account", "access_type": "offline"}
-        )
-        # ログインボタンが表示されたら、ユーザーのアクションを待つためスクリプトを停止
-        st.stop()
 
 if __name__ == "__main__":
     main()
