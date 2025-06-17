@@ -542,7 +542,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                 "variable": var, "cost": total_weighted_cost_int,
                 "qualification_cost_raw": qualification_cost, 
                 "is_schedule_incompatible": not schedule_available, # 割り当てられるものは常に False
-                "debug_past_assignment_recency_cost": past_assignment_recency_cost, # デバッグ/結果表示用
                 "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
             }
 
@@ -769,7 +768,6 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
                     "年齢コスト(元)": lecturer.get("age", 99),
                     "頻度コスト(元)": len(lecturer.get("past_assignments", [])),
-                    "スケジュール状況": "不適合" if pa_data.get("is_schedule_incompatible") else "適合",
                     "資格コスト(元)": pa_data.get("qualification_cost_raw"),
                     "当該教室最終割当日からの日数": pa_data.get("debug_days_since_last_assignment"),
                     "講師一般ランク": lecturer.get("qualification_general_rank"),
@@ -1377,13 +1375,10 @@ else:
                     st.subheader("割り当て結果サマリー")
                     # ... (サマリー表示ロジックは変更なしのため省略) ...
                     summary_data = []
-                    schedule_compatible_count = results_df[results_df["スケジュール状況"] == "適合"].shape[0]
-                    # スケジュールは常に適合するようになったため、不適合の表示は不要になるか、常に0件と表示される
-                    # schedule_incompatible_count = results_df[results_df["スケジュール状況"] == "不適合"].shape[0]
-                    # summary_data.append(("**スケジュール**", ""))
-                    # summary_data.append(("　適合", f"{schedule_compatible_count}人"))
-                    # summary_data.append(("　不適合（講師の空きスケジュールに不適合）", f"{schedule_incompatible_count}人"))
-                    summary_data.append(("**スケジュール適合割り当て数**", f"{schedule_compatible_count}件"))
+                    # ▼▼▼ 関連ロジックを修正 ▼▼▼
+                    assignments_count = len(results_df)
+                    summary_data.append(("**総割り当て件数**", f"{assignments_count}件"))
+                    # ▲▲▲ ここまで修正 ▲▲▲
 
                     total_travel_cost = results_df["移動コスト(元)"].sum()
                     summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
