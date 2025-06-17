@@ -890,7 +890,7 @@ def main():
     logger.info("Proceeding to main UI.")
         
     # --- セッション状態の初期化 (表示モード管理用) ---
-    if "view_mode" not in st.session_state:
+    if "view_mode" not in st.session_state: # インデントを修正
         st.session_state.view_mode = "sample_data"
     if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
