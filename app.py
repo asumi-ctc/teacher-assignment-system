@@ -894,6 +894,8 @@ def main():
         st.session_state.view_mode = "sample_data"
     if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
+    if "allow_under_assignment_cb" not in st.session_state: # 追加: チェックボックスの初期値をセッションステートに設定
+        st.session_state.allow_under_assignment_cb = True
 
     # --- メイン画面上部にナビゲーションボタンを配置 ---
     logger.info("Setting up navigation buttons.")
@@ -1042,7 +1044,7 @@ def main():
         st.markdown("**1. 講師が割り当て出来ない場合を許容する**") # 新しい許容条件
         st.checkbox(
             "上記ハード制約3に対し、割り当て不足を許容する",
-            value=st.session_state.get("allow_under_assignment_cb", True),
+            value=st.session_state.allow_under_assignment_cb, # 変更: st.session_state から直接値を取得
             key="allow_under_assignment_cb",
             help="チェックを入れると、東京・名古屋・大阪の教室は最大2名（0名または1名も可）、その他の教室は最大1名（0名も可）の割り当てとなります。チェックを外すと、必ず指定された人数（東京・名古屋・大阪は2名、他は1名）を割り当てようとします（担当可能な講師がいない場合は割り当てられません）。"
         )
