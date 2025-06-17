@@ -970,7 +970,7 @@ def main():
                     st.session_state.get("weight_assignment_shortage_exp", 0.5), # 追加したスライダー
                     st.session_state.get("weight_lecturer_concentration_exp", 0.5), # 追加したスライダー
                     st.session_state.get("weight_consecutive_assignment_exp", 0.5), # 追加したスライダー、デフォルト値を0.5に変更
-                    st.session_state.get("allow_under_assignment_cb", True), # 新しい許容条件
+                    st.session_state.allow_under_assignment_cb, # 新しい許容条件 (st.session_stateから直接参照)
                     st.session_state.TODAY, # 追加
                     st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
                 ) # type: ignore
