@@ -941,7 +941,7 @@ def main():
             redirect_uri=REDIRECT_URI,
             scope="email profile openid", # openid を追加してユーザー情報を取得しやすくする
             key="google_login_main", # 他のボタンとキーが衝突しないように変更
-            extras_params={"access_type": "offline"} # "prompt": "consent" を削除
+            extras_params={"access_type": "offline", "prompt": "select_account"} # アカウント選択画面を強制表示
         )
         logger.info(f"oauth2.authorize_button call completed. Result is not None: {result is not None}")
         if result and "token" in result: # type: ignore
