@@ -889,7 +889,7 @@ def main():
     GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
     GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
     REDIRECT_URI = st.secrets.get("REDIRECT_URI")
-    ALLOWED_EMAIL = "asaumi.ctc@gmail.com" # 許可するメールアドレス
+    # ALLOWED_EMAIL = "asaumi.ctc@gmail.com" # Secretsに移行
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 
     logger.info("OIDC config loaded.")
@@ -898,6 +898,14 @@ def main():
     # REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke" # 必要に応じて
 
     logger.info("Checking OIDC client secrets.")
+    # Secretsから許可するメールアドレスのリストを読み込む
+    allowed_emails_str = st.secrets.get("ALLOWED_EMAILS")
+    if not allowed_emails_str:
+        st.error("許可されたメールアドレスがSecretsに設定されていません。(ALLOWED_EMAILS)")
+        st.stop()
+    # カンマ区切りで分割し、各メールアドレスの前後の空白を除去し、小文字に統一
+    ALLOWED_EMAILS_LIST = {email.strip().lower() for email in allowed_emails_str.split(',') if email.strip()}
+
     if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI]): # type: ignore
         st.error("Google OAuth の設定が不完全です。管理者にお問い合わせください。(.streamlit/secrets.toml を確認してください)")
         st.stop()
@@ -949,12 +957,12 @@ def main():
                         GOOGLE_CLIENT_ID # type: ignore
                     )
                     user_email = id_info.get("email")
-                    if user_email == ALLOWED_EMAIL:
+                    if user_email and user_email.lower() in ALLOWED_EMAILS_LIST: # 小文字で比較
                         st.session_state.user_info = {
                             "email": user_email,
                             "name": id_info.get("name")
                         }
-                        logger.info(f"ID token verified. User '{user_email}' authorized.")
+                        logger.info(f"ID token verified. User '{user_email}' authorized (in ALLOWED_EMAILS_LIST).")
                     else:
                         st.error(f"このアプリケーションへのアクセスは許可されていません。({user_email})")
                         st.session_state.token = None # トークンをクリアしてログイン状態を解除
