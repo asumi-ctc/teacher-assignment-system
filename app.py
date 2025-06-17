@@ -382,7 +382,9 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
 def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms_data は現在未使用だが、将来のために残す
                      travel_costs_matrix,
                      weight_past_assignment_recency, weight_qualification,
-                     weight_travel, weight_age, weight_frequency,
+                     weight_travel, weight_age, weight_frequency, # 既存の重み
+                     weight_assignment_shortage, # 追加: 割り当て不足ペナルティの重み
+                     weight_lecturer_concentration, # 追加: 講師割り当て集中ペナルティの重み
                      allow_under_assignment: bool, # 割り当て不足を許容するかのフラグ
                      today_date, default_days_no_past_assignment) -> SolverOutput: # 引数追加
     model = cp_model.CpModel()
@@ -524,14 +526,21 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     assignments_by_course = {}
     for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
         variable_group = data_group["variable"]        
-        # 講座IDでグループ化
         if course_id_group not in assignments_by_course:
             assignments_by_course[course_id_group] = []
         assignments_by_course[course_id_group].append(variable_group)
     
+    # 講師IDで割り当て変数をグループ化 (講師集中ペナルティ用)
+    assignments_by_lecturer = {lect_id: [] for lect_id in lecturers_dict}
+    for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
+        # variable_group は既に上で取得済みなので再利用はできないが、ロジックは同じ
+        assignments_by_lecturer[lecturer_id_group].append(data_group["variable"])
+
     # 特定の都道府県リスト
     TARGET_PREFECTURES_FOR_TWO_LECTURERS = ["東京都", "愛知県", "大阪府"]
     
+    shortage_penalty_terms = [] # 割り当て不足ペナルティ項を格納するリスト
+
     for course_item in courses_dict.values(): # courses_data の代わりに courses_dict.values() を使用
         course_id = course_item["id"]
         possible_assignments_for_course = assignments_by_course.get(course_id, [])
@@ -546,14 +555,58 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             if allow_under_assignment:
                 # 割り当て不足を許容する場合 (0名、1名、または target_assignment_count 名まで)
                 model.Add(sum(possible_assignments_for_course) <= target_assignment_count)
+                # --- 割り当て不足ペナルティの計算 ---
+                if weight_assignment_shortage > 0:
+                    # 不足数を表す変数 shortage_var = max(0, target_assignment_count - sum(vars))
+                    # shortage_var >= target_assignment_count - sum(vars)
+                    # shortage_var >= 0 (IntVarの定義でカバー)
+                    shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{course_id}')
+                    model.Add(shortage_var >= target_assignment_count - sum(possible_assignments_for_course))
+                    
+                    # ペナルティコストのスケールを他のコストと合わせることを検討
+                    # 他のコストは *100 されている。ペナルティのベース値もそれに合わせる。
+                    # 例: 1件不足で基本コスト50,000 (スケーリング前)、重み1.0なら目的関数値 5,000,000
+                    base_penalty_shortage_scaled = 50000 * 100 # 500万
+                    actual_penalty_for_shortage = int(weight_assignment_shortage * base_penalty_shortage_scaled)
+                    if actual_penalty_for_shortage > 0:
+                        shortage_penalty_terms.append(shortage_var * actual_penalty_for_shortage)
+                        log_to_stream(f"  + Course {course_id}: Added shortage penalty term (shortage_var * {actual_penalty_for_shortage}) for target {target_assignment_count}.")
             else:
                 # 割り当て不足を許容しない場合 (必ず target_assignment_count 名)
                 model.Add(sum(possible_assignments_for_course) == target_assignment_count)
 
     # --- 目的関数の構築 ---
     # possible_assignments_dict の値からコスト項を生成
-    objective_terms = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()]
+    objective_terms = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()] # type: ignore
 
+    # 割り当て不足ペナルティ項を目的関数に追加
+    if shortage_penalty_terms:
+        objective_terms.extend(shortage_penalty_terms)
+        log_to_stream(f"  + Added {len(shortage_penalty_terms)} shortage penalty terms to objective.")
+
+    # --- 講師の割り当て集中ペナルティ ---
+    if weight_lecturer_concentration > 0:
+        # 1回の追加割り当てに対する基本ペナルティコスト (スケーリング後)
+        # 例: 1件超過で基本コスト20,000 (スケーリング前)、重み1.0なら目的関数値 2,000,000
+        base_penalty_concentration_scaled = 20000 * 100 # 200万
+        actual_penalty_concentration = int(weight_lecturer_concentration * base_penalty_concentration_scaled)
+
+        if actual_penalty_concentration > 0:
+            for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
+                if not lecturer_vars or len(lecturer_vars) <= 1: # 割り当て候補がないか、1つ以下なら集中ペナルティ不要
+                    continue
+                
+                num_total_assignments_l = model.NewIntVar(0, len(courses_dict), f'num_total_assignments_{lecturer_id_loop}')
+                model.Add(num_total_assignments_l == sum(lecturer_vars))
+                
+                # 1回を超える割り当て数を表す変数 extra_assignments_l = max(0, num_total_assignments_l - 1)
+                extra_assignments_l = model.NewIntVar(0, len(courses_dict), f'extra_assign_{lecturer_id_loop}')
+                model.Add(extra_assignments_l >= num_total_assignments_l - 1)
+                # extra_assignments_l >= 0 はIntVarの定義でカバー
+                
+                objective_terms.append(extra_assignments_l * actual_penalty_concentration)
+                log_to_stream(f"  + Lecturer {lecturer_id_loop}: Added concentration penalty term (extra_assign * {actual_penalty_concentration}).")
+    
     if objective_terms:
         model.Minimize(sum(objective_terms))
     else:
@@ -900,7 +953,9 @@ def main():
                     st.session_state.get("weight_qualification_exp", 0.5),  # スライダーのキー名で取得
                     st.session_state.get("weight_travel_exp", 0.5),         # スライダーのキー名で取得
                     st.session_state.get("weight_age_exp", 0.5),            # スライダーのキー名で取得
-                    st.session_state.get("weight_frequency_exp", 0.5),       # スライダーのキー名で取得
+                    st.session_state.get("weight_frequency_exp", 0.5),      # スライダーのキー名で取得
+                    st.session_state.get("weight_assignment_shortage_exp", 0.5), # 追加したスライダー
+                    st.session_state.get("weight_lecturer_concentration_exp", 0.5), # 追加したスライダー
                     st.session_state.get("allow_under_assignment_cb", True), # 新しい許容条件
                     st.session_state.TODAY, # 追加
                     st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
@@ -998,9 +1053,11 @@ def main():
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
         st.markdown("**同教室への割り当て実績が無い人を優先**")
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
-        # 「講師の割り当て集中度を低くする」のスライダーは削除 (新しいソフト制約3で制御するため)
-        # st.markdown("**講師の割り当て集中度を低くする**")
-        # st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が複数の講座を担当することへのペナルティが大きくなります。値が高いほど、各講師は1つの講座に近づきます。", key="weight_lecturer_concentration_exp")
+        st.markdown("**割り当て不足を最小化**") # 新しい目的
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、各講座の目標割り当て人数に対する不足を減らそうとします。「許容条件」で割り当て不足を許容している場合に有効です。", key="weight_assignment_shortage_exp")
+        st.markdown("**講師の割り当て集中度を低くする（今回の割り当て内）**") # 新しい目的
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が今回の最適化で複数の講座を担当することへのペナルティが大きくなります。", key="weight_lecturer_concentration_exp")
+
     logger.info("Sidebar: objective expander setup complete.")
 
     # ログインユーザー情報とログアウトボタン
