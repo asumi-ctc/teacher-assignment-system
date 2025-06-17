@@ -1059,7 +1059,7 @@ def main():
                     st.session_state.get("weight_frequency_exp", 0.5),      # スライダーのキー名で取得
                     st.session_state.get("weight_assignment_shortage_exp", 0.5), # 追加したスライダー
                     st.session_state.get("weight_lecturer_concentration_exp", 0.5), # 追加したスライダー
-                    st.session_state.get("weight_consecutive_assignment_exp", 0.3), # 追加したスライダー
+                    st.session_state.get("weight_consecutive_assignment_exp", 0.5), # 追加したスライダー、デフォルト値を0.5に変更
                     st.session_state.get("allow_under_assignment_cb", True), # 新しい許容条件
                     st.session_state.TODAY, # 追加
                     st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT # 追加
@@ -1141,8 +1141,8 @@ def main():
         )
     logger.info("Sidebar: constraints expander setup complete.")
 
-    logger.info("Setting up sidebar: objective expander.")
-    with st.sidebar.expander("【目的】", expanded=False): # タイトルを元に戻す
+    logger.info("Setting up sidebar: optimization target expander.") # ログメッセージ変更
+    with st.sidebar.expander("【最適化目標】", expanded=False): # 名称変更
         st.caption(
             "各目的の相対的な重要度を重みで設定します。\n"
             "不要な目的は重みを0にしてください（目的から除外されます）。" # キャプションを修正
@@ -1162,9 +1162,9 @@ def main():
         st.markdown("**講師の割り当て集中度を低くする（今回の割り当て内）**") # 新しい目的
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が今回の最適化で複数の講座を担当することへのペナルティが大きくなります。", key="weight_lecturer_concentration_exp")
 
-        st.markdown("**連日講座への連続割り当てを優先**") 
-        st.slider("重み", 0.0, 1.0, 0.3, 0.1, format="%.1f", help="高いほど、特別資格を持つ講師が一般講座と特別講座の連日ペアをまとめて担当することを重視します（報酬が増加）。", key="weight_consecutive_assignment_exp")
-    logger.info("Sidebar: objective expander setup complete.")
+        st.markdown("**連日講座への連続割り当てを優先**")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、特別資格を持つ講師が一般講座と特別講座の連日ペアをまとめて担当することを重視します（報酬が増加）。", key="weight_consecutive_assignment_exp") # デフォルト値を0.5に変更
+    logger.info("Sidebar: optimization target expander setup complete.") # ログメッセージ変更
 
     # ログインユーザー情報とログアウトボタン
     logger.info("Setting up sidebar: user info and logout button.")
