@@ -928,6 +928,9 @@ def main():
     if 'user_info' not in st.session_state:
         st.session_state.user_info = None # 初期化
         logger.info("Session state 'user_info' initialized to None.")
+    if 'auth_error_message' not in st.session_state: # 認証エラーメッセージ用
+        st.session_state.auth_error_message = None
+        logger.info("Session state 'auth_error_message' initialized to None.")
 
     if not st.session_state.token:
         # --- 未認証の場合: ログインページ表示 ---
@@ -935,6 +938,12 @@ def main():
         st.title("講師割り当てシステムへようこそ")
         st.write("続行するにはGoogleアカウントでログインしてください。")
         logger.info("Calling oauth2.authorize_button.")
+
+        # 保存された認証エラーメッセージがあれば表示
+        if st.session_state.auth_error_message:
+            st.error(st.session_state.auth_error_message)
+            st.session_state.auth_error_message = None # 一度表示したらクリア
+
         result = oauth2.authorize_button(
             name="Googleでログイン",
             icon="https://www.google.com/favicon.ico",
@@ -965,27 +974,36 @@ def main():
                         logger.info(f"ID token verified. User '{user_email}' authorized (in ALLOWED_EMAILS_LIST).")
                         st.rerun() # 認証成功後、メインUI表示のために再実行
                     else:
-                        st.error(f"このアプリケーションへのアクセスは許可されていません。({user_email})")
+                        auth_error_msg = f"このアプリケーションへのアクセスは許可されていません。({user_email})"
+                        st.session_state.auth_error_message = auth_error_msg # エラーメッセージをセッションに保存
                         st.session_state.token = None # トークンをクリアしてログイン状態を解除
                         st.session_state.user_info = None
                         logger.warning(f"User '{user_email}' not authorized. Token cleared.")
-                        # ここで処理を中断し、エラーメッセージのみを表示させる
-                        st.stop() # アプリケーションの実行を完全に停止
+                        try:
+                            st.query_params.clear() # URLパラメータをクリア
+                            logger.info("Cleared query_params after unauthorized user attempt for rerun.")
+                        except Exception as e_qp_clear:
+                            logger.error(f"Failed to clear query_params during auth error handling: {e_qp_clear}")
+                        st.rerun() # エラーメッセージ表示のために再実行
                 else:
-                    st.error("IDトークンが取得できませんでした。")
+                    auth_error_msg = "IDトークンが取得できませんでした。"
+                    st.session_state.auth_error_message = auth_error_msg
                     st.session_state.token = None # トークンをクリア
                     st.session_state.user_info = {"email": "error@example.com", "name": "Unknown User"}
                     logger.error("Failed to get ID token from token response.")
+                    st.rerun() # エラーメッセージ表示のために再実行
             except Exception as e:
-                st.error(f"ユーザー情報の取得/設定中にエラー: {e}")
+                auth_error_msg = f"ユーザー情報の取得/設定中にエラー: {e}"
+                st.session_state.auth_error_message = auth_error_msg
                 # 認証プロセス中にエラーが発生した場合もトークンとユーザー情報をクリア
                 if 'token' in st.session_state: st.session_state.token = None
                 if 'user_info' in st.session_state: st.session_state.user_info = None
                 logger.error(f"Error during user info retrieval/setting: {e}", exc_info=True)
-            # st.rerun() # 認証失敗時はここで rerun しない方が良い場合がある。エラーメッセージ表示後にユーザー操作を待つ。
+                st.rerun() # エラーメッセージ表示のために再実行
         logger.info("Exiting unauthenticated block.")
         # 認証フローのどこかでエラーが発生した場合や未認証の場合は、ここで処理を終了
-        st.stop() # 未認証の場合はここで処理を終了し、メインUIは表示しない
+        # st.stop() は削除。st.rerun() でエラーメッセージ表示ループに入る
+        return # メインUIの描画に進まないようにする (st.rerunが呼ばれているので実質的には不要だが念のため)
 
     # --- 認証済みの場合: メインアプリケーションUI表示 ---
     # このブロックは st.session_state.token が存在する場合のみ実行されます
