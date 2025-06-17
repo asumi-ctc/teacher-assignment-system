@@ -923,89 +923,112 @@ def main():
 
     # --- 認証とメインコンテンツの表示制御 ---
     logger.info("Starting authentication check.")
+    # --- 認証とメインコンテンツの表示制御 ---
     if 'token' not in st.session_state:
         st.session_state.token = None
     if 'user_info' not in st.session_state:
         st.session_state.user_info = None
-    if 'auth_error_message' not in st.session_state: # 認証エラーメッセージ用
+    if 'auth_error_message' not in st.session_state:
         st.session_state.auth_error_message = None
 
+    # ★ ロジックの抜本的見直し
+    # Googleからのリダイレクトか（URLにcodeがあるか）どうかで処理を完全に分岐する
+    is_callback = 'code' in st.query_params
+
     if not st.session_state.token:
-        # --- 未認証の場合: ログインページ表示 ---
-        logger.info("No token in session_state. Displaying login page.")
-        st.title("講師割り当てシステムへようこそ")
-        st.write("続行するにはGoogleアカウントでログインしてください。")
-        logger.info("Calling oauth2.authorize_button.")
-
-        # 保存された認証エラーメッセージがあれば表示
-        if st.session_state.auth_error_message:
-            st.error(st.session_state.auth_error_message)
-            st.session_state.auth_error_message = None # 一度表示したらクリア
-
-        result = oauth2.authorize_button(
-            name="Googleでログイン",
-            icon="https://www.google.com/favicon.ico",
-            redirect_uri=REDIRECT_URI,
-            scope="email profile openid", # openid を追加してユーザー情報を取得しやすくする
-            key="google_login_main", # 他のボタンとキーが衝突しないように変更
-            extras_params={"access_type": "offline", "prompt": "select_account"} # アカウント選択画面を強制表示
-        )
-        logger.info(f"oauth2.authorize_button call completed. Result is not None: {result is not None}")
-        if result and "token" in result: # type: ignore
-            st.session_state.token = result.get("token")
-            logger.info("Token received from authorize_button. Verifying ID token.")
+        if is_callback:
+            # ---【ステップ1】Googleからのリダイレクトコールバック処理 ---
+            # このブロックでは、トークンを取得・検証し、URLパラメータを消去して再実行する。
+            # ログインボタンは表示しない。
+            logger.info("Processing Google callback (code in query_params).")
             try:
-                # IDトークンを取得して検証
-                id_token_str = st.session_state.token.get("id_token")
-                if id_token_str:
+                result = oauth2.authorize_button(
+                    name="Googleでログイン", # このボタンは実際には表示されない
+                    icon="https://www.google.com/favicon.ico",
+                    redirect_uri=REDIRECT_URI,
+                    scope="email profile openid",
+                    key="google_login_callback", # ボタン表示用とは別のキーを使用
+                    extras_params={"prompt": "select_account", "access_type": "offline"}
+                )
+
+                if result and "token" in result:
+                    # ★★★ パラメータを即座に消去 ★★★
+                    logger.info("Token received. Clearing query_params.")
+                    st.query_params.clear()
+
+                    st.session_state.token = result.get("token")
+                    id_token_str = st.session_state.token.get("id_token")
+
+                    if not id_token_str:
+                        logger.error("ID token not found in token response.")
+                        raise ValueError("IDトークンがレスポンスに含まれていません。")
+
+                    logger.info("Verifying ID token.")
                     id_info = id_token.verify_oauth2_token(
-                        id_token_str,
-                        google_requests.Request(),
-                        GOOGLE_CLIENT_ID # type: ignore
+                        id_token_str, google_requests.Request(), GOOGLE_CLIENT_ID # type: ignore
                     )
                     user_email = id_info.get("email")
+
                     if user_email and user_email.lower() in ALLOWED_EMAILS_LIST: # 小文字で比較
+                        # --- 認証成功 ---
+                        logger.info(f"User '{user_email}' authorized.")
                         st.session_state.user_info = {
                             "email": user_email,
                             "name": id_info.get("name")
                         }
-                        logger.info(f"ID token verified. User '{user_email}' authorized (in ALLOWED_EMAILS_LIST).")
-                        st.rerun() # 認証成功後、メインUI表示のために再実行
                     else:
-                        auth_error_msg = f"このアプリケーションへのアクセスは許可されていません。({user_email})"
-                        st.session_state.auth_error_message = auth_error_msg # エラーメッセージをセッションに保存
-                        st.session_state.token = None # トークンをクリアしてログイン状態を解除
-                        st.session_state.user_info = None
-                        logger.warning(f"User '{user_email}' not authorized. Token cleared.")
-                        try:
-                            st.query_params.clear() # URLパラメータをクリア
-                            logger.info("Cleared query_params after unauthorized user attempt for rerun.")
-                        except Exception as e_qp_clear:
-                            logger.error(f"Failed to clear query_params during auth error handling: {e_qp_clear}")
-                        st.rerun() # エラーメッセージ表示のために再実行
-                else:
-                    auth_error_msg = "IDトークンが取得できませんでした。"
-                    st.session_state.auth_error_message = auth_error_msg
-                    st.session_state.token = None # トークンをクリア
-                    st.session_state.user_info = {"email": "error@example.com", "name": "Unknown User"}
-                    logger.error("Failed to get ID token from token response.")
-                    st.rerun() # エラーメッセージ表示のために再実行
+                        # --- 認証失敗 (許可されていないユーザー) ---
+                        error_message = f"このアプリケーションへのアクセスは許可されていません。 ({user_email})"
+                        logger.warning(f"Unauthorized user attempt: {user_email}")
+                        st.session_state.auth_error_message = error_message
+                        st.session_state.token = None
+                
             except Exception as e:
-                auth_error_msg = f"ユーザー情報の取得/設定中にエラー: {e}"
-                st.session_state.auth_error_message = auth_error_msg
-                # 認証プロセス中にエラーが発生した場合もトークンとユーザー情報をクリア
-                if 'token' in st.session_state: st.session_state.token = None
-                if 'user_info' in st.session_state: st.session_state.user_info = None
-                logger.error(f"Error during user info retrieval/setting: {e}", exc_info=True)
-                st.rerun() # エラーメッセージ表示のために再実行
-        logger.info("Exiting unauthenticated block.")
-        # 認証フローのどこかでエラーが発生した場合や未認証の場合は、ここで処理を終了
-        # st.stop() は削除。st.rerun() でエラーメッセージ表示ループに入る
-        return # メインUIの描画に進まないようにする (st.rerunが呼ばれているので実質的には不要だが念のため)
+                # --- 認証失敗 (その他のエラー) ---
+                error_message = f"認証中にエラーが発生しました: {e}"
+                logger.error(f"Error during authentication callback: {e}", exc_info=True)
+                st.session_state.auth_error_message = error_message
+                st.session_state.token = None
+                # エラーが発生した場合も、パラメータを消去しておく
+                if 'code' in st.query_params: # 再確認
+                    logger.info("Clearing query_params due to exception during callback.")
+                    st.query_params.clear()
+            
+            # 処理が完了したら、必ずページを再実行してクリーンな状態で表示させる
+            logger.info("Callback processing finished. Rerunning the app.")
+            st.rerun()
+
+        else:
+            # ---【ステップ2】通常のログインページ表示 ---
+            # URLがクリーンな状態の時のみ、このブロックが実行される
+            logger.info("No token and no callback code. Displaying login page.")
+            
+            st.title("講師割り当てシステムへようこそ")
+
+            # セッションに保存されたエラーメッセージがあれば表示
+            if st.session_state.auth_error_message:
+                st.error(st.session_state.auth_error_message)
+                st.session_state.auth_error_message = None # 一度表示したらクリア
+
+            st.write("続行するにはGoogleアカウントでログインしてください。")
+            
+            oauth2.authorize_button(
+                name="Googleでログイン",
+                icon="https://www.google.com/favicon.ico",
+                redirect_uri=REDIRECT_URI,
+                scope="email profile openid",
+                key="google_login_main", # コールバック処理とは別のキー
+                extras_params={"prompt": "select_account", "access_type": "offline"}
+            )
+            # ここでは result を受け取らない。ボタンの表示のみが目的。
+            # ボタンが押されると、is_callback=True の状態でページが再読み込みされる。
+            logger.info("Login button displayed. Waiting for user action.")
+            st.stop() # ログインボタンが押されるまでここでスクリプトを停止
 
     # --- 認証済みの場合: メインアプリケーションUI表示 ---
-    # このブロックは st.session_state.token が存在する場合のみ実行されます
-    logger.info("User is authenticated. Proceeding to main UI.")
+    if st.session_state.token:
+        # このブロックは変更なし
+        logger.info("User is authenticated. Proceeding to main UI.")
 
     # st.sidebar.header("最適化設定") # より詳細な構成に変更
 
