@@ -728,13 +728,14 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     solution_status_str = "解なし"
 
     if status_code == cp_model.OPTIMAL or status_code == cp_model.FEASIBLE:
-        solution_status_str = "最適解" if status_code == cp_model.OPTIMAL else "実行可能解"
-        objective_value = solver.ObjectiveValue() / 100 # スケーリングを戻す # type: ignore
+        # solution_status_str と objective_value はこのブロック内で設定
+        solution_status_str = "最適解" if status_code == cp_model.OPTIMAL else "実行可能解" # type: ignore
+        objective_value = solver.ObjectiveValue() / 100 # スケーリングを戻す
         
         # まず、今回の割り当てで各講師が何回割り当てられたかを計算
         lecturer_assignment_counts_this_round = {}
         for pa_data_count_check in possible_assignments_dict.values():
-            if solver.Value(pa_data_count_check["variable"]) == 1:
+            if solver.Value(pa_data_count_check["variable"]) == 1: # type: ignore
                 lecturer_id_for_count = pa_data_count_check["lecturer_id"]
                 lecturer_assignment_counts_this_round[lecturer_id_for_count] = \
                     lecturer_assignment_counts_this_round.get(lecturer_id_for_count, 0) + 1
@@ -743,7 +744,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         solved_consecutive_assignments_map = {} # key: (lecturer_id, course_id), value: pair_id
         if weight_consecutive_assignment > 0 and consecutive_assignment_pair_vars_details:
             for pair_detail in consecutive_assignment_pair_vars_details:
-                if solver.Value(pair_detail["variable"]) == 1:
+                if solver.Value(pair_detail["variable"]) == 1: # type: ignore
                     lect_id = pair_detail["lecturer_id"]
                     c1_id_res = pair_detail["course1_id"]
                     c2_id_res = pair_detail["course2_id"]
@@ -753,9 +754,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     log_to_stream(f"  Confirmed consecutive assignment for L:{lect_id} on Pair:{p_id_res} (C1:{c1_id_res}, C2:{c2_id_res})")
         # possible_assignments_dict を反復処理して結果を構築
         for (lecturer_id_res, course_id_res), pa_data in possible_assignments_dict.items():
-            if solver.Value(pa_data["variable"]) == 1:
+            if solver.Value(pa_data["variable"]) == 1: # type: ignore
                 lecturer = lecturers_dict[lecturer_id_res] # 事前処理した辞書から取得
-                course = courses_dict[course_id_res]       # 事前処理した辞書から取得
+                course = courses_dict[course_id_res] # 事前処理した辞書から取得
                 results.append({
                     "講師ID": lecturer["id"],
                     "講師名": lecturer["name"],
@@ -775,55 +776,21 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     "講座タイプ": course.get("course_type"),
                     "講座ランク": course.get("rank"),
                     "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0),
-                    "連続ペア割当": "なし" # デフォルト
-                }
-                pair_assignment_id = solved_consecutive_assignments_map.get((lecturer["id"], course["id"]))
-                if pair_assignment_id:
-                    results[-1]["連続ペア割当"] = pair_assignment_id # 直前の要素に追加
-
-                results.append(assignment_details) # この行は元のままで、上の修正は不要だった。修正します。
+                    "連続ペア割当": solved_consecutive_assignments_map.get((lecturer["id"], course["id"]), "なし")
+                })
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
     else:
         solution_status_str = f"解探索失敗 (ステータス: {status_name} [{status_code}])" # Include name and code
-        
+
     return SolverOutput(
         solution_status_str=solution_status_str,
         objective_value=objective_value,
         assignments=results,
-        all_courses=courses_data,
-        all_lecturers=lecturers_data,
+        all_courses=list(courses_dict.values()), # courses_data の代わりに辞書の値を渡す
+        all_lecturers=list(lecturers_dict.values()), # lecturers_data の代わりに辞書の値を渡す
         solver_raw_status_code=status_code,
         full_application_and_solver_log=full_captured_logs # 全ログ
-    )
-
-# `results.append` の修正を元に戻し、正しい方法で `assignment_details` に追加します。
-# 上記の `results.append(assignment_details)` の前の `results[-1]["連続ペア割当"] = pair_assignment_id` は誤りでした。
-# 正しくは、`assignment_details` 辞書を構築する際に含めます。
-
-    # (solver.Solve後の結果処理部分の修正)
-    # ... (lecturer_assignment_counts_this_round の計算は同じ) ...
-    # ... (solved_consecutive_assignments_map の計算も同じ) ...
-    if status_code == cp_model.OPTIMAL or status_code == cp_model.FEASIBLE:
-        # (solution_status_str, objective_value の設定は同じ)
-        # (lecturer_assignment_counts_this_round の計算は同じ)
-        # (solved_consecutive_assignments_map の計算も同じ)
-        for (lecturer_id_res, course_id_res), pa_data in possible_assignments_dict.items():
-            if solver.Value(pa_data["variable"]) == 1:
-                lecturer = lecturers_dict[lecturer_id_res]
-                course = courses_dict[course_id_res]
-                assignment_details = { # ここで辞書を一度だけ作成
-                    "講師ID": lecturer["id"], "講師名": lecturer["name"], "講座ID": course["id"],
-                    "講座名": course["name"], "教室ID": course["classroom_id"], "スケジュール": course['schedule'],
-                    "算出コスト(x100)": pa_data["cost"], "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
-                    "年齢コスト(元)": lecturer.get("age", 99), "頻度コスト(元)": len(lecturer.get("past_assignments", [])),
-                    "スケジュール状況": "不適合" if pa_data.get("is_schedule_incompatible") else "適合", "資格コスト(元)": pa_data.get("qualification_cost_raw"),
-                    "当該教室最終割当日からの日数": pa_data.get("debug_days_since_last_assignment"), "講師一般ランク": lecturer.get("qualification_general_rank"),
-                    "講師特別ランク": lecturer.get("qualification_special_rank", "なし"), "講座タイプ": course.get("course_type"), "講座ランク": course.get("rank"),
-                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0),
-                    "連続ペア割当": solved_consecutive_assignments_map.get((lecturer["id"], course["id"]), "なし") # ここで追加
-                }
-                results.append(assignment_details)
     )
 
 # --- 3. Streamlit UI ---
