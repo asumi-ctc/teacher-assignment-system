@@ -1350,34 +1350,42 @@ shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{cours
             これにより、実行可能な解（許容される割り当てパターン）の範囲が定まります。
 
             **主な制約:**
-            - **各講座への割り当て制約:** 各講座 $c$ には、担当可能な講師候補が存在する場合、UIの「許容条件」設定に応じて、目標人数（通常1名、特定地域では2名）が割り当てられます。
+            - **各講座への割り当て制約:** 各講座 $c$ には、担当可能な講師候補が存在する場合、その講座の場所（特定地域か否か）とUIの「許容条件」設定に応じて、目標人数が割り当てられます。
+                - 講座 $c$ の目標割り当て人数を $\text{TargetCount}_c$ とします。
+                    - 東京、愛知、大阪の教室の場合: $\text{TargetCount}_c = 2$
+                    - その他の教室の場合: $\text{TargetCount}_c = 1$
                 - **割り当て不足を許容しない場合:**
-                  $$ \sum_{l \in L_c} x_{l,c} = \text{TargetCount}_c \quad (\forall c \in C \text{ s.t. } L_c \neq \emptyset) $$
-                - **割り当て不足を許容する場合:**
+                  $$ \sum_{l \in L_c} x_{l,c} = \text{TargetCount}_c \quad (\forall c \in C \text{ s.t. } L_c \neq \emptyset \text{ and not allow\_under\_assignment}) $$
+                - **割り当て不足を許容する場合 (`allow_under_assignment` が True):**
                   $$ \sum_{l \in L_c} x_{l,c} \le \text{TargetCount}_c \quad (\forall c \in C \text{ s.t. } L_c \neq \emptyset) $$
-                  割り当て不足数 $\text{shortage\_var}_c$ は以下のように定義され、目的関数でペナルティが科されます。
-                  $$ \text{shortage\_var}_c \ge \text{TargetCount}_c - \sum_{l \in L_c} x_{l,c} $$
-                  $$ \text{shortage\_var}_c \ge 0 $$
+                  この場合、割り当て不足数 $\text{shortage\_var}_c$ が定義され、目的関数でペナルティが科されます。
+                  $$ \text{shortage\_var}_c \ge \text{TargetCount}_c - \sum_{l \in L_c} x_{l,c} \quad (\text{if allow\_under\_assignment and } w_{\text{shortage}} > 0) $$
+                  $$ \text{shortage\_var}_c \ge 0 \quad (\text{IntVarの定義による}) $$
               ここで、
                 - $L_c$ は講座 $c$ を担当可能な講師の集合。
-                - $\text{TargetCount}_c$ は講座 $c$ の目標割り当て人数。
+                - $w_{\text{shortage}}$ は割り当て不足ペナルティの重み。
 
-            - **講師の割り当て集中度に関するペナルティと関連変数定義:**
+            - **講師の割り当て集中度に関するペナルティのための変数定義:**
+              UIで講師の割り当て集中度ペナルティの重み $w_{\text{concentration}}$ が0より大きい場合、以下の変数が定義されます。
               - **講師ごとの総割り当て数:**
                 $$ \text{num\_total\_assignments}_l = \sum_{c \in C} x_{l,c} \quad (\forall l \in L) $$
               - **ペナルティ対象の「追加の」割り当て数:** (総割り当て数が1回を超える分)
                 $$ \text{extra\_assignments}_l \ge \text{num\_total\_assignments}_l - 1 $$
                 $$ \text{extra\_assignments}_l \ge 0 $$
-              この $\text{extra\_assignments}_l$ に基づいて、目的関数でペナルティが加算されます。
+              この $\text{extra\_assignments}_l$ が目的関数でペナルティコストと乗算されます。
 
             - **連日ペア割り当ての関連付け制約 (ステップ3で追加):**
-              もし連日ペア割り当て変数 $y_{l,p}$ が選択された（1になった）場合、そのペアを構成する個別の講座 $c_1, c_2$ への講師 $l$ の割り当て変数 $x_{l,c_1}$ と $x_{l,c_2}$ も自動的に選択される（1になる）ようにします。
+              UIで連日割り当て報酬の重み $w_{\text{consecutive}}$ が0より大きく、かつ該当する連日講座ペアが存在する場合、以下の制約が追加されます。
+              講師 $l$ が連日講座ペア $p$（講座 $c_1$ と $c_2$ から成る）をまとめて担当することを示す変数 $y_{l,p}$ が1の場合、
+              その講師 $l$ が個別の講座 $c_1$ と $c_2$ にも割り当てられることを保証します。
               $$ y_{l,p} \le x_{l,c_1} \quad (\forall l \in L_p, \forall p=(c_1,c_2) \in P) $$
               $$ y_{l,p} \le x_{l,c_2} \quad (\forall l \in L_p, \forall p=(c_1,c_2) \in P) $$
 
             - **暗黙的な制約:**
               ソースコード上では、以下の条件を満たさない講師と講座の組み合わせは、そもそも決定変数 $x_{l,c}$ が生成される前の段階で除外されます。これは、それらの組み合わせに対する $x_{l,c}$ が実質的に 0 に固定される制約と見なせます。
                 - 講師の資格ランクが講座の要求ランクを満たしている。
+                    - 一般講座: 講師の一般資格ランク $\le$ 講座ランク、または講師が特別資格を持つ。
+                    - 特別講座: 講師が特別資格を持ち、その特別資格ランク $\le$ 講座ランク。
                 - 講師のスケジュールが講座のスケジュールに適合している。
               連日ペア割り当て変数 $y_{l,p}$ についても同様に、講師が特別資格を持たない場合や、ペアの両方の講座を担当できない場合は、変数が生成されません。
             """
@@ -1386,33 +1394,39 @@ shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{cours
         st.code(
             """
 # 各講座への割り当て制約 (UIの許容条件に応じて変動)
-for course_item in courses_dict.values():
-    # ... (possible_assignments_for_course, target_assignment_count の取得) ...
+course_id = course_item["id"]
+possible_assignments_for_course = assignments_by_course.get(course_id, [])
+if possible_assignments_for_course:
+    # ... target_assignment_count の決定ロジック (東京、愛知、大阪なら2、他は1) ...
     if allow_under_assignment:
         model.Add(sum(possible_assignments_for_course) <= target_assignment_count)
         if weight_assignment_shortage > 0:
             shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{course_id}')
             model.Add(shortage_var >= target_assignment_count - sum(possible_assignments_for_course))
-            # shortage_penalty_terms に shortage_var * penalty を追加
+            # shortage_penalty_terms リストに shortage_var * actual_penalty_for_shortage を追加
     else:
         model.Add(sum(possible_assignments_for_course) == target_assignment_count)
 
-# 講師の割り当て回数関連の制約 (講師ごとのループ内)
-for lecturer_item in lecturers_data:
-    lecturer_id = lecturer_item["id"]
-    assignments_for_lecturer_vars = assignments_by_lecturer.get(lecturer_id, []) # 修正: 事前グループ化利用
-    num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
-    model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))
-    extra_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_assign_{lecturer_id}')
-    model.Add(extra_assignments_l >= num_total_assignments_l - 1)
+# 講師の割り当て集中ペナルティのための変数定義 (講師ごとのループ内)
+if weight_lecturer_concentration > 0 and actual_penalty_concentration > 0:
+    for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
+        if not lecturer_vars or len(lecturer_vars) <= 1:
+            continue
+        num_total_assignments_l = model.NewIntVar(0, len(courses_dict), f'num_total_assignments_{lecturer_id_loop}')
+        model.Add(num_total_assignments_l == sum(lecturer_vars))
+        extra_assignments_l = model.NewIntVar(0, len(courses_dict), f'extra_assign_{lecturer_id_loop}')
+        model.Add(extra_assignments_l >= num_total_assignments_l - 1)
+        # objective_terms リストに extra_assignments_l * actual_penalty_concentration を追加
 
 # 連日ペア割り当ての関連付け制約
-for pair_detail in consecutive_assignment_pair_vars_details:
-    pair_var = pair_detail["variable"]
-    individual_var_c1 = possible_assignments_dict[(pair_detail["lecturer_id"], pair_detail["course1_id"])]["variable"]
-    individual_var_c2 = possible_assignments_dict[(pair_detail["lecturer_id"], pair_detail["course2_id"])]["variable"]
-    model.Add(pair_var <= individual_var_c1)
-    model.Add(pair_var <= individual_var_c2)
+if weight_consecutive_assignment > 0 and consecutive_day_pairs:
+    for pair_detail in consecutive_assignment_pair_vars_details: # 対象講師が見つかったペアのみ
+        pair_var = pair_detail["variable"]
+        individual_var_c1 = possible_assignments_dict[(pair_detail["lecturer_id"], pair_detail["course1_id"])]["variable"]
+        individual_var_c2 = possible_assignments_dict[(pair_detail["lecturer_id"], pair_detail["course2_id"])]["variable"]
+        model.Add(pair_var <= individual_var_c1)
+        model.Add(pair_var <= individual_var_c2)
+        # objective_terms リストに pair_var * -actual_reward_for_pair を追加 (報酬の場合)
             """, language="python"
         )
         with st.expander("コード解説", expanded=False):
@@ -1420,13 +1434,15 @@ for pair_detail in consecutive_assignment_pair_vars_details:
                 """
                 **各講座への割り当て制約:**
                 - `allow_under_assignment` が `False` の場合: `model.Add(sum(...) == target_assignment_count)` で、目標人数ちょうどの割り当てを強制します。
+                    - `target_assignment_count` は、講座の開催地（東京・愛知・大阪なら2、他は1）によって決まります。
                 - `allow_under_assignment` が `True` の場合: `model.Add(sum(...) <= target_assignment_count)` で、目標人数以下の割り当てを許容します。
                 - さらに `weight_assignment_shortage > 0` の場合、不足数を表す `shortage_var` を定義し、`shortage_var >= target_assignment_count - sum(...)` で不足数を計算します。この `shortage_var` が目的関数でペナルティコストと乗算されます。
 
-                **講師の割り当て回数関連:**
+                **講師の割り当て集中ペナルティのための変数定義:**
+                - `weight_lecturer_concentration > 0` かつ計算されたペナルティ `actual_penalty_concentration > 0` の場合に実行されます。
                 - `num_total_assignments_l = model.NewIntVar(...)`: 講師ごとの総割り当て数を格納する整数変数を定義します。
                 - `model.Add(num_total_assignments_l == sum(assignments_for_lecturer_vars))`: 総割り当て数を、その講師に関連する全ての $x_{l,c}$ 変数の合計として定義します。
-                - `extra_assignments_l`: 総割り当て数が1を超えた部分（ペナルティ対象）を計算します。この変数が目的関数でペナルティコストと乗算されます。
+                - `extra_assignments_l >= num_total_assignments_l - 1`: 総割り当て数が1を超えた部分（ペナルティ対象）を計算します。この変数が目的関数でペナルティコストと乗算されます。
 
                 **連日ペア割り当ての関連付け制約:**
                 - `model.Add(pair_var <= individual_var_c1)` と `model.Add(pair_var <= individual_var_c2)`: 連日ペア割り当て変数 `pair_var` が1の場合、対応する個別の講座割り当て変数も1になることを保証します。
@@ -1436,49 +1452,62 @@ for pair_detail in consecutive_assignment_pair_vars_details:
         st.subheader("3. 目的関数 (Objective Function)")
         st.markdown(
             r"""
-            目的関数は、最適化の目標を定義する数式です。この問題では、以下の要素の重み付き合計を最小化（または報酬の場合は最大化）することが目的です。
+            目的関数は、最適化の目標を定義する数式です。このシステムでは、以下の要素の重み付き合計を**最小化**することが目的です。
+            報酬は負のコストとして扱われます。
 
             $$
             \text{Minimize} \quad Z = \sum_{l,c} (x_{l,c} \cdot \text{Cost}_{l,c}) \\
-            \quad + \sum_{c} (\text{shortage\_var}_c \cdot \text{PenaltyShortage}_c) \\
-            \quad + \sum_{l} (\text{extra\_assignments}_l \cdot \text{PenaltyConcentration}_l) \\
-            \quad - \sum_{l,p} (y_{l,p} \cdot \text{RewardConsecutive}_{l,p})
+            \quad + \sum_{c \text{ s.t. allow\_under\_assignment and } w_{\text{shortage}}>0} (\text{shortage\_var}_c \cdot \text{PenaltyShortage}_c) \\
+            \quad + \sum_{l \text{ s.t. } w_{\text{concentration}}>0} (\text{extra\_assignments}_l \cdot \text{PenaltyConcentration}_l) \\
+            \quad - \sum_{l,p \text{ s.t. } w_{\text{consecutive}}>0} (y_{l,p} \cdot \text{RewardConsecutive}_{l,p})
             $$
 
-            ここで、$\text{Cost}_{l,c}$ は講師 $l$ が講座 $c$ に割り当てられた場合の個別のコストで、以下のように計算されます（前述の通り）。
+            ここで、
+            - $x_{l,c}$: 講師 $l$ が講座 $c$ に割り当てられるかを示す変数 (0 or 1)。
+            - $\text{Cost}_{l,c}$: 講師 $l$ が講座 $c$ に割り当てられた場合の基本コスト。これは以下の要素の重み付き合計です（コストは整数にスケーリングされます）。
+                $$
+                \text{Cost}_{l,c} = \text{int} \left( \left( w_{\text{travel}} \cdot \text{TravelCost}_{l,c} + w_{\text{age}} \cdot \text{AgeCost}_l + w_{\text{frequency}} \cdot \text{FrequencyCost}_l \\
+                \quad + w_{\text{qualification}} \cdot \text{QualificationCost}_{l,c} + w_{\text{recency}} \cdot \text{RecencyCost}_{l,c} \right) \cdot 100 \right)
+                $$
+                - $w_{\text{...}}$: UIで設定される各コスト要素の重み。
+                - $\text{TravelCost}_{l,c}$: 講師 $l$ の自宅教室から講座 $c$ の教室への移動コスト。
+                - $\text{AgeCost}_l$: 講師 $l$ の年齢。
+                - $\text{FrequencyCost}_l$: 講師 $l$ の過去の総割り当て回数。
+                - $\text{QualificationCost}_{l,c}$: 講師 $l$ の資格ランクに基づくコスト（講座タイプとランクによる）。
+                - $\text{RecencyCost}_{l,c}$: 講師 $l$ が講座 $c$ と同じ教室に最後に割り当てられてからの経過日数に基づくコスト（日数が少ないほど高コスト）。
+            - $\text{shortage\_var}_c$: 講座 $c$ の割り当て不足数。
+            - $\text{PenaltyShortage}_c$: 講座 $c$ の割り当て不足1件あたりのペナルティ（$w_{\text{shortage}}$ と基本ペナルティ値から計算）。
+            - $\text{extra\_assignments}_l$: 講師 $l$ のペナルティ対象となる追加割り当て数。
+            - $\text{PenaltyConcentration}_l$: 講師 $l$ の追加割り当て1回あたりのペナルティ（$w_{\text{concentration}}$ と基本ペナルティ値から計算）。
+            - $y_{l,p}$: 講師 $l$ が連日ペア $p$ をまとめて担当するかを示す変数 (0 or 1)。
+            - $\text{RewardConsecutive}_{l,p}$: 講師 $l$ が連日ペア $p$ を担当した場合の報酬（$w_{\text{consecutive}}$ と基本報酬値から計算）。目的関数上は負のコストとして加算。
             $$
-            \text{Cost}_{l,c} = w_{\text{travel}} \cdot \text{TravelCost}_{l,c} + w_{\text{age}} \cdot \text{AgeCost}_l + \dots
-            $$
-            (各コスト要素 $w_{\text{...}} \cdot \text{...Cost}$ の詳細は前述の通り)
-
-            また、
-            - $\text{PenaltyShortage}_c$: 講座 $c$ の割り当て不足1件あたりのペナルティ。
-            - $\text{PenaltyConcentration}_l$: 講師 $l$ の追加割り当て1回あたりのペナルティ。
-            - $\text{RewardConsecutive}_{l,p}$: 講師 $l$ が連日ペア $p$ を担当した場合の報酬（目的関数上は負のコスト）。
             """
         )
-        st.markdown("**対応するPythonコード (抜粋):**")
+        st.markdown("**対応するPythonコード (目的関数の構築部分抜粋):**")
         st.code(
             """
-# 各割り当て候補のコスト計算 (total_weighted_cost_int)
-# total_weighted_cost_float = (weight_travel * travel_cost + ...) + schedule_violation_penalty
-# total_weighted_cost_int = int(total_weighted_cost_float * 100) # 整数にスケーリング
-# possible_assignments.append({..., "cost": total_weighted_cost_int, ...})
-
-# 目的関数の設定
+# 1. 基本コスト項 (各割り当て候補 x_{l,c} * Cost_{l,c})
 objective_terms = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()]
 
-# 割り当て不足ペナルティ項を追加
-if shortage_penalty_terms: # shortage_penalty_terms は事前に shortage_var * penalty でリスト化
+# 2. 割り当て不足ペナルティ項 (shortage_var_c * PenaltyShortage_c)
+if shortage_penalty_terms: # shortage_penalty_terms は事前に (shortage_var * actual_penalty_for_shortage) でリスト化されている
     objective_terms.extend(shortage_penalty_terms)
 
-# 講師の割り当て集中ペナルティ項を追加
-# (extra_assignments_l * actual_penalty_concentration を objective_terms に追加)
+# 3. 講師の割り当て集中ペナルティ項 (extra_assignments_l * PenaltyConcentration_l)
+if weight_lecturer_concentration > 0 and actual_penalty_concentration > 0:
+    for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
+        # ... (num_total_assignments_l, extra_assignments_l の定義) ...
+        if extra_assignments_l: # extra_assignments_l 変数が実際に作成された場合
+            objective_terms.append(extra_assignments_l * actual_penalty_concentration)
 
-# 連日割り当ての報酬項を追加 (負のコストとして)
-# (pair_var * -actual_reward_for_pair を objective_terms に追加)
-
-
+# 4. 連日割り当ての報酬項 (y_{l,p} * -RewardConsecutive_{l,p})
+if weight_consecutive_assignment > 0 and consecutive_day_pairs:
+    for pair_detail in consecutive_assignment_pair_vars_details:
+        pair_var = pair_detail["variable"]
+        # ... actual_reward_for_pair の計算 ...
+        if actual_reward_for_pair > 0:
+            objective_terms.append(pair_var * -actual_reward_for_pair)
 
 if objective_terms:
     model.Minimize(sum(objective_terms))
@@ -1490,12 +1519,13 @@ else:
             st.markdown(
                 r"""
                 - **各割り当て候補のコスト計算**:
-                    - `total_weighted_cost_int`: 各コスト要素（移動、年齢、頻度、資格、過去割り当ての近さ）にUIで設定された重みを掛け、合計し、整数にスケーリングした値。
+                    - `possible_assignments_dict` の各エントリの `"cost"` キーには、上記数式で示された $\text{Cost}_{l,c}$ が事前に計算・格納されています。
                 - **目的関数の設定**:
-                    - `objective_terms = [...]`: まず、各割り当て候補 $x_{l,c}$ が選択された場合のコスト ($x_{l,c} \cdot \text{Cost}_{l,c}$) をリストに追加します。
-                    - `objective_terms.extend(shortage_penalty_terms)`: 割り当て不足ペナルティ（$\text{shortage\_var}_c \cdot \text{PenaltyShortage}_c$）をリストに追加します。
-                    - `objective_terms.append(extra_assignments_l * actual_penalty_concentration)`: 講師の割り当て集中ペナルティ（$\text{extra\_assignments}_l \cdot \text{PenaltyConcentration}_l$）をリストに追加します。
-                    - `objective_terms.append(pair_var * -actual_reward_for_pair)`: 連日ペア割り当ての報酬（$y_{l,p} \cdot (-\text{RewardConsecutive}_{l,p})$）をリストに追加します。報酬は最小化問題においては負のコストとして扱われます。
+                    - `objective_terms` リストに、上記の目的関数の各項（基本コスト、割り当て不足ペナルティ、講師集中ペナルティ、連日割り当て報酬（負のコスト））を順次追加していきます。
+                        - 基本コスト項: `data["variable"] * data["cost"]`
+                        - 割り当て不足ペナルティ項: `shortage_var * actual_penalty_for_shortage` (事前に `shortage_penalty_terms` リストに格納)
+                        - 講師集中ペナルティ項: `extra_assignments_l * actual_penalty_concentration`
+                        - 連日割り当て報酬項: `pair_var * -actual_reward_for_pair`
                     - `model.Minimize(sum(objective_terms))`: 全てのコスト項、ペナルティ項、報酬項（負のコスト）の合計を最小化するようにソルバーに指示します。
                 """
             )
