@@ -541,8 +541,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                 "lecturer_id": lecturer_id, "course_id": course_id,
                 "variable": var, "cost": total_weighted_cost_int,
                 "qualification_cost_raw": qualification_cost, 
-                "is_schedule_incompatible": not schedule_available, # 割り当てられるものは常に False
-                "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
+                "debug_days_since_last_assignment": days_since_last_assignment_to_classroom # is_schedule_incompatible は不要なので削除、キー名を修正
             }
 
     log_to_stream(f"Total potential assignments after filtering: {potential_assignment_count}")
@@ -774,8 +773,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
                     "講座タイプ": course.get("course_type"),
                     "講座ランク": course.get("rank"),
-                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0),
-                    "連続ペア割当": solved_consecutive_assignments_map.get((lecturer["id"], course["id"]), "なし")
+                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0), # 元の計算ロジックを復元
+                    "連続ペア割当": solved_consecutive_assignments_map.get((lecturer["id"], course["id"]), "なし") # 元の計算ロジックを復元
                 })
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
@@ -1363,7 +1362,7 @@ else:
                 if solver_result['objective_value'] is not None:
                     st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
 
-                if solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                if solver_result.get('assignments') and solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]: # assignments の存在確認を追加
                     if solver_result['assignments']:
                         assigned_course_ids_for_message = {res["講座ID"] for res in solver_result['assignments']}
                         unassigned_courses_for_message = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids_for_message]
@@ -1371,7 +1370,7 @@ else:
                             st.success("全ての講座が割り当てられました。")
 
                 if solver_result['assignments']:
-                    results_df = pd.DataFrame(solver_result['assignments'])
+                    results_df = pd.DataFrame(solver_result['assignments']) # この位置は問題なし
                     st.subheader("割り当て結果サマリー")
                     # ... (サマリー表示ロジックは変更なしのため省略) ...
                     summary_data = []
@@ -1440,7 +1439,7 @@ else:
                     st.markdown(markdown_table)
                     st.markdown("---")
 
-                if solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                if solver_result.get('assignments') and solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]: # assignments の存在確認を追加
                     if solver_result['assignments']:
                         results_df_display = pd.DataFrame(solver_result['assignments'])
                         st.subheader("割り当て結果")
