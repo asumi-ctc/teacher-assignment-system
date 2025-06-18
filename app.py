@@ -386,9 +386,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                      weight_travel, weight_age, weight_frequency, # 既存の重み
                      weight_assignment_shortage, # 追加: 割り当て不足ペナルティの重み
                      weight_lecturer_concentration, # 追加: 講師割り当て集中ペナルティの重み
-                     weight_consecutive_assignment, # 追加: 連日割り当て報酬の重み
-                     allow_under_assignment: bool, # 割り当て不足を許容するかのフラグ
-                     today_date, default_days_no_past_assignment) -> SolverOutput: # 引数追加
+                     weight_consecutive_assignment, # 追加: 連日割り当て報酬の重み (引数変更あり)
+                     allow_under_assignment: bool, # 割り当て不足を許容するかのフラグ (引数変更あり)
+                     today_date) -> SolverOutput: # default_days_no_past_assignment を削除
     model = cp_model.CpModel()
 
     full_log_stream = io.StringIO()
@@ -444,12 +444,15 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
 
     # --- Main logic for model building and solving ---
-    # possible_assignments をリストから辞書に変更
-    # キー: (lecturer_id, course_id) タプル
-    # 値: {"variable": var, "cost": cost, ...} の辞書
-    possible_assignments_dict = {}
+    # possible_assignments_temp_data: 生のコストと変数などを一時的に格納
+    possible_assignments_temp_data = {}
     potential_assignment_count = 0
     log_to_stream(f"Initial lecturers: {len(lecturers_data)}, Initial courses: {len(courses_data)}")
+
+    # 実績なし優先コストの逆数モデル用定数
+    RECENCY_COST_CONSTANT = 100000.0
+
+
 
     # lecturers_data と courses_data の代わりに、事前に作成した辞書の値を反復処理
     for lecturer_id_loop, lecturer in lecturers_dict.items(): # lecturers_data の代わりに lecturers_dict.values() を使用
@@ -495,14 +498,14 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
             
             travel_cost = travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999)
-            age_cost = lecturer.get("age", 99) # 実年齢をコストとして使用。未設定の場合は大きな値。
+            age_cost = float(lecturer.get("age", 99)) # 実年齢をコストとして使用。未設定の場合は大きな値。
             # 実際の過去の総割り当て回数を頻度コストとする (少ないほど良い)
-            frequency_cost = len(lecturer.get("past_assignments", []))
-            qualification_cost = qualification_cost_for_this_assignment # 上で計算した、この割り当てにおける資格コスト
+            frequency_cost = float(len(lecturer.get("past_assignments", [])))
+            qualification_cost = float(qualification_cost_for_this_assignment) # 上で計算した、この割り当てにおける資格コスト
 
             # 過去割り当ての近さによるコスト計算
-            past_assignment_recency_cost = 0
-            days_since_last_assignment_to_classroom = default_days_no_past_assignment # 引数から取得
+            past_assignment_recency_cost = 0.0 # 実績なしの場合はコスト0
+            days_since_last_assignment_to_classroom = -1 # 実績なしを示す値 (-1 や None など)
 
             if lecturer.get("past_assignments"):
                 relevant_past_assignments_to_this_classroom = [
@@ -514,40 +517,41 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     latest_assignment_date_str = relevant_past_assignments_to_this_classroom[0]["date"]
                     try:
                         latest_assignment_date = datetime.datetime.strptime(latest_assignment_date_str, "%Y-%m-%d").date() # type: ignore
-                        days_since_last_assignment_to_classroom = (today_date - latest_assignment_date).days # 引数から取得
-                        
-                        # コスト計算: 経過日数が少ないほど高いコスト
-                        # (DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT - 経過日数)
-                        # 経過日数が DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT の場合、コストは0
-                        raw_recency_cost = default_days_no_past_assignment - days_since_last_assignment_to_classroom
-                        past_assignment_recency_cost = raw_recency_cost
+                        days_since_last_assignment_to_classroom = (today_date - latest_assignment_date).days
+                        # 逆数モデル: 定数 / (経過日数 + 1)
+                        # 経過日数が0 (昨日) の場合、コストは RECENCY_COST_CONSTANT / 1
+                        # 経過日数が大きいほどコストは小さくなる
+                        if days_since_last_assignment_to_classroom >= 0: # 念のため確認
+                            past_assignment_recency_cost = RECENCY_COST_CONSTANT / (days_since_last_assignment_to_classroom + 1.0)
+                        else: # 通常ありえないが、未来の日付など
+                            past_assignment_recency_cost = 0.0
+                            days_since_last_assignment_to_classroom = -2 # パースは成功したが日付がおかしい場合
                     except ValueError:
                         log_to_stream(f"    Warning: Could not parse date '{latest_assignment_date_str}' for {lecturer_id} and classroom {course['classroom_id']}")
-                        days_since_last_assignment_to_classroom = default_days_no_past_assignment # パース失敗時
-                        past_assignment_recency_cost = 0 # パース失敗時は近接コスト0
+                        past_assignment_recency_cost = 0.0 # パース失敗時はコスト0
+                        days_since_last_assignment_to_classroom = -3 # パース失敗を示す
+            else: # 過去の割り当て履歴自体がない場合
+                past_assignment_recency_cost = 0.0
+                days_since_last_assignment_to_classroom = -1 # 実績なし
 
-            # total_weighted_cost_float の計算をここに移動 (if lecturer.get("past_assignments") ブロックの外)
-            total_weighted_cost_float = (weight_travel * travel_cost +
-                                         weight_age * age_cost +
-                                         weight_frequency * frequency_cost +
-                                         weight_qualification * qualification_cost +
-                                         weight_past_assignment_recency * past_assignment_recency_cost)
-            total_weighted_cost_int = int(total_weighted_cost_float * 100) # コストを整数にスケーリング
-            log_to_stream(f"    Cost for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, recency_cost_raw={past_assignment_recency_cost} (days_since_last_on_this_classroom={days_since_last_assignment_to_classroom}), total_weighted_int={total_weighted_cost_int}")
-            
-            # 辞書に格納
+            log_to_stream(f"    Raw costs for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, recency={past_assignment_recency_cost:.2f} (days_since_last={days_since_last_assignment_to_classroom})")
+
+            # 一時辞書に生のコストと変数を格納
             assignment_key = (lecturer_id, course_id)
-            possible_assignments_dict[assignment_key] = {
+            possible_assignments_temp_data[assignment_key] = {
                 "lecturer_id": lecturer_id, "course_id": course_id,
-                "variable": var, "cost": total_weighted_cost_int,
-                "qualification_cost_raw": qualification_cost, 
-                "debug_days_since_last_assignment": days_since_last_assignment_to_classroom # is_schedule_incompatible は不要なので削除、キー名を修正
+                "variable": var,
+                "raw_costs": {
+                    "travel": travel_cost, "age": age_cost, "frequency": frequency_cost,
+                    "qualification": qualification_cost, "recency": past_assignment_recency_cost
+                },
+                "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
             }
 
     log_to_stream(f"Total potential assignments after filtering: {potential_assignment_count}")
-    log_to_stream(f"Number of entries in possible_assignments_dict: {len(possible_assignments_dict)}")
+    log_to_stream(f"Number of entries in possible_assignments_temp_data: {len(possible_assignments_temp_data)}")
 
-    if not possible_assignments_dict:
+    if not possible_assignments_temp_data:
         log_to_stream("No possible assignments found after filtering. Optimization will likely result in no assignments.")
         all_captured_logs = full_log_stream.getvalue()
         return SolverOutput(
@@ -559,6 +563,42 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             solver_raw_status_code=cp_model.UNKNOWN, 
             full_application_and_solver_log=all_captured_logs
         )
+
+    # --- 動的正規化係数の計算 ---
+    def get_norm_factor(cost_list, name):
+        if not cost_list: return 1.0
+        avg = np.mean(cost_list)
+        factor = avg if avg > 1e-9 else 1.0 # 0除算や非常に小さい値での除算を避ける
+        log_to_stream(f"  Normalization factor for {name}: {factor:.4f} (avg: {avg:.4f}, count: {len(cost_list)})")
+        return factor
+
+    norm_factor_travel = get_norm_factor([d["raw_costs"]["travel"] for d in possible_assignments_temp_data.values() if "travel" in d["raw_costs"]], "travel")
+    norm_factor_age = get_norm_factor([d["raw_costs"]["age"] for d in possible_assignments_temp_data.values() if "age" in d["raw_costs"]], "age")
+    norm_factor_frequency = get_norm_factor([d["raw_costs"]["frequency"] for d in possible_assignments_temp_data.values() if "frequency" in d["raw_costs"]], "frequency")
+    norm_factor_qualification = get_norm_factor([d["raw_costs"]["qualification"] for d in possible_assignments_temp_data.values() if "qualification" in d["raw_costs"]], "qualification")
+    norm_factor_recency = get_norm_factor([d["raw_costs"]["recency"] for d in possible_assignments_temp_data.values() if "recency" in d["raw_costs"]], "recency")
+
+    # --- 最終的なコスト計算と possible_assignments_dict の構築 ---
+    possible_assignments_dict = {}
+    for key, temp_data in possible_assignments_temp_data.items():
+        raw = temp_data["raw_costs"]
+        
+        norm_travel = raw["travel"] / norm_factor_travel
+        norm_age = raw["age"] / norm_factor_age
+        norm_frequency = raw["frequency"] / norm_factor_frequency
+        norm_qualification = raw["qualification"] / norm_factor_qualification
+        norm_recency = raw["recency"] / norm_factor_recency
+
+        total_weighted_cost_float = (
+            weight_travel * norm_travel +
+            weight_age * norm_age +
+            weight_frequency * norm_frequency +
+            weight_qualification * norm_qualification +
+            weight_past_assignment_recency * norm_recency
+        )
+        total_weighted_cost_int = int(total_weighted_cost_float * 100) # スケーリング
+        log_to_stream(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} (norm_travel={norm_travel:.2f}, norm_age={norm_age:.2f}, norm_freq={norm_frequency:.2f}, norm_qual={norm_qualification:.2f}, norm_recency={norm_recency:.2f})")
+        possible_assignments_dict[key] = {**temp_data, "cost": total_weighted_cost_int}
 
     # --- 事前に割り当て変数をグループ化 ---
     assignments_by_course = {}
@@ -764,16 +804,16 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     "教室ID": course["classroom_id"],
                     "スケジュール": course['schedule'],
                     "算出コスト(x100)": pa_data["cost"],
-                    "移動コスト(元)": travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999),
-                    "年齢コスト(元)": lecturer.get("age", 99),
-                    "頻度コスト(元)": len(lecturer.get("past_assignments", [])),
-                    "資格コスト(元)": pa_data.get("qualification_cost_raw"),
-                    "当該教室最終割当日からの日数": pa_data.get("debug_days_since_last_assignment"),
+                    "移動コスト(元)": pa_data["raw_costs"]["travel"],
+                    "年齢コスト(元)": pa_data["raw_costs"]["age"],
+                    "頻度コスト(元)": pa_data["raw_costs"]["frequency"],
+                    "資格コスト(元)": pa_data["raw_costs"]["qualification"],
+                    "当該教室最終割当日からの日数": pa_data["debug_days_since_last_assignment"], # これはそのまま
                     "講師一般ランク": lecturer.get("qualification_general_rank"),
                     "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
                     "講座タイプ": course.get("course_type"),
                     "講座ランク": course.get("rank"),
-                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0), # 元の計算ロジックを復元
+                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0),
                     "連続ペア割当": solved_consecutive_assignments_map.get((lecturer["id"], course["id"]), "なし") # 元の計算ロジックを復元
                 })
     elif status_code == cp_model.INFEASIBLE:
@@ -799,9 +839,7 @@ def initialize_app_data():
     if "app_data_initialized" not in st.session_state:
         logger.info("'app_data_initialized' not in session_state. Starting data generation.")
         st.session_state.TODAY = datetime.date.today()
-        st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 100000
-        logger.info("TODAY and DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT set.")
-
+        logger.info("TODAY set.")
         # 割り当て対象月の設定 (現在の4ヶ月後)
         assignment_target_month_start_val = (st.session_state.TODAY + relativedelta(months=4)).replace(day=1)
         st.session_state.ASSIGNMENT_TARGET_MONTH_START = assignment_target_month_start_val
@@ -902,8 +940,7 @@ def main():
                     st.session_state.get("weight_lecturer_concentration_exp", 0.5),
                     st.session_state.get("weight_consecutive_assignment_exp", 0.5),
                     st.session_state.allow_under_assignment_cb,
-                    st.session_state.TODAY,
-                    st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT
+                    st.session_state.TODAY
                 )
             logger.info("solve_assignment completed.")
 
@@ -1428,9 +1465,14 @@ else:
                         for num_assignments, num_lecturers in counts_of_lecturers_by_assignment_num.items():
                             if num_assignments >= 1:
                                 summary_data.append((f"　{num_assignments}回 担当した講師", f"{num_lecturers}人"))
-                    past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] == st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT].shape[0]
+                    
+                    # 「当該教室最終割当日からの日数」が実績なしを示す値 (-1, -3 など) の件数を集計
+                    # -1: 過去実績なし, -2: 日付パースは成功したが未来など異常, -3: 日付パース失敗
+                    # これらは実績なし優先コスト計算でコスト0になるケース
+                    past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] < 0].shape[0]
                     past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
-                    summary_data.append(("**同教室への過去の割り当て**", ""))
+
+                    summary_data.append(("**同教室への過去の割り当て**", "(実績なし優先コスト計算に基づく)"))
                     summary_data.append(("　新規", f"{past_assignment_new_count}人"))
                     summary_data.append(("　割当て実績あり", f"{past_assignment_existing_count}人"))
                     markdown_table = "| 項目 | 値 |\n| :---- | :---- |\n"
