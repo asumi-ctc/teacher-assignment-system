@@ -88,10 +88,10 @@ def filter_log_for_gemini(log_content: str) -> str:
     else:
         gemini_log_lines_final.extend(app_detailed_lines_collected)
 
-    MAX_SOLVER_LOG_FIRST_N_LINES = 200 # ソルバーログの先頭行数を増やす (例: 30 -> 200)
-    MAX_SOLVER_LOG_LAST_N_LINES = 200  # ソルバーログの末尾行数を増やす (例: 30 -> 200)
+    MAX_SOLVER_LOG_FIRST_N_LINES = 100 # ソルバーログの先頭行数を減らす (例: 200 -> 100)
+    MAX_SOLVER_LOG_LAST_N_LINES = 100  # ソルバーログの末尾行数を減らす (例: 200 -> 100)
     MAX_SOLVER_LOG_MIDDLE_N_LINES = 10 # ソルバーログの中間から取得する行数
-
+    
     if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_MIDDLE_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
         truncated_solver_log = solver_log_block[:MAX_SOLVER_LOG_FIRST_N_LINES]
         middle_start_index_solver = len(solver_log_block) // 2 - MAX_SOLVER_LOG_MIDDLE_N_LINES // 2
