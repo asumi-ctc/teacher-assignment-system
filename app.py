@@ -74,23 +74,23 @@ def filter_log_for_gemini(log_content: str) -> str:
     # Assume the full logic for app_detailed_lines_collected and solver_log_block truncation is present.
     MAX_APP_DETAIL_FIRST_N_LINES = 50 # 詳細アプリログの先頭行数を増やす (例: 3 -> 50)
     MAX_APP_DETAIL_LAST_N_LINES = 50  # 詳細アプリログの末尾行数を増やす (例: 3 -> 50)
-    MAX_APP_DETAIL_MIDDLE_N_LINES = 10 # 詳細アプリログの中間から取得する行数
+    MAX_APP_DETAIL_MIDDLE_N_LINES = 5 # 詳細アプリログの中間から取得する行数を削減 (例: 10 -> 5)
 
     if len(app_detailed_lines_collected) > (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_MIDDLE_N_LINES + MAX_APP_DETAIL_LAST_N_LINES):
         gemini_log_lines_final.extend(app_detailed_lines_collected[:MAX_APP_DETAIL_FIRST_N_LINES])
         middle_start_index = len(app_detailed_lines_collected) // 2 - MAX_APP_DETAIL_MIDDLE_N_LINES // 2
         middle_end_index = middle_start_index + MAX_APP_DETAIL_MIDDLE_N_LINES
-        gemini_log_lines_final.append(f"\n[... 詳細なアプリケーションログ（中間部分より抜粋） ...]\n")
+        gemini_log_lines_final.append(f"\n[... {len(app_detailed_lines_collected[middle_start_index:middle_end_index])}件の詳細なアプリケーションログ（中間部分より抜粋） ...]\n")
         gemini_log_lines_final.extend(app_detailed_lines_collected[middle_start_index:middle_end_index])
         omitted_count = len(app_detailed_lines_collected) - (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_MIDDLE_N_LINES + MAX_APP_DETAIL_LAST_N_LINES)
         gemini_log_lines_final.append(f"\n[... 他 {omitted_count} 件の詳細なアプリケーションログは簡潔さのため省略 ...]\n")
         gemini_log_lines_final.extend(app_detailed_lines_collected[-MAX_APP_DETAIL_LAST_N_LINES:])
     else:
         gemini_log_lines_final.extend(app_detailed_lines_collected)
-
-    MAX_SOLVER_LOG_FIRST_N_LINES = 100 # ソルバーログの先頭行数を減らす (例: 200 -> 100)
-    MAX_SOLVER_LOG_LAST_N_LINES = 100  # ソルバーログの末尾行数を減らす (例: 200 -> 100)
-    MAX_SOLVER_LOG_MIDDLE_N_LINES = 10 # ソルバーログの中間から取得する行数
+    
+    MAX_SOLVER_LOG_FIRST_N_LINES = 200 # ソルバーログの先頭行数を元に戻す
+    MAX_SOLVER_LOG_LAST_N_LINES = 200  # ソルバーログの末尾行数を元に戻す
+    MAX_SOLVER_LOG_MIDDLE_N_LINES = 5 # ソルバーログの中間から取得する行数を削減 (例: 10 -> 5)
     
     if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_MIDDLE_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
         truncated_solver_log = solver_log_block[:MAX_SOLVER_LOG_FIRST_N_LINES]
