@@ -719,12 +719,12 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         # as 'assignment_costs' would initialize 'objective_terms'.
         # However, if it is reached, minimizing 0 is valid, and the solver should still run.
         log_to_stream("Warning: Objective terms list was empty. Minimizing 0.")
-        model.Minimize(0) # 目的項がない場合は0を最小化 (エラー回避)
+        model.Minimize(0) 
     solver = cp_model.CpSolver()
-    # solver.parameters.log_search_progress = True # ソルバーのログ出力を一時的に停止
+    solver.parameters.log_search_progress = True # ソルバーのログ出力を有効化
     # --- ソルバーの並列処理有効化 (一旦コメントアウトして安定性を確認) ---
     # num_workers = os.cpu_count()
-    # if num_workers: # os.cpu_count() が None や 0 を返す可能性を考慮
+    # if num_workers: 
     #     solver.parameters.num_search_workers = num_workers
     #     log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
 
@@ -1497,18 +1497,7 @@ else:
                         mime="text/plain",
                         key="download_raw_log_button"
                     )
-                    # Gemini送信用にフィルタリングされたログのダウンロードボタン
-                    if st.session_state.raw_log_on_server: # 生ログがある場合のみ表示
-                        filtered_log_for_download = filter_log_for_gemini(st.session_state.raw_log_on_server)
-                        st.download_button(
-                            label="Gemini送信用フィルタ済ログのダウンロード",
-                            data=filtered_log_for_download,
-                            file_name="filtered_log_for_gemini.txt",
-                            mime="text/plain",
-                            key="download_filtered_log_button",
-                            help="Gemini APIに送信される形式にフィルタリング・圧縮されたログです。"
-                        )
-                elif st.session_state.get("solution_executed"):
+                elif st.session_state.get("solution_executed"): # solution_executed は True だが、GEMINI_API_KEY がないか、raw_log_on_server がない場合
                     if not GEMINI_API_KEY:
                         st.info("Gemini APIキーが設定されていません。ログ関連機能を利用するには設定が必要です。")
                         logger.info("Gemini API key not set. Log features disabled.")
@@ -1522,6 +1511,7 @@ else:
                     with st.spinner("Gemini API でログを解説中..."):
                         full_log_to_filter = st.session_state.raw_log_on_server
                         filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
+                        st.session_state.last_filtered_log_for_gemini = filtered_log_for_gemini # フィルタリング済みログを保存
                         solver_cache = st.session_state.solver_result_cache
                         solver_status = solver_cache["solution_status_str"]
                         objective_value = solver_cache["objective_value"]
@@ -1550,6 +1540,18 @@ else:
                     logger.info("Displaying Gemini API explanation.")
                     with st.expander("Gemini API によるログ解説", expanded=True):
                         st.markdown(st.session_state.gemini_explanation)
+                
+                # Gemini API送信後にフィルタリング済みログをダウンロードするボタン (解説表示後、またはエラー表示後)
+                if "last_filtered_log_for_gemini" in st.session_state and st.session_state.last_filtered_log_for_gemini:
+                    st.download_button(
+                        label="Gemini送信用フィルタ済ログのダウンロード",
+                        data=st.session_state.last_filtered_log_for_gemini,
+                        file_name="filtered_log_for_gemini.txt",
+                        mime="text/plain",
+                        key="download_filtered_log_button_after_api",
+                        help="Gemini APIに送信された形式にフィルタリング・圧縮されたログです。"
+                    )
+
             logger.info("Optimization result display complete.")
 
     else: # view_mode が予期せぬ値の場合 (フォールバック)
