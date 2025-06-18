@@ -1497,6 +1497,17 @@ else:
                         mime="text/plain",
                         key="download_raw_log_button"
                     )
+                    # Gemini送信用にフィルタリングされたログのダウンロードボタン
+                    if st.session_state.raw_log_on_server: # 生ログがある場合のみ表示
+                        filtered_log_for_download = filter_log_for_gemini(st.session_state.raw_log_on_server)
+                        st.download_button(
+                            label="Gemini送信用フィルタ済ログのダウンロード",
+                            data=filtered_log_for_download,
+                            file_name="filtered_log_for_gemini.txt",
+                            mime="text/plain",
+                            key="download_filtered_log_button",
+                            help="Gemini APIに送信される形式にフィルタリング・圧縮されたログです。"
+                        )
                 elif st.session_state.get("solution_executed"):
                     if not GEMINI_API_KEY:
                         st.info("Gemini APIキーが設定されていません。ログ関連機能を利用するには設定が必要です。")
