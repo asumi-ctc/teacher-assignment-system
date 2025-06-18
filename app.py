@@ -24,7 +24,7 @@ from typing import TypedDict, List, Optional, Any, Tuple # 他のimport文と合
 # --- Gemini API送信用ログのフィルタリング関数 (グローバルスコープに移動) ---
 def filter_log_for_gemini(log_content: str) -> str:
     lines = log_content.splitlines()
-    gemini_log_lines_final = []
+    gemini_log_lines_final = [] # このリストには、処理されたソルバーログのみが格納されるようになります。
     
     solver_log_block = []
     app_summary_lines = [] # 詳細パターンに一致しない、かつソルバーブロック外のアプリログ
@@ -64,41 +64,18 @@ def filter_log_for_gemini(log_content: str) -> str:
             else:
                 app_summary_lines.append(line)
     
-    gemini_log_lines_final.extend(app_summary_lines)
+    # アプリケーションログ（サマリーおよび詳細）は gemini_log_lines_final に追加されなくなります。
+    # app_summary_lines および app_detailed_lines_collected を処理して
+    # gemini_log_lines_final に追加する以下のセクションは削除されます。
 
-    # (フィルタリングと省略ロジックは変更なし - ここでは省略)
-    # ... (元の filter_log_for_gemini の残りのロジック) ...
-    # この部分は元の関数のままなので、diffでは省略されていますが、実際にはここに元のロジック全体が入ります。
-    # 簡単のため、ここでは主要な構造のみを示し、詳細な省略ロジックは元の関数を参照してください。
-    # For brevity, the detailed line omission logic from the original filter_log_for_gemini is not repeated here.
-    # Assume the full logic for app_detailed_lines_collected and solver_log_block truncation is present.
-    MAX_APP_DETAIL_FIRST_N_LINES = 50 # 詳細アプリログの先頭行数を増やす (例: 3 -> 50)
-    MAX_APP_DETAIL_LAST_N_LINES = 50  # 詳細アプリログの末尾行数を増やす (例: 3 -> 50)
-    MAX_APP_DETAIL_MIDDLE_N_LINES = 5 # 詳細アプリログの中間から取得する行数を削減 (例: 10 -> 5)
-
-    if len(app_detailed_lines_collected) > (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_MIDDLE_N_LINES + MAX_APP_DETAIL_LAST_N_LINES):
-        gemini_log_lines_final.extend(app_detailed_lines_collected[:MAX_APP_DETAIL_FIRST_N_LINES])
-        middle_start_index = len(app_detailed_lines_collected) // 2 - MAX_APP_DETAIL_MIDDLE_N_LINES // 2
-        middle_end_index = middle_start_index + MAX_APP_DETAIL_MIDDLE_N_LINES
-        gemini_log_lines_final.append(f"\n[... {len(app_detailed_lines_collected[middle_start_index:middle_end_index])}件の詳細なアプリケーションログ（中間部分より抜粋） ...]\n")
-        gemini_log_lines_final.extend(app_detailed_lines_collected[middle_start_index:middle_end_index])
-        omitted_count = len(app_detailed_lines_collected) - (MAX_APP_DETAIL_FIRST_N_LINES + MAX_APP_DETAIL_MIDDLE_N_LINES + MAX_APP_DETAIL_LAST_N_LINES)
-        gemini_log_lines_final.append(f"\n[... 他 {omitted_count} 件の詳細なアプリケーションログは簡潔さのため省略 ...]\n")
-        gemini_log_lines_final.extend(app_detailed_lines_collected[-MAX_APP_DETAIL_LAST_N_LINES:])
-    else:
-        gemini_log_lines_final.extend(app_detailed_lines_collected)
-    
-    MAX_SOLVER_LOG_FIRST_N_LINES = 200 # ソルバーログの先頭行数を元に戻す
-    MAX_SOLVER_LOG_LAST_N_LINES = 200  # ソルバーログの末尾行数を元に戻す
-    MAX_SOLVER_LOG_MIDDLE_N_LINES = 5 # ソルバーログの中間から取得する行数を削減 (例: 10 -> 5)
-    
-    if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_MIDDLE_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
+    # Gemini用に solver_log_block のみを処理します
+    MAX_SOLVER_LOG_FIRST_N_LINES = 500
+    MAX_SOLVER_LOG_LAST_N_LINES = 500
+    # ソルバーログの中間行は抽出されなくなります。
+    # 条件は、総行数が先頭と末尾の合計を超えるかどうかをチェックします。
+    if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
         truncated_solver_log = solver_log_block[:MAX_SOLVER_LOG_FIRST_N_LINES]
-        middle_start_index_solver = len(solver_log_block) // 2 - MAX_SOLVER_LOG_MIDDLE_N_LINES // 2
-        middle_end_index_solver = middle_start_index_solver + MAX_SOLVER_LOG_MIDDLE_N_LINES
-        truncated_solver_log.append(f"\n[... ソルバーログ（中間部分より抜粋） ...]\n")
-        truncated_solver_log.extend(solver_log_block[middle_start_index_solver:middle_end_index_solver])
-        omitted_solver_lines = len(solver_log_block) - (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_MIDDLE_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES)
+        omitted_solver_lines = len(solver_log_block) - (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES)
         truncated_solver_log.append(f"\n[... 他 {omitted_solver_lines} 件のソルバーログ中間行は簡潔さのため省略 ...]\n")
         truncated_solver_log.extend(solver_log_block[-MAX_SOLVER_LOG_LAST_N_LINES:])
         gemini_log_lines_final.extend(truncated_solver_log)
