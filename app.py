@@ -367,6 +367,7 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     solver_raw_status_code: int
     full_application_and_solver_log: str
     pure_solver_log: str # 純粋なソルバーログ（マーカーなし）
+    application_log: str # アプリケーションログ
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms_data は現在未使用だが、将来のために残す
                      travel_costs_matrix,
@@ -385,12 +386,15 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
 
     # --- ログキャプチャ用の StringIO ---
-    full_log_stream = io.StringIO()
+    app_log_stream = io.StringIO() # アプリケーションログ用
+    solver_capture_stream = io.StringIO() # ソルバーログキャプチャ用 (以前の full_log_stream)
     logger = logging.getLogger(__name__) # solve_assignment内でロガーを取得
 
-    # アプリケーションログ出力関数 (標準ロガーのみに出力)
+    # アプリケーションログ出力関数 (標準ロガーとapp_log_streamに出力)
     def log_to_stream(message):
-        logger.info(f"[SolverAppLog] {message}")
+        log_line = f"[SolverAppLog] {message}\n"
+        logger.info(log_line.strip()) # 標準ロガーには改行なしで
+        app_log_stream.write(log_line) # app_log_stream には改行ありでキャプチャ
 
     # --- ステップ1: 連日講座ペアのリストアップ ---
     consecutive_day_pairs = []
@@ -541,7 +545,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
     if not possible_assignments_temp_data:
         log_to_stream("No possible assignments found after filtering. Optimization will likely result in no assignments.")
-        all_captured_logs = full_log_stream.getvalue() # この時点では主にアプリログ
+        captured_app_log_early = app_log_stream.getvalue()
+        # ソルバーは実行されていないので、ソルバーログ関連は空
         return SolverOutput(
             solution_status_str="前提条件エラー (割り当て候補なし)",
             objective_value=None,
@@ -549,8 +554,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             all_courses=list(courses_dict.values()), # 辞書の値を使用
             all_lecturers=list(lecturers_dict.values()), # 辞書の値を使用
             solver_raw_status_code=cp_model.UNKNOWN, 
-            full_application_and_solver_log=all_captured_logs,
-            pure_solver_log="" # この場合はソルバーログなし
+            full_application_and_solver_log=captured_app_log_early, # アプリログのみ
+            pure_solver_log="",
+            application_log=captured_app_log_early
         )
     # --- 動的正規化係数の計算 ---
     def get_norm_factor(cost_list, name):
@@ -740,35 +746,40 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     #     log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
 
     # solver.log_callback を使用してソルバーログをキャプチャ
-    solver.log_callback = lambda msg: full_log_stream.write(msg + "\n") # メッセージごとに改行を追加
+    solver.log_callback = lambda msg: solver_capture_stream.write(msg + "\n") # メッセージごとに改行を追加
 
-    # ソルバーログの開始マーカーを full_log_stream に直接書き込む
-    full_log_stream.write(f"{SOLVER_LOG_START_MARKER}\n")
+    # ソルバーログの開始マーカーを solver_capture_stream に直接書き込む
+    solver_capture_stream.write(f"{SOLVER_LOG_START_MARKER}\n")
     
     status_code = cp_model.UNKNOWN # Initialize status_code
     status_code = solver.Solve(model) # コールバックインスタンスは渡さない
 
-    # ソルバーログの終了マーカーを full_log_stream に直接書き込む
-    full_log_stream.write(f"\n{SOLVER_LOG_END_MARKER}\n") # 前後に改行を追加して区切りを明確に
+    # ソルバーログの終了マーカーを solver_capture_stream に直接書き込む
+    solver_capture_stream.write(f"\n{SOLVER_LOG_END_MARKER}\n") # 前後に改行を追加して区切りを明確に
 
-    full_captured_logs = full_log_stream.getvalue()
+    captured_solver_log_with_markers = solver_capture_stream.getvalue()
+    captured_app_log = app_log_stream.getvalue()
 
     # 純粋なソルバーログ（マーカーなし）を抽出
     pure_solver_lines = []
     capturing_solver_log = False
-    for line in full_captured_logs.splitlines(keepends=False):
+    # captured_solver_log_with_markers から抽出する
+    for line in captured_solver_log_with_markers.splitlines(keepends=False):
         if line == SOLVER_LOG_START_MARKER:
             capturing_solver_log = True
-            continue
+            continue # マーカー自体は含めない
         if line == SOLVER_LOG_END_MARKER:
             capturing_solver_log = False
-            break
+            break # マーカー自体は含めない
         if capturing_solver_log:
             pure_solver_lines.append(line)
     
     pure_solver_log_content = "\n".join(pure_solver_lines)
     if pure_solver_lines: # 何か行があれば最後に改行を追加
         pure_solver_log_content += "\n"
+
+    # Gemini送信用・rawログ保存用の結合ログ
+    full_application_and_solver_log_content = captured_app_log + captured_solver_log_with_markers
 
     status_name = solver.StatusName(status_code) # Get the status name
     results = []
@@ -837,8 +848,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         all_courses=list(courses_dict.values()), # courses_data の代わりに辞書の値を渡す
         all_lecturers=list(lecturers_dict.values()), # lecturers_data の代わりに辞書の値を渡す
         solver_raw_status_code=status_code,
-        full_application_and_solver_log=full_captured_logs, # マーカー付きログ
-        pure_solver_log=pure_solver_log_content # 純粋なソルバーログ
+        full_application_and_solver_log=full_application_and_solver_log_content,
+        pure_solver_log=pure_solver_log_content,
+        application_log=captured_app_log
     )
 
 # --- 3. Streamlit UI ---
@@ -929,7 +941,8 @@ def main():
         keys_to_clear_on_execute = [
             "solver_result_cache", "raw_log_on_server", 
             "solver_log_for_download", "optimization_error_message", # solver_log_for_download を追加
-            "gemini_explanation", "gemini_api_requested", "gemini_api_error", "last_full_prompt_for_gemini" # last_full_prompt_for_gemini を追加
+            "application_log_for_download", # 追加
+            "gemini_explanation", "gemini_api_requested", "gemini_api_error", "last_full_prompt_for_gemini"
         ]
         for key in keys_to_clear_on_execute:
             if key in st.session_state:
@@ -958,14 +971,18 @@ def main():
             if not isinstance(solver_output, dict):
                 raise TypeError(f"最適化関数の戻り値が不正です。型: {type(solver_output)}")
 
-            required_keys = ["full_application_and_solver_log", "pure_solver_log", "solution_status_str", "objective_value", "assignments", "all_courses", "all_lecturers", "solver_raw_status_code"]
+            required_keys = ["full_application_and_solver_log", "pure_solver_log", "application_log", "solution_status_str", "objective_value", "assignments", "all_courses", "all_lecturers", "solver_raw_status_code"]
             missing_keys = [key for key in required_keys if key not in solver_output]
             if missing_keys:
                 raise KeyError(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}")
             st.session_state.solver_log_for_download = solver_output["pure_solver_log"] # 純粋なソルバーログを保存
+            st.session_state.application_log_for_download = solver_output["application_log"] # アプリケーションログを保存
 
             st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
-            st.session_state.solver_result_cache = {k: v for k, v in solver_output.items() if k != "full_application_and_solver_log"}
+            st.session_state.solver_result_cache = {
+                k: v for k, v in solver_output.items() 
+                if k not in ["full_application_and_solver_log", "application_log"] # application_log も除外
+            }
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
 
@@ -975,6 +992,7 @@ def main():
             error_trace = traceback.format_exc()
             st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
             st.session_state.solver_log_for_download = "" # エラー時は空
+            st.session_state.application_log_for_download = "" # エラー時は空
             st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
@@ -1526,20 +1544,36 @@ else:
                         if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
                         st.rerun()
 
-                if st.session_state.get("solver_log_for_download"): # ダウンロード用ログがある場合のみボタンを表示
-                    st.download_button(
-                        label="ソルバーログのダウンロード", # ラベル変更
-                        data=st.session_state.solver_log_for_download, # ダウンロードするデータを変更
-                        file_name="solver_log.txt", # ファイル名変更
-                        mime="text/plain",
-                        key="download_solver_log_button" # キー名変更 (任意)
-                    )                    
-                elif st.session_state.get("solution_executed"): # solution_executed は True だが、GEMINI_API_KEY がないか、raw_log_on_server がない場合
+                # ログダウンロードセクション
+                if st.session_state.get("solution_executed"):
+                    st.markdown("---") # 区切り線
+                    st.subheader("ログのダウンロード")
+                    dl_cols = st.columns(2)
+                    with dl_cols[0]:
+                        if st.session_state.get("solver_log_for_download"):
+                            st.download_button(
+                                label="ソルバーログのダウンロード",
+                                data=st.session_state.solver_log_for_download,
+                                file_name="solver_log.txt",
+                                mime="text/plain",
+                                key="download_solver_log_button",
+                                help="最適化ソルバーが生成したログです。"
+                            )
+                    with dl_cols[1]:
+                        if st.session_state.get("application_log_for_download"):
+                            st.download_button(
+                                label="アプリケーションログのダウンロード",
+                                data=st.session_state.application_log_for_download,
+                                file_name="application_log.txt",
+                                mime="text/plain",
+                                key="download_application_log_button",
+                                help="最適化処理中のアプリケーション内部ログです。"
+                            )
+                
+                if not GEMINI_API_KEY and st.session_state.get("solution_executed"):
                     if not GEMINI_API_KEY:
                         st.info("Gemini APIキーが設定されていません。ログ関連機能を利用するには設定が必要です。")
                         logger.info("Gemini API key not set. Log features disabled.")
-                    elif not st.session_state.get("raw_log_on_server"):
-                        st.warning("ログデータが利用できないため、ログ関連機能は表示されません。最適化処理が完了していないか、ログ取得に失敗した可能性があります。")
 
                 if st.session_state.get("gemini_api_requested") and \
                    "gemini_explanation" not in st.session_state and \
