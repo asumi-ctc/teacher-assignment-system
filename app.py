@@ -18,6 +18,10 @@ from dateutil.relativedelta import relativedelta
 import logging # logging モジュールをインポート
 from typing import TypedDict, List, Optional, Any, Tuple # 他のimport文と合わせて先頭に移動
 
+# --- グローバル定数 (ログマーカー) ---
+SOLVER_LOG_START_MARKER = "--- Solver Log (Captured by app.py) ---"
+SOLVER_LOG_END_MARKER = "--- End Solver Log (Captured by app.py) ---"
+
 # --- 1. データ定義 (LOG_EXPLANATIONS と _get_log_explanation は削除) ---
 
 # --- Gemini API送信用ログのフィルタリング関数 (グローバルスコープに移動) ---
@@ -40,16 +44,17 @@ def filter_log_for_gemini(log_content: str) -> str:
         r"^\s*    Warning: Could not parse date", # 日付パースエラー
     ]
     
-    solver_log_start_marker = "--- Solver Log (Captured by app.py) ---"
-    solver_log_end_marker = "--- End Solver Log (Captured by app.py) ---"
+    # グローバル定数を参照
+    # solver_log_start_marker = "--- Solver Log (Captured by app.py) ---" # 削除
+    # solver_log_end_marker = "--- End Solver Log (Captured by app.py) ---" # 削除
 
     for line in lines:
-        if solver_log_start_marker in line:
+        if SOLVER_LOG_START_MARKER in line: # 定数を参照
             in_solver_log_block = True
             solver_log_block.append(line)
             continue 
         
-        if solver_log_end_marker in line: 
+        if SOLVER_LOG_END_MARKER in line: # 定数を参照
             solver_log_block.append(line)
             in_solver_log_block = False
             continue
@@ -738,12 +743,12 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     #     log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
 
     solution_logger_callback = SolutionLogger(full_log_stream) # コールバックをインスタンス化
-    log_to_stream("--- Solver Log (Captured by app.py) ---")
+    log_to_stream(SOLVER_LOG_START_MARKER) # 定数を参照
     
     status_code = cp_model.UNKNOWN # Initialize status_code
     status_code = solver.Solve(model, solution_logger_callback) # Solveにコールバックを渡す
 
-    log_to_stream("--- End Solver Log (Captured by app.py) ---")
+    log_to_stream(SOLVER_LOG_END_MARKER) # 定数を参照
 
     full_captured_logs = full_log_stream.getvalue()
 
