@@ -89,12 +89,13 @@ def get_gemini_explanation(log_text: str,
                            api_key: str,
                            solver_status: str,
                            objective_value: Optional[float],
-                           assignments_summary: Optional[pd.DataFrame]) -> str:
+                           assignments_summary: Optional[pd.DataFrame]) -> Tuple[str, Optional[str]]:
     """
     指定されたログテキストと最適化結果を Gemini API に送信し、解説を取得します。
+    戻り値: (解説テキストまたはエラーメッセージ, 送信したプロンプト全体またはNone)
     """
     if not api_key:
-        return "エラー: Gemini API キーが設定されていません。"
+        return "エラー: Gemini API キーが設定されていません。", None
 
     readme_content = ""
     readme_path = "README.md" # app.py と同じ階層にあると仮定
@@ -104,7 +105,10 @@ def get_gemini_explanation(log_text: str,
     except FileNotFoundError:
         readme_content = "システム仕様書(README.md)が見つかりませんでした。\n"
     except Exception as e:
-        readme_content = f"システム仕様書(README.md)の読み込み中にエラーが発生しました: {str(e)}\n"
+        # READMEの読み込みエラーもプロンプトに含めてGeminiに送るため、ここではエラーを返さない
+        # ただし、ログには残す
+        logging.error(f"Error reading README.md for Gemini prompt: {e}", exc_info=True)
+        readme_content = f"システム仕様書(README.md)の読み込み中にエラーが発生しました: {str(e)}\n" # このエラーメッセージがプロンプトに含まれる
 
     try:
         genai.configure(api_key=api_key)
@@ -138,10 +142,10 @@ def get_gemini_explanation(log_text: str,
 解説:
 """
         response = model.generate_content(prompt)
-        return response.text
+        return response.text, prompt
     except Exception as e:
         # st.error を直接呼ばず、エラーメッセージ文字列を返す
-        return f"Gemini APIエラー: {str(e)[:500]}..."
+        return f"Gemini APIエラー: {str(e)[:500]}...", prompt # エラー時も構築されたプロンプトを返す
 
 def generate_prefectures_data():
     PREFECTURES = [
@@ -925,7 +929,7 @@ def main():
         keys_to_clear_on_execute = [
             "solver_result_cache", "raw_log_on_server", 
             "solver_log_for_download", "optimization_error_message", # solver_log_for_download を追加
-            "gemini_explanation", "gemini_api_requested", "gemini_api_error"
+            "gemini_explanation", "gemini_api_requested", "gemini_api_error", "last_full_prompt_for_gemini" # last_full_prompt_for_gemini を追加
         ]
         for key in keys_to_clear_on_execute:
             if key in st.session_state:
@@ -1544,24 +1548,26 @@ else:
                     with st.spinner("Gemini API でログを解説中..."):
                         full_log_to_filter = st.session_state.raw_log_on_server
                         filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
-                        st.session_state.last_filtered_log_for_gemini = filtered_log_for_gemini # フィルタリング済みログを保存
                         solver_cache = st.session_state.solver_result_cache
                         solver_status = solver_cache["solution_status_str"]
                         objective_value = solver_cache["objective_value"]
                         assignments_list = solver_cache.get("assignments", [])
                         assignments_summary_df = pd.DataFrame(assignments_list) if assignments_list else None
 
-                        gemini_explanation_text = get_gemini_explanation(
+                        explanation_or_error_text, full_prompt_for_gemini = get_gemini_explanation(
                             filtered_log_for_gemini, GEMINI_API_KEY,
                             solver_status, objective_value, assignments_summary_df
                         )
+                        st.session_state.last_full_prompt_for_gemini = full_prompt_for_gemini # 常に保存
 
-                        if gemini_explanation_text.startswith("Gemini APIエラー:"):
-                            logger.error(f"Gemini API error: {gemini_explanation_text}")
-                            st.session_state.gemini_api_error = gemini_explanation_text
+                        # APIキーエラー、またはGemini API自体のエラーをチェック
+                        if explanation_or_error_text.startswith("エラー: Gemini API キーが設定されていません。") or \
+                           explanation_or_error_text.startswith("Gemini APIエラー:"):
+                            logger.error(f"Gemini related error: {explanation_or_error_text}")
+                            st.session_state.gemini_api_error = explanation_or_error_text
                         else:
-                            logger.info("Gemini API explanation received successfully.")
-                            st.session_state.gemini_explanation = gemini_explanation_text
+                            logger.info("Gemini API explanation processed (might include README load error in prompt).")
+                            st.session_state.gemini_explanation = explanation_or_error_text
                             if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
                         st.session_state.gemini_api_requested = False
                         st.rerun()
@@ -1574,15 +1580,15 @@ else:
                     with st.expander("Gemini API によるログ解説", expanded=True):
                         st.markdown(st.session_state.gemini_explanation)
                 
-                # Gemini API送信後にフィルタリング済みログをダウンロードするボタン (解説表示後、またはエラー表示後)
-                if "last_filtered_log_for_gemini" in st.session_state and st.session_state.last_filtered_log_for_gemini:
+                # Gemini API送信後にプロンプト全体をダウンロードするボタン
+                if "last_full_prompt_for_gemini" in st.session_state and st.session_state.last_full_prompt_for_gemini:
                     st.download_button(
-                        label="Gemini送信用フィルタ済ログのダウンロード",
-                        data=st.session_state.last_filtered_log_for_gemini,
-                        file_name="filtered_log_for_gemini.txt",
+                        label="Gemini API送信用プロンプト全体のダウンロード",
+                        data=st.session_state.last_full_prompt_for_gemini,
+                        file_name="full_prompt_for_gemini.txt",
                         mime="text/plain",
-                        key="download_filtered_log_button_after_api",
-                        help="Gemini APIに送信された形式にフィルタリング・圧縮されたログです。"
+                        key="download_full_prompt_button_after_api",
+                        help="Gemini APIに送信されたプロンプト全体（システム仕様、最適化結果サマリー、ソルバーログを含む）です。"
                     )
 
             logger.info("Optimization result display complete.")
