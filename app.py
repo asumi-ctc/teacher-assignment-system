@@ -3,7 +3,6 @@ from ortools.sat.python import cp_model
 # import streamlit.components.v1 as components # 削除
 import pandas as pd
 import io
-import contextlib
 import re # 正規表現モジュール
 import datetime # 日付処理用に追加
 import google.generativeai as genai # Gemini API 用
@@ -368,6 +367,16 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                      today_date) -> SolverOutput: # default_days_no_past_assignment を削除
     model = cp_model.CpModel()
 
+    # --- OR-Tools Solver Log Callback ---
+    class SolutionLogger(cp_model.CpSolverSolutionCallback):
+        def __init__(self, log_stream: io.StringIO):
+            super().__init__()
+            self._log_stream = log_stream
+
+        def OnLogMessage(self, message: str) -> None:
+            # OR-Toolsからのメッセージは通常、末尾に改行文字を含んでいます。
+            self._log_stream.write(message)
+
     full_log_stream = io.StringIO()
 
     # アプリケーションログを full_log_stream に直接書き込むように変更
@@ -728,12 +737,12 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     #     solver.parameters.num_search_workers = num_workers
     #     log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
 
+    solution_logger_callback = SolutionLogger(full_log_stream) # コールバックをインスタンス化
     log_to_stream("--- Solver Log (Captured by app.py) ---")
     
     status_code = cp_model.UNKNOWN # Initialize status_code
-    with contextlib.redirect_stdout(full_log_stream):
-        status_code = solver.Solve(model)
-    
+    status_code = solver.Solve(model, solution_logger_callback) # Solveにコールバックを渡す
+
     log_to_stream("--- End Solver Log (Captured by app.py) ---")
 
     full_captured_logs = full_log_stream.getvalue()
