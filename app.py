@@ -1033,7 +1033,6 @@ def main():
     st.sidebar.markdown("---")
     
     with st.sidebar.expander("【制約】", expanded=False):
-        st.markdown("**ハード制約（絶対固定）**")
         st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない") # 文言変更
         st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。") # 追加
         st.markdown("- 3.講師は、東京、名古屋、大阪の教室には2名を割り当て、それ以外には1名を割り当てる。") # 追加
