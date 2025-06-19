@@ -1058,6 +1058,28 @@ def main():
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
 
+    # NEW CALLBACK for changing lecturer
+    def handle_change_lecturer_callback(lecturer_id_to_remove: str, course_id_to_reassign: str):
+        logger.info(f"Callback: Change lecturer for L:{lecturer_id_to_remove}, C:{course_id_to_reassign}")
+        
+        current_forced = st.session_state.get("forced_unassignments_for_solver", [])
+        # Ensure current_forced is a list, even if it was something else or None
+        if not isinstance(current_forced, list):
+            current_forced = []
+            logger.warning("  forced_unassignments_for_solver was not a list or None, re-initialized to empty list.")
+
+        new_forced_pair = (lecturer_id_to_remove, course_id_to_reassign)
+        if new_forced_pair not in current_forced:
+            current_forced.append(new_forced_pair)
+        
+        st.session_state.forced_unassignments_for_solver = current_forced
+        logger.info(f"  forced_unassignments_for_solver updated to: {st.session_state.forced_unassignments_for_solver}")
+        
+        # Trigger the main optimization logic
+        # This will use the updated forced_unassignments_for_solver
+        run_optimization()
+        # After run_optimization, Streamlit will naturally rerun the UI due to session state changes.
+
     # --- セッション状態の初期化 ---
     if "view_mode" not in st.session_state:
         st.session_state.view_mode = "sample_data"
@@ -1580,9 +1602,34 @@ else:
 
                 if solver_result.get('assignments') and solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]: # assignments の存在確認を追加
                     if solver_result['assignments']:
-                        results_df_display = pd.DataFrame(solver_result['assignments'])
+                        results_df = pd.DataFrame(solver_result['assignments']) # Use results_df
                         st.subheader("割り当て結果")
-                        st.dataframe(results_df_display)
+                        
+                        # Iterate over results_df for detailed display with buttons
+                        for index, row in results_df.iterrows():
+                            # Create two columns: one for assignment details, one for the button
+                            col_details, col_button = st.columns([4, 1]) # Adjust ratio as needed
+                            
+                            with col_details:
+                                st.markdown(
+                                    f"**講師:** {row['講師名']} (`{row['講師ID']}`)  \n"
+                                    f"**講座:** {row['講座名']} (`{row['講座ID']}`)  \n"
+                                    f"**教室:** `{row['教室ID']}` @ `{row['スケジュール']}`"
+                                )
+                                # st.caption(f"算出コスト(x100): {row['算出コスト(x100)']}") # Optional: show more details
+
+                            with col_button:
+                                button_key = f"change_lecturer_{row['講師ID']}_{row['講座ID']}"
+                                st.button(
+                                    "この講師を交代", 
+                                    key=button_key, 
+                                    use_container_width=True,
+                                    on_click=handle_change_lecturer_callback,
+                                    args=(row['講師ID'], row['講座ID']),
+                                    help=f"講師 {row['講師名']} を講座 {row['講座名']} から外し、再最適化して別の講師を割り当てます。"
+                                )
+                            st.markdown("---") # Separator between assignments
+
                         assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
                         unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
                         if unassigned_courses:
