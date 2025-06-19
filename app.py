@@ -360,6 +360,7 @@ class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型
     all_lecturers: List[dict]
     solver_raw_status_code: int
     full_application_and_solver_log: str
+    pure_solver_log: str # 純粋なソルバーログ（マーカーなし）
 
 def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms_data は現在未使用だが、将来のために残す
                      travel_costs_matrix,
@@ -543,6 +544,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             all_lecturers=list(lecturers_dict.values()), # 辞書の値を使用
             solver_raw_status_code=cp_model.UNKNOWN, 
             full_application_and_solver_log=all_captured_logs
+            pure_solver_log="" # この場合はソルバーログなし
         )
     # --- 動的正規化係数の計算 ---
     def get_norm_factor(cost_list, name):
@@ -744,6 +746,24 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     full_log_stream.write(f"\n{SOLVER_LOG_END_MARKER}\n") # 前後に改行を追加して区切りを明確に
 
     full_captured_logs = full_log_stream.getvalue()
+
+    # 純粋なソルバーログ（マーカーなし）を抽出
+    pure_solver_lines = []
+    capturing_solver_log = False
+    for line in full_captured_logs.splitlines(keepends=False):
+        if line == SOLVER_LOG_START_MARKER:
+            capturing_solver_log = True
+            continue
+        if line == SOLVER_LOG_END_MARKER:
+            capturing_solver_log = False
+            break
+        if capturing_solver_log:
+            pure_solver_lines.append(line)
+    
+    pure_solver_log_content = "\n".join(pure_solver_lines)
+    if pure_solver_lines: # 何か行があれば最後に改行を追加
+        pure_solver_log_content += "\n"
+
     status_name = solver.StatusName(status_code) # Get the status name
     results = []
     objective_value = None
@@ -811,7 +831,8 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         all_courses=list(courses_dict.values()), # courses_data の代わりに辞書の値を渡す
         all_lecturers=list(lecturers_dict.values()), # lecturers_data の代わりに辞書の値を渡す
         solver_raw_status_code=status_code,
-        full_application_and_solver_log=full_captured_logs # 全ログ
+        full_application_and_solver_log=full_captured_logs, # マーカー付きログ
+        pure_solver_log=pure_solver_log_content # 純粋なソルバーログ
     )
 
 # --- 3. Streamlit UI ---
@@ -900,7 +921,8 @@ def main():
     def run_optimization():
         """最適化を実行し、結果をセッション状態に保存するコールバック関数"""
         keys_to_clear_on_execute = [
-            "solver_result_cache", "raw_log_on_server", "optimization_error_message",
+            "solver_result_cache", "raw_log_on_server", 
+            "solver_log_for_download", "optimization_error_message", # solver_log_for_download を追加
             "gemini_explanation", "gemini_api_requested", "gemini_api_error"
         ]
         for key in keys_to_clear_on_execute:
@@ -930,10 +952,11 @@ def main():
             if not isinstance(solver_output, dict):
                 raise TypeError(f"最適化関数の戻り値が不正です。型: {type(solver_output)}")
 
-            required_keys = ["full_application_and_solver_log", "solution_status_str", "objective_value", "assignments", "all_courses", "all_lecturers", "solver_raw_status_code"]
+            required_keys = ["full_application_and_solver_log", "pure_solver_log", "solution_status_str", "objective_value", "assignments", "all_courses", "all_lecturers", "solver_raw_status_code"]
             missing_keys = [key for key in required_keys if key not in solver_output]
             if missing_keys:
                 raise KeyError(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}")
+            st.session_state.solver_log_for_download = solver_output["pure_solver_log"] # 純粋なソルバーログを保存
 
             st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
             st.session_state.solver_result_cache = {k: v for k, v in solver_output.items() if k != "full_application_and_solver_log"}
@@ -945,6 +968,7 @@ def main():
             import traceback
             error_trace = traceback.format_exc()
             st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
+            st.session_state.solver_log_for_download = "" # エラー時は空
             st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
@@ -1496,13 +1520,14 @@ else:
                         if "gemini_api_error" in st.session_state: del st.session_state.gemini_api_error
                         st.rerun()
 
+                if st.session_state.get("solver_log_for_download"): # ダウンロード用ログがある場合のみボタンを表示
                     st.download_button(
-                        label="ログのダウンロード",
-                        data=st.session_state.raw_log_on_server,
-                        file_name="assignment_log.txt",
+                        label="ソルバーログのダウンロード", # ラベル変更
+                        data=st.session_state.solver_log_for_download, # ダウンロードするデータを変更
+                        file_name="solver_log.txt", # ファイル名変更
                         mime="text/plain",
-                        key="download_raw_log_button"
-                    )
+                        key="download_solver_log_button" # キー名変更 (任意)
+                    )                    
                 elif st.session_state.get("solution_executed"): # solution_executed は True だが、GEMINI_API_KEY がないか、raw_log_on_server がない場合
                     if not GEMINI_API_KEY:
                         st.info("Gemini APIキーが設定されていません。ログ関連機能を利用するには設定が必要です。")
