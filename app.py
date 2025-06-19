@@ -543,7 +543,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             all_courses=list(courses_dict.values()), # 辞書の値を使用
             all_lecturers=list(lecturers_dict.values()), # 辞書の値を使用
             solver_raw_status_code=cp_model.UNKNOWN, 
-            full_application_and_solver_log=all_captured_logs
+            full_application_and_solver_log=all_captured_logs,
             pure_solver_log="" # この場合はソルバーログなし
         )
     # --- 動的正規化係数の計算 ---
