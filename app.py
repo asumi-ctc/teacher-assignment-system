@@ -861,36 +861,38 @@ def initialize_app_data(force_regenerate: bool = False):
     """
     logger = logging.getLogger(__name__)
     logger.info(f"Entering initialize_app_data(force_regenerate={force_regenerate})")
+    logger.info(f"  Initial 'app_data_initialized': {st.session_state.get('app_data_initialized')}")
 
-    should_generate_data = False
-    if force_regenerate:
-        logger.info("force_regenerate is True. Data will be regenerated.")
-        should_generate_data = True
-    elif "app_data_initialized" not in st.session_state:
-        logger.info("'app_data_initialized' not in session_state. Data will be generated.")
-        should_generate_data = True
-    else:
-        logger.info("'app_data_initialized' is in session_state and force_regenerate is False. Skipping data generation.")
+    # データ生成の条件:
+    # 1. force_regenerate が True
+    # 2. st.session_state.get("app_data_initialized") が True でない (存在しない、None、False など)
+    if force_regenerate or not st.session_state.get("app_data_initialized"):
+        if force_regenerate:
+            logger.info("  force_regenerate is True. Regenerating data.")
+        elif "app_data_initialized" not in st.session_state:
+            logger.info("  'app_data_initialized' not in session_state. Generating data for the first time or after session loss.")
+        else: # app_data_initialized が存在するが、True ではない場合
+            logger.info(f"  'app_data_initialized' is {st.session_state.get('app_data_initialized')}. Regenerating data.")
 
-    if should_generate_data:
+        # --- データ生成処理 ---
         st.session_state.TODAY = datetime.date.today()
-        logger.info("TODAY set.")
+        logger.info("  TODAY set.")
         # 割り当て対象月の設定 (現在の4ヶ月後)
         assignment_target_month_start_val = (st.session_state.TODAY + relativedelta(months=4)).replace(day=1)
         st.session_state.ASSIGNMENT_TARGET_MONTH_START = assignment_target_month_start_val
         next_month_val = assignment_target_month_start_val + relativedelta(months=1)
         st.session_state.ASSIGNMENT_TARGET_MONTH_END = next_month_val - datetime.timedelta(days=1)
-        logger.info(f"Assignment target month set: {st.session_state.ASSIGNMENT_TARGET_MONTH_START} to {st.session_state.ASSIGNMENT_TARGET_MONTH_END}")
+        logger.info(f"  Assignment target month set: {st.session_state.ASSIGNMENT_TARGET_MONTH_START} to {st.session_state.ASSIGNMENT_TARGET_MONTH_END}")
 
         PREFECTURES_val, PREFECTURE_CLASSROOM_IDS_val = generate_prefectures_data()
-        logger.info(f"generate_prefectures_data() completed. {len(PREFECTURES_val)} prefectures.")
         st.session_state.PREFECTURES = PREFECTURES_val
         st.session_state.PREFECTURE_CLASSROOM_IDS = PREFECTURE_CLASSROOM_IDS_val
+        logger.info(f"  generate_prefectures_data() completed. {len(PREFECTURES_val)} prefectures.")
 
         st.session_state.DEFAULT_CLASSROOMS_DATA = generate_classrooms_data(
             st.session_state.PREFECTURES, st.session_state.PREFECTURE_CLASSROOM_IDS
         )
-        logger.info(f"generate_classrooms_data() completed. {len(st.session_state.DEFAULT_CLASSROOMS_DATA)} classrooms.")
+        logger.info(f"  generate_classrooms_data() completed. {len(st.session_state.DEFAULT_CLASSROOMS_DATA)} classrooms.")
         st.session_state.ALL_CLASSROOM_IDS_COMBINED = st.session_state.PREFECTURE_CLASSROOM_IDS
 
         st.session_state.DEFAULT_LECTURERS_DATA = generate_lecturers_data(
@@ -898,13 +900,13 @@ def initialize_app_data(force_regenerate: bool = False):
             st.session_state.ASSIGNMENT_TARGET_MONTH_START, # 追加
             st.session_state.ASSIGNMENT_TARGET_MONTH_END    # 追加
         )
-        logger.info(f"generate_lecturers_data() completed. {len(st.session_state.DEFAULT_LECTURERS_DATA)} lecturers.")
+        logger.info(f"  generate_lecturers_data() completed. {len(st.session_state.DEFAULT_LECTURERS_DATA)} lecturers.")
         st.session_state.DEFAULT_COURSES_DATA = generate_courses_data(
             st.session_state.PREFECTURES, st.session_state.PREFECTURE_CLASSROOM_IDS,
             st.session_state.ASSIGNMENT_TARGET_MONTH_START, # 追加
             st.session_state.ASSIGNMENT_TARGET_MONTH_END    # 追加
         )
-        logger.info(f"generate_courses_data() completed. {len(st.session_state.DEFAULT_COURSES_DATA)} courses.")
+        logger.info(f"  generate_courses_data() completed. {len(st.session_state.DEFAULT_COURSES_DATA)} courses.")
 
         REGIONS = {
             "Hokkaido": ["北海道"], "Tohoku": ["青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県"],
@@ -915,7 +917,7 @@ def initialize_app_data(force_regenerate: bool = False):
             "Shikoku": ["徳島県", "香川県", "愛媛県", "高知県"],
             "Kyushu_Okinawa": ["福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"]
         }
-        logger.info("REGIONS defined.")
+        # logger.info("REGIONS defined.") # ログレベル調整
         st.session_state.PREFECTURE_TO_REGION = {pref: region for region, prefs in REGIONS.items() for pref in prefs}
         st.session_state.REGION_GRAPH = {
             "Hokkaido": {"Tohoku"}, "Tohoku": {"Hokkaido", "Kanto", "Chubu"},
@@ -923,7 +925,7 @@ def initialize_app_data(force_regenerate: bool = False):
             "Kinki": {"Chubu", "Chugoku", "Shikoku"}, "Chugoku": {"Kinki", "Shikoku", "Kyushu_Okinawa"},
             "Shikoku": {"Kinki", "Chugoku", "Kyushu_Okinawa"}, "Kyushu_Okinawa": {"Chugoku", "Shikoku"}
         }
-        logger.info("PREFECTURE_TO_REGION and REGION_GRAPH defined.")
+        # logger.info("PREFECTURE_TO_REGION and REGION_GRAPH defined.") # ログレベル調整
         st.session_state.CLASSROOM_ID_TO_PREF_NAME = {
             item["id"]: item["location"] for item in st.session_state.DEFAULT_CLASSROOMS_DATA
         }
@@ -933,11 +935,15 @@ def initialize_app_data(force_regenerate: bool = False):
             st.session_state.PREFECTURE_TO_REGION,
             st.session_state.REGION_GRAPH
         )
-        logger.info(f"generate_travel_costs_matrix() completed. {len(st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX)} entries.")
+        logger.info(f"  generate_travel_costs_matrix() completed. {len(st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX)} entries.")
+        # --- データ生成処理終了 ---
         st.session_state.app_data_initialized = True
-        logger.info("Data generation complete. 'app_data_initialized' set to True.")
+        logger.info("  Data generation logic executed. 'app_data_initialized' set to True.")
+    else:
+        # st.session_state.get("app_data_initialized") is True and force_regenerate is False
+        logger.info("  'app_data_initialized' is True and force_regenerate is False. Skipping data generation.")
 
-    logger.info("Exiting initialize_app_data()")
+    logger.info(f"  Exiting initialize_app_data. 'app_data_initialized': {st.session_state.get('app_data_initialized')}")
 
 def main():
     # --- ロガーやデータ初期化など ---
