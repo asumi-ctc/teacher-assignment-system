@@ -376,7 +376,9 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                      weight_assignment_shortage, # 追加: 割り当て不足ペナルティの重み
                      weight_lecturer_concentration, # 追加: 講師割り当て集中ペナルティの重み
                      weight_consecutive_assignment, # 追加: 連日割り当て報酬の重み (引数変更あり)
-                     allow_under_assignment: bool, # 割り当て不足を許容するかのフラグ (引数変更あり)
+                     allow_under_assignment: bool, # 割り当て不足を許容するかのフラグ
+                     fixed_assignments: Optional[List[Tuple[str, str]]] = None, # ピン留めする割り当て
+                     forced_unassignments: Optional[List[Tuple[str, str]]] = None, # 強制的に割り当てないペア
                      today_date) -> SolverOutput: # default_days_no_past_assignment を削除
     model = cp_model.CpModel()
 
@@ -441,6 +443,11 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     potential_assignment_count = 0
     log_to_stream(f"Initial lecturers: {len(lecturers_data)}, Initial courses: {len(courses_data)}")
 
+    # 強制的に割り当てないペアをセットに変換して高速検索
+    forced_unassignments_set = set(forced_unassignments) if forced_unassignments else set()
+    if forced_unassignments_set:
+        log_to_stream(f"  Forced unassignments specified: {forced_unassignments_set}")
+
     # 実績なし優先コストの逆数モデル用定数
     RECENCY_COST_CONSTANT = 100000.0
 
@@ -451,6 +458,11 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         for course_id_loop, course in courses_dict.items():   # courses_data の代わりに courses_dict.values() を使用
             lecturer_id = lecturer["id"]
             course_id = course["id"]
+
+            # 強制的に割り当てないペアかチェック
+            if (lecturer_id, course_id) in forced_unassignments_set:
+                log_to_stream(f"  - Filtered out (forced unassignment): {lecturer_id} for {course_id}")
+                continue
 
 
             # 新しい資格ランクチェックロジック
@@ -728,6 +740,26 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
         if weight_consecutive_assignment > 0:
             log_to_stream("No consecutive day pairs found, or weight_consecutive_assignment is zero. Skipping reward logic.")
 
+    # --- ステップ4: ピン留めされた割り当ての制約追加 ---
+    if fixed_assignments:
+        log_to_stream(f"Processing {len(fixed_assignments)} fixed assignments (pinning).")
+        for fixed_lect_id, fixed_course_id in fixed_assignments:
+            assignment_key = (fixed_lect_id, fixed_course_id)
+            if assignment_key in possible_assignments_dict:
+                var_to_pin = possible_assignments_dict[assignment_key]["variable"]
+                model.Add(var_to_pin == 1)
+                log_to_stream(f"  + Pinned assignment: {fixed_lect_id} to {fixed_course_id} (variable {var_to_pin.Name()} forced to 1).")
+            else:
+                # ピン留めしようとした割り当てが、そもそも候補にない（資格がない、スケジュールが合わない、または forced_unassignments で除外された）
+                # この場合、実行不可能な問題になる可能性が高い
+                log_to_stream(f"  WARNING: Attempted to pin assignment ({fixed_lect_id}, {fixed_course_id}) but it's not a possible assignment. This may lead to an INFEASIBLE solution.")
+    else:
+        log_to_stream("No fixed assignments specified.")
+
+    if weight_consecutive_assignment > 0: # 修正: このログは以前のブロックから移動
+        if weight_consecutive_assignment > 0:
+            log_to_stream("No consecutive day pairs found, or weight_consecutive_assignment is zero. Skipping reward logic.")
+
 
     if objective_terms:
         model.Minimize(sum(objective_terms))
@@ -987,7 +1019,9 @@ def main():
                     st.session_state.get("weight_lecturer_concentration_exp", 0.5),
                     st.session_state.get("weight_consecutive_assignment_exp", 0.5),
                     st.session_state.allow_under_assignment_cb,
-                    st.session_state.TODAY
+                    st.session_state.TODAY,
+                    st.session_state.get("fixed_assignments_for_solver"), # 追加
+                    st.session_state.get("forced_unassignments_for_solver") # 追加
                 )
             logger.info("solve_assignment completed.")
 
@@ -1004,8 +1038,12 @@ def main():
             st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
             st.session_state.solver_result_cache = {
                 k: v for k, v in solver_output.items() 
-                if k not in ["full_application_and_solver_log", "application_log"] # application_log も除外
+                if k not in ["full_application_and_solver_log", "pure_solver_log", "application_log"]
             }
+            # 修正実行後は、次回通常の最適化のためにこれらのパラメータをクリア
+            if "fixed_assignments_for_solver" in st.session_state: del st.session_state.fixed_assignments_for_solver
+            if "forced_unassignments_for_solver" in st.session_state: del st.session_state.forced_unassignments_for_solver
+
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
 
