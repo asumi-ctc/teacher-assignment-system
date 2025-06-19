@@ -375,11 +375,11 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                      weight_travel, weight_age, weight_frequency, # 既存の重み
                      weight_assignment_shortage, # 追加: 割り当て不足ペナルティの重み
                      weight_lecturer_concentration, # 追加: 講師割り当て集中ペナルティの重み
-                     weight_consecutive_assignment, # 追加: 連日割り当て報酬の重み (引数変更あり)
+                     weight_consecutive_assignment, # 追加: 連日割り当て報酬の重み
                      allow_under_assignment: bool, # 割り当て不足を許容するかのフラグ
+                     today_date, # デフォルト値を持つ引数の前に移動
                      fixed_assignments: Optional[List[Tuple[str, str]]] = None, # ピン留めする割り当て
-                     forced_unassignments: Optional[List[Tuple[str, str]]] = None, # 強制的に割り当てないペア
-                     today_date) -> SolverOutput: # default_days_no_past_assignment を削除
+                     forced_unassignments: Optional[List[Tuple[str, str]]] = None) -> SolverOutput: # 強制的に割り当てないペア
     model = cp_model.CpModel()
 
     # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
@@ -1019,9 +1019,9 @@ def main():
                     st.session_state.get("weight_lecturer_concentration_exp", 0.5),
                     st.session_state.get("weight_consecutive_assignment_exp", 0.5),
                     st.session_state.allow_under_assignment_cb,
-                    st.session_state.TODAY,
+                    st.session_state.TODAY, # today_date を適切な位置に渡す
                     st.session_state.get("fixed_assignments_for_solver"), # 追加
-                    st.session_state.get("forced_unassignments_for_solver") # 追加
+                    st.session_state.get("forced_unassignments_for_solver")
                 )
             logger.info("solve_assignment completed.")
 
