@@ -372,18 +372,18 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                      today_date) -> SolverOutput: # default_days_no_past_assignment を削除
     model = cp_model.CpModel()
 
-    full_log_stream = io.StringIO()
-
-    # アプリケーションログは標準ロガーにのみ出力し、full_log_stream には書き込まない
-    def log_to_stream(message):
-        logger = logging.getLogger(__name__) # solve_assignment内でもロガーを取得
-        logger.info(f"[SolverAppLog] {message}") # 標準ログにも出力
-        # print(message, file=full_log_stream) # StringIOへの書き込みを削除
-
     # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
     lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
     courses_dict = {course['id']: course for course in courses_data}
     classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
+
+    # --- ログキャプチャ用の StringIO ---
+    full_log_stream = io.StringIO()
+    logger = logging.getLogger(__name__) # solve_assignment内でロガーを取得
+
+    # アプリケーションログ出力関数 (標準ロガーのみに出力)
+    def log_to_stream(message):
+        logger.info(f"[SolverAppLog] {message}")
 
     # --- ステップ1: 連日講座ペアのリストアップ ---
     consecutive_day_pairs = []
@@ -534,7 +534,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
 
     if not possible_assignments_temp_data:
         log_to_stream("No possible assignments found after filtering. Optimization will likely result in no assignments.")
-        all_captured_logs = full_log_stream.getvalue()
+        all_captured_logs = full_log_stream.getvalue() # この時点では主にアプリログ
         return SolverOutput(
             solution_status_str="前提条件エラー (割り当て候補なし)",
             objective_value=None,
@@ -732,16 +732,16 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     #     log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
 
     # solver.log_callback を使用してソルバーログをキャプチャ
-    solver.log_callback = lambda msg: full_log_stream.write(msg)
+    solver.log_callback = lambda msg: full_log_stream.write(msg + "\n") # メッセージごとに改行を追加
 
     # ソルバーログの開始マーカーを full_log_stream に直接書き込む
     full_log_stream.write(f"{SOLVER_LOG_START_MARKER}\n")
     
     status_code = cp_model.UNKNOWN # Initialize status_code
-    status_code = solver.Solve(model) # SolutionLogger インスタンスは渡さない
+    status_code = solver.Solve(model) # コールバックインスタンスは渡さない
 
     # ソルバーログの終了マーカーを full_log_stream に直接書き込む
-    full_log_stream.write(f"{SOLVER_LOG_END_MARKER}\n")
+    full_log_stream.write(f"\n{SOLVER_LOG_END_MARKER}\n") # 前後に改行を追加して区切りを明確に
 
     full_captured_logs = full_log_stream.getvalue()
     status_name = solver.StatusName(status_code) # Get the status name
