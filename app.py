@@ -849,6 +849,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                 lecturer = lecturers_dict[lecturer_id_res] # 事前処理した辞書から取得
                 course = courses_dict[course_id_res] # 事前処理した辞書から取得
                 results.append({
+                    # ... (他のフィールドは変更なし)
                     "講師ID": lecturer["id"],
                     "講師名": lecturer["name"],
                     "講座ID": course["id"],
@@ -856,6 +857,7 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                     "教室ID": course["classroom_id"],
                     "スケジュール": course['schedule'],
                     "算出コスト(x100)": pa_data["cost"],
+                    "教室名": classrooms_dict.get(course["classroom_id"], {}).get("location", "不明"), # 教室名を追加
                     "移動コスト(元)": pa_data["raw_costs"]["travel"],
                     "年齢コスト(元)": pa_data["raw_costs"]["age"],
                     "頻度コスト(元)": pa_data["raw_costs"]["frequency"],
@@ -1058,8 +1060,9 @@ def main():
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
 
-    # NEW CALLBACK for changing lecturer
-    def handle_change_lecturer_callback(lecturer_id_to_remove: str, course_id_to_reassign: str):
+    # OLD CALLBACK - to be removed or replaced
+    # def handle_change_lecturer_callback(lecturer_id_to_remove: str, course_id_to_reassign: str):
+    def handle_execute_changes_callback(): # 新しいコールバック
         logger.info(f"Callback: Change lecturer for L:{lecturer_id_to_remove}, C:{course_id_to_reassign}")
         
         current_forced = st.session_state.get("forced_unassignments_for_solver", [])
@@ -1068,21 +1071,52 @@ def main():
             current_forced = []
             logger.warning("  forced_unassignments_for_solver was not a list or None, re-initialized to empty list.")
 
-        new_forced_pair = (lecturer_id_to_remove, course_id_to_reassign)
-        if new_forced_pair not in current_forced:
-            current_forced.append(new_forced_pair)
+        # --- 新しいロジック ---
+        if not st.session_state.get("assignments_to_change_list"):
+            st.warning("交代する割り当てが選択されていません。")
+            logger.warning("handle_execute_changes_callback called with empty assignments_to_change_list.")
+            return
+
+        # Store info for summary display later
+        st.session_state.pending_change_summary_info = [
+            {
+                "lecturer_id": item[0], "course_id": item[1],
+                "lecturer_name": item[2], "course_name": item[3],
+                "classroom_name": item[4] # 教室名も追加
+            }
+            for item in st.session_state.assignments_to_change_list
+        ]
+        logger.info(f"  Pending change summary info: {st.session_state.pending_change_summary_info}")
+
+        # Prepare forced_unassignments for the solver
+        newly_forced_unassignments = [
+            (item[0], item[1]) for item in st.session_state.assignments_to_change_list
+        ]
         
-        st.session_state.forced_unassignments_for_solver = current_forced
+        # Combine with any existing forced_unassignments (e.g., from previous individual changes if that feature were kept)
+        # For now, it primarily uses the current list from assignments_to_change_list.
+        # Ensure current_forced is a list (already done above)
+        
+        # Add new ones, avoid duplicates
+        for pair in newly_forced_unassignments:
+            if pair not in current_forced: # current_forced is from st.session_state.get("forced_unassignments_for_solver", [])
+                current_forced.append(pair)
+                
+        st.session_state.forced_unassignments_for_solver = current_forced # Update session state
         logger.info(f"  forced_unassignments_for_solver updated to: {st.session_state.forced_unassignments_for_solver}")
         
+        # Clear the selection list for the "Change Assignment" view as they are now being processed
+        st.session_state.assignments_to_change_list = []
+        # --- ここまで新しいロジック ---
+
         # Trigger the main optimization logic
-        # This will use the updated forced_unassignments_for_solver
         run_optimization()
-        # After run_optimization, Streamlit will naturally rerun the UI due to session state changes.
 
     # --- セッション状態の初期化 ---
     if "view_mode" not in st.session_state:
         st.session_state.view_mode = "sample_data"
+    if "assignments_to_change_list" not in st.session_state: # 交代リストの初期化
+        st.session_state.assignments_to_change_list = []
     if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
     if "allow_under_assignment_cb" not in st.session_state: # 追加: チェックボックスの初期値をセッションステートに設定
@@ -1619,6 +1653,37 @@ else:
                     st.markdown(markdown_table)
                     st.markdown("---")
 
+                # --- 割り当て変更サマリーの表示 ---
+                if "pending_change_summary_info" in st.session_state and \
+                   st.session_state.pending_change_summary_info and \
+                   solver_result.get('assignments') is not None: # solver_result['assignments'] が None でないことを確認
+                    
+                    st.subheader("今回の割り当て変更による影響")
+                    change_details_markdown = ""
+                    
+                    current_assignments_df_for_summary = pd.DataFrame(solver_result.get('assignments', []))
+                    
+                    for change_item in st.session_state.pending_change_summary_info:
+                        original_lecturer_id = change_item['lecturer_id']
+                        original_lecturer_name = change_item['lecturer_name']
+                        course_id_changed = change_item['course_id']
+                        course_name_changed = change_item['course_name']
+
+                        new_assignment_for_course_df = pd.DataFrame() # 空のDataFrameで初期化
+                        if not current_assignments_df_for_summary.empty:
+                             new_assignment_for_course_df = current_assignments_df_for_summary[current_assignments_df_for_summary['講座ID'] == course_id_changed]
+
+                        new_assignment_str = "割り当てなし"
+                        if not new_assignment_for_course_df.empty:
+                            new_lecturers_info = [f"{new_row['講師名']} (`{new_row['講師ID']}`)" for _, new_row in new_assignment_for_course_df.iterrows()]
+                            new_assignment_str = "、".join(new_lecturers_info)
+                        
+                        change_details_markdown += f"- **講座:** {course_name_changed} (`{course_id_changed}`)\n  - **変更前:** {original_lecturer_name} (`{original_lecturer_id}`)\n  - **変更後:** {new_assignment_str}\n"
+                    
+                    if change_details_markdown:
+                        st.markdown(change_details_markdown)
+                    st.markdown("---")
+                    del st.session_state.pending_change_summary_info # 表示後にクリア
                 if solver_result.get('assignments') and solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]: # assignments の存在確認を追加
                     if solver_result['assignments']:
                         results_df = pd.DataFrame(solver_result['assignments']) # Use results_df
@@ -1745,39 +1810,83 @@ else:
            "solver_result_cache" not in st.session_state or \
            not st.session_state.solver_result_cache.get("assignments"):
             st.warning("割り当て結果が存在しないため、この機能は利用できません。まず最適化を実行してください。")
-        else:
+        else: # 割り当て結果が存在する場合
             solver_result = st.session_state.solver_result_cache
             results_df = pd.DataFrame(solver_result['assignments'])
 
             if results_df.empty:
                 st.info("変更対象の割り当てがありません。")
             else:
-                st.markdown("各割り当てについて、担当講師を変更することができます。「この講師を交代」ボタンを押すと、その講師を当該講座から除外して再最適化が行われます。")
-                st.markdown("---")
-                # Iterate over results_df for detailed display with buttons
-                for index, row in results_df.iterrows():
-                    # Create two columns: one for assignment details, one for the button
-                    col_details, col_button = st.columns([4, 1]) # Adjust ratio as needed
-                    
-                    with col_details:
-                        st.markdown(
-                            f"**講師:** {row['講師名']} (`{row['講師ID']}`)  \n"
-                            f"**講座:** {row['講座名']} (`{row['講座ID']}`)  \n"
-                            f"**教室:** `{row['教室ID']}` @ `{row['スケジュール']}`"
-                        )
-                        # st.caption(f"算出コスト(x100): {row['算出コスト(x100)']}") # Optional
+                st.markdown("交代させたい講師の割り当てを選択し、「交代リスト」に追加してください。リスト作成後、「選択した割り当ての講師を変更して再最適化」ボタンで実行します。")
+                
+                # --- 検索フィルター ---
+                st.subheader("割り当て検索フィルター")
+                filter_cols = st.columns(3)
+                with filter_cols[0]:
+                    search_lecturer_name = st.text_input("講師名で絞り込み", key="change_search_lecturer_name").lower()
+                with filter_cols[1]:
+                    search_course_name = st.text_input("講座名で絞り込み", key="change_search_course_name").lower()
+                with filter_cols[2]:
+                    search_classroom_name = st.text_input("教室名で絞り込み", key="change_search_classroom_name").lower()
 
-                    with col_button:
-                        button_key = f"change_lecturer_interactive_{row['講師ID']}_{row['講座ID']}" # Ensure unique key
-                        st.button(
-                            "この講師を交代", 
-                            key=button_key, 
-                            use_container_width=True,
-                            on_click=handle_change_lecturer_callback,
-                            args=(row['講師ID'], row['講座ID']),
-                            help=f"講師 {row['講師名']} を講座 {row['講座名']} から外し、再最適化して別の講師を割り当てます。"
+                filtered_assignments_df = results_df.copy()
+                if search_lecturer_name:
+                    filtered_assignments_df = filtered_assignments_df[filtered_assignments_df['講師名'].str.lower().str.contains(search_lecturer_name, na=False)]
+                if search_course_name:
+                    filtered_assignments_df = filtered_assignments_df[filtered_assignments_df['講座名'].str.lower().str.contains(search_course_name, na=False)]
+                if search_classroom_name: # 教室名で検索 (results_df に '教室名' がある前提)
+                    if '教室名' in filtered_assignments_df.columns:
+                        filtered_assignments_df = filtered_assignments_df[filtered_assignments_df['教室名'].str.lower().str.contains(search_classroom_name, na=False)]
+                    else:
+                        st.warning("結果データに教室名列が見つかりません。教室IDでの絞り込みを試みてください。")
+
+                st.markdown("---")
+                st.subheader("現在の割り当て一覧 (フィルター結果)")
+                if filtered_assignments_df.empty:
+                    st.info("検索条件に一致する割り当てがありません。")
+                else:
+                    for index, row in filtered_assignments_df.iterrows():
+                        item_tuple = (
+                            row['講師ID'], row['講座ID'], 
+                            row['講師名'], row['講座名'], 
+                            row['教室名'], row['スケジュール'] # 教室名とスケジュールもタプルに含める
                         )
-                    st.markdown("---") # Separator between assignments
+                        is_selected = item_tuple in st.session_state.assignments_to_change_list
+                        
+                        checkbox_label = f"講師: {row['講師名']} (`{row['講師ID']}`), 講座: {row['講座名']} (`{row['講座ID']}`), 教室: {row['教室名']} @ {row['スケジュール']}"
+                        
+                        # チェックボックスの状態変更で直接リストを更新
+                        if st.checkbox(checkbox_label, value=is_selected, key=f"cb_change_{row['講師ID']}_{row['講座ID']}"):
+                            if not is_selected: # 以前選択されていなくて、今チェックされた
+                                st.session_state.assignments_to_change_list.append(item_tuple)
+                                # st.experimental_rerun() # 即時反映のため
+                        else: # チェックが外された場合
+                            if is_selected: # 以前選択されていて、今チェックが外された
+                                st.session_state.assignments_to_change_list.remove(item_tuple)
+                                # st.experimental_rerun() # 即時反映のため
+                        st.markdown("---")
+
+                # --- 交代リストの表示と管理 ---
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("交代予定の割り当てリスト")
+                if not st.session_state.assignments_to_change_list:
+                    st.sidebar.info("交代する割り当てはありません。")
+                else:
+                    for i, item in enumerate(st.session_state.assignments_to_change_list):
+                        # item: (lecturer_id, course_id, lecturer_name, course_name, classroom_name, schedule)
+                        st.sidebar.markdown(f"- **講師:** {item[2]}, **講座:** {item[3]}")
+                        if st.sidebar.button(f"リストから削除 ({item[2]}-{item[3]})", key=f"remove_change_{item[0]}_{item[1]}_{i}"):
+                            st.session_state.assignments_to_change_list.pop(i)
+                            st.rerun() # リスト変更を即時反映
+                    st.sidebar.markdown("---")
+                    
+                # --- 変更実行ボタン ---
+                if st.button("選択した割り当ての講師を変更して再最適化", 
+                               type="primary", 
+                               use_container_width=True,
+                               disabled=not st.session_state.assignments_to_change_list,
+                               on_click=handle_execute_changes_callback): # 新しいコールバックを呼ぶ
+                    pass # on_click で処理される
         logger.info("Change assignment view display complete.")
 
 
