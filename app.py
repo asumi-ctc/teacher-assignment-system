@@ -69,22 +69,10 @@ def filter_log_for_gemini(log_content: str) -> str:
                 app_summary_lines.append(line)
     
     # アプリケーションログ（サマリーおよび詳細）は gemini_log_lines_final に追加されなくなります。
-    # app_summary_lines および app_detailed_lines_collected を処理して
-    # gemini_log_lines_final に追加する以下のセクションは削除されます。
 
     # Gemini用に solver_log_block のみを処理します
-    MAX_SOLVER_LOG_FIRST_N_LINES = 500
-    MAX_SOLVER_LOG_LAST_N_LINES = 500
-    # ソルバーログの中間行は抽出されなくなります。
-    # 条件は、総行数が先頭と末尾の合計を超えるかどうかをチェックします。
-    if len(solver_log_block) > (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES):
-        truncated_solver_log = solver_log_block[:MAX_SOLVER_LOG_FIRST_N_LINES]
-        omitted_solver_lines = len(solver_log_block) - (MAX_SOLVER_LOG_FIRST_N_LINES + MAX_SOLVER_LOG_LAST_N_LINES)
-        truncated_solver_log.append(f"\n[... 他 {omitted_solver_lines} 件のソルバーログ中間行は簡潔さのため省略 ...]\n")
-        truncated_solver_log.extend(solver_log_block[-MAX_SOLVER_LOG_LAST_N_LINES:])
-        gemini_log_lines_final.extend(truncated_solver_log)
-    else:
-        gemini_log_lines_final.extend(solver_log_block)
+    # ソルバーログの切り詰め処理を削除し、solver_log_block全体をそのまま使用します。
+    gemini_log_lines_final.extend(solver_log_block)
     
     return "\n".join(gemini_log_lines_final)
 
