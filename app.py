@@ -854,12 +854,25 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     )
 
 # --- 3. Streamlit UI ---
-def initialize_app_data():
-    """アプリケーションの初期データを生成し、セッション状態に保存する。"""
+def initialize_app_data(force_regenerate: bool = False):
+    """
+    アプリケーションの初期データを生成し、セッション状態に保存する。
+    force_regenerate=True の場合、既存のデータがあっても強制的に再生成する。
+    """
     logger = logging.getLogger(__name__)
-    logger.info("Entering initialize_app_data()")
-    if "app_data_initialized" not in st.session_state:
-        logger.info("'app_data_initialized' not in session_state. Starting data generation.")
+    logger.info(f"Entering initialize_app_data(force_regenerate={force_regenerate})")
+
+    should_generate_data = False
+    if force_regenerate:
+        logger.info("force_regenerate is True. Data will be regenerated.")
+        should_generate_data = True
+    elif "app_data_initialized" not in st.session_state:
+        logger.info("'app_data_initialized' not in session_state. Data will be generated.")
+        should_generate_data = True
+    else:
+        logger.info("'app_data_initialized' is in session_state and force_regenerate is False. Skipping data generation.")
+
+    if should_generate_data:
         st.session_state.TODAY = datetime.date.today()
         logger.info("TODAY set.")
         # 割り当て対象月の設定 (現在の4ヶ月後)
@@ -922,9 +935,8 @@ def initialize_app_data():
         )
         logger.info(f"generate_travel_costs_matrix() completed. {len(st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX)} entries.")
         st.session_state.app_data_initialized = True
-        logger.info("'app_data_initialized' set to True.")
-    else:
-        logger.info("'app_data_initialized' already in session_state. Skipping data generation.")
+        logger.info("Data generation complete. 'app_data_initialized' set to True.")
+
     logger.info("Exiting initialize_app_data()")
 
 def main():
@@ -932,10 +944,15 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     logger = logging.getLogger(__name__)
     st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
-    initialize_app_data()
+    initialize_app_data() # 初回呼び出し (force_regenerate=False デフォルト)
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 
     # --- コールバック関数の定義 ---
+    def handle_regenerate_sample_data():
+        logger.info("Regenerate sample data button clicked, callback triggered.")
+        initialize_app_data(force_regenerate=True)
+        st.session_state.show_regenerate_success_message = True # メッセージ表示用フラグ
+
     def run_optimization():
         """最適化を実行し、結果をセッション状態に保存するコールバック関数"""
         keys_to_clear_on_execute = [
@@ -1072,6 +1089,12 @@ def main():
     if st.session_state.view_mode == "sample_data":
         # (サンプルデータ表示ロジックは省略)
         st.header("入力データ")
+
+        if st.session_state.get("show_regenerate_success_message"):
+            st.success("サンプルデータを再生成しました。")
+            del st.session_state.show_regenerate_success_message # メッセージ表示後にフラグを削除
+
+        st.button("サンプルデータ再生成", key="regenerate_sample_data_button", on_click=handle_regenerate_sample_data)
         logger.info("Displaying sample data.")
         st.markdown(
             f"**現在の割り当て対象月:** {st.session_state.ASSIGNMENT_TARGET_MONTH_START.strftime('%Y年%m月%d日')} "
