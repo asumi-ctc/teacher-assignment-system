@@ -1102,6 +1102,14 @@ def main():
             st.session_state.view_mode = "objective_function"
             st.rerun()
     with nav_cols[2]:
+        # The "最適化結果" button in the top navigation bar
+        # It should be active if a solution has been executed.
+        # It will always point to the main results view (tabular data).
+        # The new "Change Assignment" functionality will be via a separate sidebar button.
+        # The type="primary" logic for this button remains the same.
+        # The actual content of the "optimization_result" view will be modified
+        # to show the table, and the interactive "change lecturer" part will move
+        # to a new view mode triggered by the new sidebar button.
         if st.session_state.get("solution_executed", False): 
             if st.button("最適化結果", use_container_width=True, type="primary" if st.session_state.view_mode == "optimization_result" else "secondary"):
                 st.session_state.view_mode = "optimization_result"
@@ -1114,6 +1122,17 @@ def main():
     )
     st.sidebar.button("最適割り当てを実行", type="primary", on_click=run_optimization)
     st.sidebar.markdown("---")
+
+    # New "割り当て結果を変更" (Change Assignment Results) button in the sidebar
+    # This button appears only if optimization has run and produced assignments.
+    if st.session_state.get("solution_executed", False) and \
+       st.session_state.get("solver_result_cache") and \
+       st.session_state.solver_result_cache.get("assignments"):
+        if st.sidebar.button("割り当て結果を変更", key="change_assignment_view_button", type="secondary" if st.session_state.view_mode != "change_assignment_view" else "primary"):
+            st.session_state.view_mode = "change_assignment_view"
+            st.rerun()
+    st.sidebar.markdown("---")
+
     
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない") # 文言変更
@@ -1603,32 +1622,10 @@ else:
                 if solver_result.get('assignments') and solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]: # assignments の存在確認を追加
                     if solver_result['assignments']:
                         results_df = pd.DataFrame(solver_result['assignments']) # Use results_df
-                        st.subheader("割り当て結果")
-                        
-                        # Iterate over results_df for detailed display with buttons
-                        for index, row in results_df.iterrows():
-                            # Create two columns: one for assignment details, one for the button
-                            col_details, col_button = st.columns([4, 1]) # Adjust ratio as needed
-                            
-                            with col_details:
-                                st.markdown(
-                                    f"**講師:** {row['講師名']} (`{row['講師ID']}`)  \n"
-                                    f"**講座:** {row['講座名']} (`{row['講座ID']}`)  \n"
-                                    f"**教室:** `{row['教室ID']}` @ `{row['スケジュール']}`"
-                                )
-                                # st.caption(f"算出コスト(x100): {row['算出コスト(x100)']}") # Optional: show more details
-
-                            with col_button:
-                                button_key = f"change_lecturer_{row['講師ID']}_{row['講座ID']}"
-                                st.button(
-                                    "この講師を交代", 
-                                    key=button_key, 
-                                    use_container_width=True,
-                                    on_click=handle_change_lecturer_callback,
-                                    args=(row['講師ID'], row['講座ID']),
-                                    help=f"講師 {row['講師名']} を講座 {row['講座名']} から外し、再最適化して別の講師を割り当てます。"
-                                )
-                            st.markdown("---") # Separator between assignments
+                        st.subheader("割り当て結果詳細")
+                        # Display the full results dataframe
+                        st.dataframe(results_df)
+                        st.markdown("---")
 
                         assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
                         unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
@@ -1739,6 +1736,50 @@ else:
                     )
 
             logger.info("Optimization result display complete.")
+
+    elif st.session_state.view_mode == "change_assignment_view":
+        st.header("割り当ての変更")
+        logger.info("Displaying change assignment view.")
+
+        if not st.session_state.get("solution_executed", False) or \
+           "solver_result_cache" not in st.session_state or \
+           not st.session_state.solver_result_cache.get("assignments"):
+            st.warning("割り当て結果が存在しないため、この機能は利用できません。まず最適化を実行してください。")
+        else:
+            solver_result = st.session_state.solver_result_cache
+            results_df = pd.DataFrame(solver_result['assignments'])
+
+            if results_df.empty:
+                st.info("変更対象の割り当てがありません。")
+            else:
+                st.markdown("各割り当てについて、担当講師を変更することができます。「この講師を交代」ボタンを押すと、その講師を当該講座から除外して再最適化が行われます。")
+                st.markdown("---")
+                # Iterate over results_df for detailed display with buttons
+                for index, row in results_df.iterrows():
+                    # Create two columns: one for assignment details, one for the button
+                    col_details, col_button = st.columns([4, 1]) # Adjust ratio as needed
+                    
+                    with col_details:
+                        st.markdown(
+                            f"**講師:** {row['講師名']} (`{row['講師ID']}`)  \n"
+                            f"**講座:** {row['講座名']} (`{row['講座ID']}`)  \n"
+                            f"**教室:** `{row['教室ID']}` @ `{row['スケジュール']}`"
+                        )
+                        # st.caption(f"算出コスト(x100): {row['算出コスト(x100)']}") # Optional
+
+                    with col_button:
+                        button_key = f"change_lecturer_interactive_{row['講師ID']}_{row['講座ID']}" # Ensure unique key
+                        st.button(
+                            "この講師を交代", 
+                            key=button_key, 
+                            use_container_width=True,
+                            on_click=handle_change_lecturer_callback,
+                            args=(row['講師ID'], row['講座ID']),
+                            help=f"講師 {row['講師名']} を講座 {row['講座名']} から外し、再最適化して別の講師を割り当てます。"
+                        )
+                    st.markdown("---") # Separator between assignments
+        logger.info("Change assignment view display complete.")
+
 
     else: # view_mode が予期せぬ値の場合 (フォールバック)
         # (解説表示ロジックは省略)
