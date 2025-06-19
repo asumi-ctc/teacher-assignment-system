@@ -96,11 +96,25 @@ def get_gemini_explanation(log_text: str,
     if not api_key:
         return "エラー: Gemini API キーが設定されていません。"
 
+    readme_content = ""
+    readme_path = "README.md" # app.py と同じ階層にあると仮定
+    try:
+        with open(readme_path, "r", encoding="utf-8") as f:
+            readme_content = f.read()
+    except FileNotFoundError:
+        readme_content = "システム仕様書(README.md)が見つかりませんでした。\n"
+    except Exception as e:
+        readme_content = f"システム仕様書(README.md)の読み込み中にエラーが発生しました: {str(e)}\n"
+
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-pro') 
-        prompt = f"""以下のシステムログについて、IT専門家でない人にも分かりやすく解説してください。
-ログの各部分が何を示しているのか、全体としてどのような処理が行われているのかを説明してください。
+        prompt = f"""以下のシステム仕様とログについて、IT専門家でない人にも分かりやすく解説してください。
+## システム仕様
+{readme_content}
+
+## ログ解説のリクエスト
+上記のシステム仕様を踏まえ、以下のログの各部分が何を示しているのか、全体としてどのような処理が行われているのかを説明してください。
 特に重要な情報、警告、エラーがあれば指摘し、考えられる原因や対処法についても言及してください。
 最適化結果とログの内容を関連付けて解説してください。
 
