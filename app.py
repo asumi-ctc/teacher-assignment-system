@@ -372,23 +372,13 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
                      today_date) -> SolverOutput: # default_days_no_past_assignment を削除
     model = cp_model.CpModel()
 
-    # --- OR-Tools Solver Log Callback ---
-    class SolutionLogger(cp_model.CpSolverSolutionCallback):
-        def __init__(self, log_stream: io.StringIO):
-            super().__init__()
-            self._log_stream = log_stream
-
-        def OnLogMessage(self, message: str) -> None:
-            # OR-Toolsからのメッセージは通常、末尾に改行文字を含んでいます。
-            self._log_stream.write(message)
-
     full_log_stream = io.StringIO()
 
-    # アプリケーションログを full_log_stream に直接書き込むように変更
+    # アプリケーションログは標準ロガーにのみ出力し、full_log_stream には書き込まない
     def log_to_stream(message):
         logger = logging.getLogger(__name__) # solve_assignment内でもロガーを取得
         logger.info(f"[SolverAppLog] {message}") # 標準ログにも出力
-        print(message, file=full_log_stream) # StringIOにも書き込む
+        # print(message, file=full_log_stream) # StringIOへの書き込みを削除
 
     # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
     lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
@@ -549,12 +539,11 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
             solution_status_str="前提条件エラー (割り当て候補なし)",
             objective_value=None,
             assignments=[],
-            all_courses=courses_data,
-            all_lecturers=lecturers_data,
+            all_courses=list(courses_dict.values()), # 辞書の値を使用
+            all_lecturers=list(lecturers_dict.values()), # 辞書の値を使用
             solver_raw_status_code=cp_model.UNKNOWN, 
             full_application_and_solver_log=all_captured_logs
         )
-
     # --- 動的正規化係数の計算 ---
     def get_norm_factor(cost_list, name):
         if not cost_list: return 1.0
@@ -742,16 +731,19 @@ def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms
     #     solver.parameters.num_search_workers = num_workers
     #     log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
 
-    solution_logger_callback = SolutionLogger(full_log_stream) # コールバックをインスタンス化
-    log_to_stream(SOLVER_LOG_START_MARKER) # 定数を参照
+    # solver.log_callback を使用してソルバーログをキャプチャ
+    solver.log_callback = lambda msg: full_log_stream.write(msg)
+
+    # ソルバーログの開始マーカーを full_log_stream に直接書き込む
+    full_log_stream.write(f"{SOLVER_LOG_START_MARKER}\n")
     
     status_code = cp_model.UNKNOWN # Initialize status_code
-    status_code = solver.Solve(model, solution_logger_callback) # Solveにコールバックを渡す
+    status_code = solver.Solve(model) # SolutionLogger インスタンスは渡さない
 
-    log_to_stream(SOLVER_LOG_END_MARKER) # 定数を参照
+    # ソルバーログの終了マーカーを full_log_stream に直接書き込む
+    full_log_stream.write(f"{SOLVER_LOG_END_MARKER}\n")
 
     full_captured_logs = full_log_stream.getvalue()
-
     status_name = solver.StatusName(status_code) # Get the status name
     results = []
     objective_value = None
