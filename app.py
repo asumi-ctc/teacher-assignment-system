@@ -1062,8 +1062,11 @@ def main():
 
     # OLD CALLBACK - to be removed or replaced
     # def handle_change_lecturer_callback(lecturer_id_to_remove: str, course_id_to_reassign: str):
-    def handle_execute_changes_callback(): # 新しいコールバック
-        logger.info(f"Callback: Change lecturer for L:{lecturer_id_to_remove}, C:{course_id_to_reassign}")
+    def handle_execute_changes_callback():
+        # logger.info(f"Callback: Change lecturer for L:{lecturer_id_to_remove}, C:{course_id_to_reassign}") # 古いログ行を削除またはコメントアウト
+        logger.info(
+            f"Callback: Executing changes for {len(st.session_state.get('assignments_to_change_list', []))} selected assignments."
+        )
         
         current_forced = st.session_state.get("forced_unassignments_for_solver", [])
         # Ensure current_forced is a list, even if it was something else or None
