@@ -1,5 +1,4 @@
 import streamlit as st
-from ortools.sat.python import cp_model
 # import streamlit.components.v1 as components # 削除
 import pandas as pd
 import io
@@ -16,13 +15,17 @@ import numpy as np # データ型変換のために追加
 # pip install python-dateutil
 from dateutil.relativedelta import relativedelta
 import logging # logging モジュールをインポート
-from typing import TypedDict, List, Optional, Any, Tuple # 他のimport文と合わせて先頭に移動
+from typing import List, Optional, Any, Tuple # TypedDict は optimization_engine に移動
 
-# --- グローバル定数 (ログマーカー) ---
-SOLVER_LOG_START_MARKER = "--- Solver Log (Captured by app.py) ---"
-SOLVER_LOG_END_MARKER = "--- End Solver Log (Captured by app.py) ---"
+# --- [修正点1] 分離したモジュールをインポート ---
+import data_adapter
+import optimization_engine
+from ortools.sat.python import cp_model # solver_raw_status_code の比較等で使用
+# ---------------------------------------------
 
-# --- 1. データ定義 (LOG_EXPLANATIONS と _get_log_explanation は削除) ---
+
+# --- 1. データ定義 (LOG_EXPLANATIONS と _get_log_explanation は削除) --- 
+# SolverOutput は optimization_engine.py に移動
 
 # --- Gemini API送信用ログのフィルタリング関数 (グローバルスコープに移動) ---
 def filter_log_for_gemini(log_content: str) -> str:
@@ -44,17 +47,12 @@ def filter_log_for_gemini(log_content: str) -> str:
         r"^\s*    Warning: Could not parse date", # 日付パースエラー
     ]
     
-    # グローバル定数を参照
-    # solver_log_start_marker = "--- Solver Log (Captured by app.py) ---" # 削除
-    # solver_log_end_marker = "--- End Solver Log (Captured by app.py) ---" # 削除
-
     for line in lines:
-        if SOLVER_LOG_START_MARKER in line: # 定数を参照
+        if optimization_engine.SOLVER_LOG_START_MARKER in line: # optimization_engine から定数を参照
             in_solver_log_block = True
             solver_log_block.append(line)
             continue 
-        
-        if SOLVER_LOG_END_MARKER in line: # 定数を参照
+        if optimization_engine.SOLVER_LOG_END_MARKER in line: # optimization_engine から定数を参照
             solver_log_block.append(line)
             in_solver_log_block = False
             continue
@@ -358,534 +356,7 @@ def get_region_hops(region1, region2, graph):
 # これは initialize_app_data で st.session_state.DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT に設定される
 
 # --- 2. OR-Tools 最適化ロジック ---
-class SolverOutput(TypedDict): # 提案: 戻り値を構造化するための型定義
-    solution_status_str: str
-    objective_value: Optional[float] # None の可能性を明示
-    assignments: List[dict]
-    all_courses: List[dict]
-    all_lecturers: List[dict]
-    solver_raw_status_code: int
-    full_application_and_solver_log: str
-    pure_solver_log: str # 純粋なソルバーログ（マーカーなし）
-    application_log: str # アプリケーションログ
-
-def solve_assignment(lecturers_data, courses_data, classrooms_data, # classrooms_data は現在未使用だが、将来のために残す
-                     travel_costs_matrix,
-                     weight_past_assignment_recency, weight_qualification,
-                     weight_travel, weight_age, weight_frequency, # 既存の重み
-                     weight_assignment_shortage, # 追加: 割り当て不足ペナルティの重み
-                     weight_lecturer_concentration, # 追加: 講師割り当て集中ペナルティの重み
-                     weight_consecutive_assignment, # 追加: 連日割り当て報酬の重み
-                     allow_under_assignment: bool, # 割り当て不足を許容するかのフラグ
-                     today_date, # デフォルト値を持つ引数の前に移動
-                     fixed_assignments: Optional[List[Tuple[str, str]]] = None, # ピン留めする割り当て
-                     forced_unassignments: Optional[List[Tuple[str, str]]] = None) -> SolverOutput: # 強制的に割り当てないペア
-    model = cp_model.CpModel()
-
-    # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
-    lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
-    courses_dict = {course['id']: course for course in courses_data}
-    classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
-
-    # --- ログキャプチャ用の StringIO ---
-    app_log_stream = io.StringIO() # アプリケーションログ用
-    solver_capture_stream = io.StringIO() # ソルバーログキャプチャ用 (以前の full_log_stream)
-    logger = logging.getLogger(__name__) # solve_assignment内でロガーを取得
-
-    # アプリケーションログ出力関数 (標準ロガーとapp_log_streamに出力)
-    def log_to_stream(message):
-        log_line = f"[SolverAppLog] {message}\n"
-        logger.info(log_line.strip()) # 標準ロガーには改行なしで
-        app_log_stream.write(log_line) # app_log_stream には改行ありでキャプチャ
-
-    # --- ステップ1: 連日講座ペアのリストアップ ---
-    consecutive_day_pairs = []
-    log_to_stream("Starting search for consecutive general-special course pairs.")
-    parsed_courses_for_pairing = []
-    for course_id_loop, course_item_loop in courses_dict.items(): # courses_data の代わりに courses_dict.values() を使用
-        try:
-            schedule_date = datetime.datetime.strptime(course_item_loop['schedule'], "%Y-%m-%d").date()
-            # courses_dict の値を直接変更せず、新しいリストに情報を追加
-            parsed_courses_for_pairing.append({**course_item_loop, 'schedule_date_obj': schedule_date})
-        except ValueError:
-            log_to_stream(f"  Warning: Could not parse schedule date {course_item_loop['schedule']} for course {course_item_loop['id']} during pair finding. Skipping.")
-            continue
-
-    courses_by_classroom_for_pairing = {}
-    for course_in_list in parsed_courses_for_pairing:
-        cid = course_in_list['classroom_id']
-        if cid not in courses_by_classroom_for_pairing:
-            courses_by_classroom_for_pairing[cid] = []
-        courses_by_classroom_for_pairing[cid].append(course_in_list)
-
-    for cid_loop, classroom_courses_list in courses_by_classroom_for_pairing.items():
-        classroom_courses_list.sort(key=lambda c: c['schedule_date_obj'])
-        for i in range(len(classroom_courses_list) - 1):
-            course1 = classroom_courses_list[i]
-            course2 = classroom_courses_list[i+1]
-            
-            is_general_special_pair = (course1['course_type'] == 'general' and course2['course_type'] == 'special') or \
-                                      (course1['course_type'] == 'special' and course2['course_type'] == 'general')
-            
-            if is_general_special_pair and (course2['schedule_date_obj'] - course1['schedule_date_obj']).days == 1:
-                pair_c1_obj, pair_c2_obj = course1, course2 # 日付順
-                consecutive_day_pairs.append({
-                    "pair_id": f"CDP_{pair_c1_obj['id']}_{pair_c2_obj['id']}",
-                    "course1_id": pair_c1_obj['id'], "course2_id": pair_c2_obj['id'],
-                    "classroom_id": cid_loop
-                })
-                log_to_stream(f"  + Found consecutive day pair: {pair_c1_obj['id']} ({pair_c1_obj['schedule']}) and {pair_c2_obj['id']} ({pair_c2_obj['schedule']}) at {cid_loop}")
-
-
-    # --- Main logic for model building and solving ---
-    # possible_assignments_temp_data: 生のコストと変数などを一時的に格納
-    possible_assignments_temp_data = {}
-    potential_assignment_count = 0
-    log_to_stream(f"Initial lecturers: {len(lecturers_data)}, Initial courses: {len(courses_data)}")
-
-    # 強制的に割り当てないペアをセットに変換して高速検索
-    forced_unassignments_set = set(forced_unassignments) if forced_unassignments else set()
-    if forced_unassignments_set:
-        log_to_stream(f"  Forced unassignments specified: {forced_unassignments_set}")
-
-    # 実績なし優先コストの逆数モデル用定数
-    RECENCY_COST_CONSTANT = 100000.0
-
-
-
-    # lecturers_data と courses_data の代わりに、事前に作成した辞書の値を反復処理
-    for lecturer_id_loop, lecturer in lecturers_dict.items(): # lecturers_data の代わりに lecturers_dict.values() を使用
-        for course_id_loop, course in courses_dict.items():   # courses_data の代わりに courses_dict.values() を使用
-            lecturer_id = lecturer["id"]
-            course_id = course["id"]
-
-            # 強制的に割り当てないペアかチェック
-            if (lecturer_id, course_id) in forced_unassignments_set:
-                log_to_stream(f"  - Filtered out (forced unassignment): {lecturer_id} for {course_id}")
-                continue
-
-
-            # 新しい資格ランクチェックロジック
-            course_type = course["course_type"]
-            course_rank = course["rank"]
-            lecturer_general_rank = lecturer["qualification_general_rank"]
-            lecturer_special_rank = lecturer.get("qualification_special_rank") # None の可能性あり
-
-            can_assign_by_qualification = False
-            qualification_cost_for_this_assignment = 0
-
-            if course_type == "general":
-                if lecturer_special_rank is not None: # 特別資格持ちは一般講座OK
-                    can_assign_by_qualification = True
-                    qualification_cost_for_this_assignment = lecturer_general_rank # コストは一般ランクで
-                elif lecturer_general_rank <= course_rank: # 一般資格のみの場合、ランク比較
-                    can_assign_by_qualification = True
-                    qualification_cost_for_this_assignment = lecturer_general_rank
-            elif course_type == "special":
-                if lecturer_special_rank is not None and lecturer_special_rank <= course_rank:
-                    can_assign_by_qualification = True
-                    qualification_cost_for_this_assignment = lecturer_special_rank
-            
-            if not can_assign_by_qualification:
-                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Qualification insufficient. Course: {course_type} Rank {course_rank}. Lecturer: GenRank {lecturer_general_rank}, SpecRank {lecturer_special_rank})")
-                continue
-
-            # スケジュールチェック
-            schedule_available = course["schedule"] in lecturer["availability"]
-            if not schedule_available:
-                log_to_stream(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable: Course_schedule={course['schedule']}, Lecturer_avail_sample={lecturer['availability'][:3]}...)")
-                continue
-            # else: スケジュールが合う場合はペナルティなし
-
-            potential_assignment_count += 1
-            log_to_stream(f"  + Potential assignment: {lecturer_id} to {course_id} on {course['schedule']}")
-            var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
-            
-            travel_cost = travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999)
-            age_cost = float(lecturer.get("age", 99)) # 実年齢をコストとして使用。未設定の場合は大きな値。
-            # 実際の過去の総割り当て回数を頻度コストとする (少ないほど良い)
-            frequency_cost = float(len(lecturer.get("past_assignments", [])))
-            qualification_cost = float(qualification_cost_for_this_assignment) # 上で計算した、この割り当てにおける資格コスト
-
-            # 過去割り当ての近さによるコスト計算
-            past_assignment_recency_cost = 0.0 # 実績なしの場合はコスト0
-            days_since_last_assignment_to_classroom = -1 # 実績なしを示す値 (-1 や None など)
-
-            if lecturer.get("past_assignments"):
-                relevant_past_assignments_to_this_classroom = [
-                    pa for pa in lecturer["past_assignments"]
-                    if pa["classroom_id"] == course["classroom_id"]
-                ]
-                if relevant_past_assignments_to_this_classroom:
-                    # past_assignments は日付降順ソート済みなので、リストの最初のものが最新の割り当て
-                    latest_assignment_date_str = relevant_past_assignments_to_this_classroom[0]["date"]
-                    try:
-                        latest_assignment_date = datetime.datetime.strptime(latest_assignment_date_str, "%Y-%m-%d").date() # type: ignore
-                        days_since_last_assignment_to_classroom = (today_date - latest_assignment_date).days
-                        # 逆数モデル: 定数 / (経過日数 + 1)
-                        # 経過日数が0 (昨日) の場合、コストは RECENCY_COST_CONSTANT / 1
-                        # 経過日数が大きいほどコストは小さくなる
-                        if days_since_last_assignment_to_classroom >= 0: # 念のため確認
-                            past_assignment_recency_cost = RECENCY_COST_CONSTANT / (days_since_last_assignment_to_classroom + 1.0)
-                        else: # 通常ありえないが、未来の日付など
-                            past_assignment_recency_cost = 0.0
-                            days_since_last_assignment_to_classroom = -2 # パースは成功したが日付がおかしい場合
-                    except ValueError:
-                        log_to_stream(f"    Warning: Could not parse date '{latest_assignment_date_str}' for {lecturer_id} and classroom {course['classroom_id']}")
-                        past_assignment_recency_cost = 0.0 # パース失敗時はコスト0
-                        days_since_last_assignment_to_classroom = -3 # パース失敗を示す
-            else: # 過去の割り当て履歴自体がない場合
-                past_assignment_recency_cost = 0.0
-                days_since_last_assignment_to_classroom = -1 # 実績なし
-
-            log_to_stream(f"    Raw costs for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost}, recency={past_assignment_recency_cost:.2f} (days_since_last={days_since_last_assignment_to_classroom})")
-
-            # 一時辞書に生のコストと変数を格納
-            assignment_key = (lecturer_id, course_id)
-            possible_assignments_temp_data[assignment_key] = {
-                "lecturer_id": lecturer_id, "course_id": course_id,
-                "variable": var,
-                "raw_costs": {
-                    "travel": travel_cost, "age": age_cost, "frequency": frequency_cost,
-                    "qualification": qualification_cost, "recency": past_assignment_recency_cost
-                },
-                "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
-            }
-
-    log_to_stream(f"Total potential assignments after filtering: {potential_assignment_count}")
-    log_to_stream(f"Number of entries in possible_assignments_temp_data: {len(possible_assignments_temp_data)}")
-
-    if not possible_assignments_temp_data:
-        log_to_stream("No possible assignments found after filtering. Optimization will likely result in no assignments.")
-        captured_app_log_early = app_log_stream.getvalue()
-        # ソルバーは実行されていないので、ソルバーログ関連は空
-        return SolverOutput(
-            solution_status_str="前提条件エラー (割り当て候補なし)",
-            objective_value=None,
-            assignments=[],
-            all_courses=list(courses_dict.values()), # 辞書の値を使用
-            all_lecturers=list(lecturers_dict.values()), # 辞書の値を使用
-            solver_raw_status_code=cp_model.UNKNOWN, 
-            full_application_and_solver_log=captured_app_log_early, # アプリログのみ
-            pure_solver_log="",
-            application_log=captured_app_log_early
-        )
-    # --- 動的正規化係数の計算 ---
-    def get_norm_factor(cost_list, name):
-        if not cost_list: return 1.0
-        avg = np.mean(cost_list)
-        factor = avg if avg > 1e-9 else 1.0 # 0除算や非常に小さい値での除算を避ける
-        log_to_stream(f"  Normalization factor for {name}: {factor:.4f} (avg: {avg:.4f}, count: {len(cost_list)})")
-        return factor
-
-    norm_factor_travel = get_norm_factor([d["raw_costs"]["travel"] for d in possible_assignments_temp_data.values() if "travel" in d["raw_costs"]], "travel")
-    norm_factor_age = get_norm_factor([d["raw_costs"]["age"] for d in possible_assignments_temp_data.values() if "age" in d["raw_costs"]], "age")
-    norm_factor_frequency = get_norm_factor([d["raw_costs"]["frequency"] for d in possible_assignments_temp_data.values() if "frequency" in d["raw_costs"]], "frequency")
-    norm_factor_qualification = get_norm_factor([d["raw_costs"]["qualification"] for d in possible_assignments_temp_data.values() if "qualification" in d["raw_costs"]], "qualification")
-    norm_factor_recency = get_norm_factor([d["raw_costs"]["recency"] for d in possible_assignments_temp_data.values() if "recency" in d["raw_costs"]], "recency")
-
-    # --- 最終的なコスト計算と possible_assignments_dict の構築 ---
-    possible_assignments_dict = {}
-    for key, temp_data in possible_assignments_temp_data.items():
-        raw = temp_data["raw_costs"]
-        
-        norm_travel = raw["travel"] / norm_factor_travel
-        norm_age = raw["age"] / norm_factor_age
-        norm_frequency = raw["frequency"] / norm_factor_frequency
-        norm_qualification = raw["qualification"] / norm_factor_qualification
-        norm_recency = raw["recency"] / norm_factor_recency
-
-        total_weighted_cost_float = (
-            weight_travel * norm_travel +
-            weight_age * norm_age +
-            weight_frequency * norm_frequency +
-            weight_qualification * norm_qualification +
-            weight_past_assignment_recency * norm_recency
-        )
-        total_weighted_cost_int = int(total_weighted_cost_float * 100) # スケーリング
-        log_to_stream(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} (norm_travel={norm_travel:.2f}, norm_age={norm_age:.2f}, norm_freq={norm_frequency:.2f}, norm_qual={norm_qualification:.2f}, norm_recency={norm_recency:.2f})")
-        possible_assignments_dict[key] = {**temp_data, "cost": total_weighted_cost_int}
-
-    # --- 事前に割り当て変数をグループ化 ---
-    assignments_by_course = {}
-    for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
-        variable_group = data_group["variable"]        
-        if course_id_group not in assignments_by_course:
-            assignments_by_course[course_id_group] = []
-        assignments_by_course[course_id_group].append(variable_group)
-    
-    # 講師IDで割り当て変数をグループ化 (講師集中ペナルティ用)
-    assignments_by_lecturer = {lect_id: [] for lect_id in lecturers_dict}
-    for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
-        # variable_group は既に上で取得済みなので再利用はできないが、ロジックは同じ
-        assignments_by_lecturer[lecturer_id_group].append(data_group["variable"])
-
-    # 特定の都道府県リスト
-    TARGET_PREFECTURES_FOR_TWO_LECTURERS = ["東京都", "愛知県", "大阪府"]
-    
-    shortage_penalty_terms = [] # 割り当て不足ペナルティ項を格納するリスト
-
-    for course_item in courses_dict.values(): # courses_data の代わりに courses_dict.values() を使用
-        course_id = course_item["id"]
-        possible_assignments_for_course = assignments_by_course.get(course_id, [])
-        if possible_assignments_for_course: # 担当可能な講師候補がいる場合のみ制約を追加
-            course_classroom_id = course_item["classroom_id"]
-            course_location = classrooms_dict[course_classroom_id]["location"]
-
-            target_assignment_count = 1
-            if course_location in TARGET_PREFECTURES_FOR_TWO_LECTURERS:
-                target_assignment_count = 2
-            
-            if allow_under_assignment:
-                # 割り当て不足を許容する場合 (0名、1名、または target_assignment_count 名まで)
-                model.Add(sum(possible_assignments_for_course) <= target_assignment_count)
-                # --- 割り当て不足ペナルティの計算 ---
-                if weight_assignment_shortage > 0:
-                    # 不足数を表す変数 shortage_var = max(0, target_assignment_count - sum(vars))
-                    # shortage_var >= target_assignment_count - sum(vars)
-                    # shortage_var >= 0 (IntVarの定義でカバー)
-                    shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{course_id}')
-                    model.Add(shortage_var >= target_assignment_count - sum(possible_assignments_for_course))
-                    
-                    # ペナルティコストのスケールを他のコストと合わせることを検討
-                    # 他のコストは *100 されている。ペナルティのベース値もそれに合わせる。
-                    # 例: 1件不足で基本コスト50,000 (スケーリング前)、重み1.0なら目的関数値 5,000,000
-                    base_penalty_shortage_scaled = 50000 * 100 # 500万
-                    actual_penalty_for_shortage = int(weight_assignment_shortage * base_penalty_shortage_scaled)
-                    if actual_penalty_for_shortage > 0:
-                        shortage_penalty_terms.append(shortage_var * actual_penalty_for_shortage)
-                        log_to_stream(f"  + Course {course_id}: Added shortage penalty term (shortage_var * {actual_penalty_for_shortage}) for target {target_assignment_count}.")
-            else:
-                # 割り当て不足を許容しない場合 (必ず target_assignment_count 名)
-                model.Add(sum(possible_assignments_for_course) == target_assignment_count)
-
-    # --- 目的関数の構築 ---
-    # possible_assignments_dict の値からコスト項を生成
-    objective_terms = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()] # type: ignore
-
-    # 割り当て不足ペナルティ項を目的関数に追加
-    if shortage_penalty_terms:
-        objective_terms.extend(shortage_penalty_terms)
-        log_to_stream(f"  + Added {len(shortage_penalty_terms)} shortage penalty terms to objective.")
-
-    # --- 講師の割り当て集中ペナルティ ---
-    if weight_lecturer_concentration > 0:
-        # 1回の追加割り当てに対する基本ペナルティコスト (スケーリング後)
-        # 例: 1件超過で基本コスト20,000 (スケーリング前)、重み1.0なら目的関数値 2,000,000
-        base_penalty_concentration_scaled = 20000 * 100 # 200万
-        actual_penalty_concentration = int(weight_lecturer_concentration * base_penalty_concentration_scaled)
-
-        if actual_penalty_concentration > 0:
-            for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
-                if not lecturer_vars or len(lecturer_vars) <= 1: # 割り当て候補がないか、1つ以下なら集中ペナルティ不要
-                    continue
-                
-                num_total_assignments_l = model.NewIntVar(0, len(courses_dict), f'num_total_assignments_{lecturer_id_loop}')
-                model.Add(num_total_assignments_l == sum(lecturer_vars))
-                
-                # 1回を超える割り当て数を表す変数 extra_assignments_l = max(0, num_total_assignments_l - 1)
-                extra_assignments_l = model.NewIntVar(0, len(courses_dict), f'extra_assign_{lecturer_id_loop}')
-                model.Add(extra_assignments_l >= num_total_assignments_l - 1)
-                # extra_assignments_l >= 0 はIntVarの定義でカバー
-                
-                objective_terms.append(extra_assignments_l * actual_penalty_concentration)
-                log_to_stream(f"  + Lecturer {lecturer_id_loop}: Added concentration penalty term (extra_assign * {actual_penalty_concentration}).")
-    
-    # --- ステップ3: 連日割り当ての報酬と制約 ---
-    consecutive_assignment_pair_vars_details = [] # ペア割り当て変数とその詳細を格納
-    if weight_consecutive_assignment > 0 and consecutive_day_pairs:
-        log_to_stream(f"Processing {len(consecutive_day_pairs)} consecutive day pairs for special assignment reward.")
-        for pair_info in consecutive_day_pairs:
-            pair_id = pair_info["pair_id"]
-            c1_id = pair_info["course1_id"]
-            c2_id = pair_info["course2_id"]
-            # course1_obj = courses_dict[c1_id] # courses_dict から取得
-            # course2_obj = courses_dict[c2_id] # courses_dict から取得
-
-            for lecturer_id_loop_pair, lecturer_pair in lecturers_dict.items():
-                # 1. 講師が特別資格を持っているか
-                if lecturer_pair.get("qualification_special_rank") is None:
-                    continue
-
-                # 2. 講師が両方の講座の資格要件とスケジュールを満たすか (possible_assignments_dict で確認)
-                key1 = (lecturer_id_loop_pair, c1_id)
-                key2 = (lecturer_id_loop_pair, c2_id)
-                if key1 not in possible_assignments_dict or key2 not in possible_assignments_dict:
-                    continue
-
-                log_to_stream(f"  + Potential consecutive pair assignment: Lecturer {lecturer_id_loop_pair} for pair {pair_id} ({c1_id}, {c2_id})")
-                pair_var_name = f"y_{lecturer_id_loop_pair}_{pair_id}"
-                pair_var = model.NewBoolVar(pair_var_name)
-                consecutive_assignment_pair_vars_details.append({
-                    "variable": pair_var, "lecturer_id": lecturer_id_loop_pair,
-                    "course1_id": c1_id, "course2_id": c2_id, "pair_id": pair_id
-                })
-
-                # 関連付け制約: pair_var = 1 => x_lecturer_c1 = 1 AND x_lecturer_c2 = 1
-                individual_var_c1 = possible_assignments_dict[key1]["variable"]
-                individual_var_c2 = possible_assignments_dict[key2]["variable"]
-                model.Add(pair_var <= individual_var_c1) # If pair_var is true, individual_var_c1 must be true
-                model.Add(pair_var <= individual_var_c2) # If pair_var is true, individual_var_c2 must be true
-                # (ソルバーは報酬のために pair_var を True にしようとし、この制約が個別の割り当ても True にする)
-
-                # 目的関数への追加 (報酬)
-                # 集中ペナルティ (例:200万) を考慮し、それを上回る可能性のある報酬を設定
-                base_reward_consecutive_scaled = 30000 * 100 # 例: 300万 (スケーリング後)
-                actual_reward_for_pair = int(weight_consecutive_assignment * base_reward_consecutive_scaled)
-                
-                if actual_reward_for_pair > 0:
-                    objective_terms.append(pair_var * -actual_reward_for_pair) # 最小化なので負のコスト
-                    log_to_stream(f"    Added reward {-actual_reward_for_pair} for pair_var {pair_var_name}")
-    else:
-        if weight_consecutive_assignment > 0:
-            log_to_stream("No consecutive day pairs found, or weight_consecutive_assignment is zero. Skipping reward logic.")
-
-    # --- ステップ4: ピン留めされた割り当ての制約追加 ---
-    if fixed_assignments:
-        log_to_stream(f"Processing {len(fixed_assignments)} fixed assignments (pinning).")
-        for fixed_lect_id, fixed_course_id in fixed_assignments:
-            assignment_key = (fixed_lect_id, fixed_course_id)
-            if assignment_key in possible_assignments_dict:
-                var_to_pin = possible_assignments_dict[assignment_key]["variable"]
-                model.Add(var_to_pin == 1)
-                log_to_stream(f"  + Pinned assignment: {fixed_lect_id} to {fixed_course_id} (variable {var_to_pin.Name()} forced to 1).")
-            else:
-                # ピン留めしようとした割り当てが、そもそも候補にない（資格がない、スケジュールが合わない、または forced_unassignments で除外された）
-                # この場合、実行不可能な問題になる可能性が高い
-                log_to_stream(f"  WARNING: Attempted to pin assignment ({fixed_lect_id}, {fixed_course_id}) but it's not a possible assignment. This may lead to an INFEASIBLE solution.")
-    else:
-        log_to_stream("No fixed assignments specified.")
-
-    if weight_consecutive_assignment > 0: # 修正: このログは以前のブロックから移動
-        if weight_consecutive_assignment > 0:
-            log_to_stream("No consecutive day pairs found, or weight_consecutive_assignment is zero. Skipping reward logic.")
-
-
-    if objective_terms:
-        model.Minimize(sum(objective_terms))
-    else:
-        # This case should ideally not be reached if 'possible_assignments' was non-empty,
-        # as 'assignment_costs' would initialize 'objective_terms'.
-        # However, if it is reached, minimizing 0 is valid, and the solver should still run.
-        log_to_stream("Warning: Objective terms list was empty. Minimizing 0.")
-        model.Minimize(0) 
-    solver = cp_model.CpSolver()
-    solver.parameters.log_search_progress = True # ソルバーのログ出力を有効化
-    # --- ソルバーの並列処理有効化 (一旦コメントアウトして安定性を確認) ---
-    # num_workers = os.cpu_count()
-    # if num_workers: 
-    #     solver.parameters.num_search_workers = num_workers
-    #     log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
-
-    # solver.log_callback を使用してソルバーログをキャプチャ
-    solver.log_callback = lambda msg: solver_capture_stream.write(msg + "\n") # メッセージごとに改行を追加
-
-    # ソルバーログの開始マーカーを solver_capture_stream に直接書き込む
-    solver_capture_stream.write(f"{SOLVER_LOG_START_MARKER}\n")
-    
-    status_code = cp_model.UNKNOWN # Initialize status_code
-    status_code = solver.Solve(model) # コールバックインスタンスは渡さない
-
-    # ソルバーログの終了マーカーを solver_capture_stream に直接書き込む
-    solver_capture_stream.write(f"\n{SOLVER_LOG_END_MARKER}\n") # 前後に改行を追加して区切りを明確に
-
-    captured_solver_log_with_markers = solver_capture_stream.getvalue()
-    captured_app_log = app_log_stream.getvalue()
-
-    # 純粋なソルバーログ（マーカーなし）を抽出
-    pure_solver_lines = []
-    capturing_solver_log = False
-    # captured_solver_log_with_markers から抽出する
-    for line in captured_solver_log_with_markers.splitlines(keepends=False):
-        if line == SOLVER_LOG_START_MARKER:
-            capturing_solver_log = True
-            continue # マーカー自体は含めない
-        if line == SOLVER_LOG_END_MARKER:
-            capturing_solver_log = False
-            break # マーカー自体は含めない
-        if capturing_solver_log:
-            pure_solver_lines.append(line)
-    
-    pure_solver_log_content = "\n".join(pure_solver_lines)
-    if pure_solver_lines: # 何か行があれば最後に改行を追加
-        pure_solver_log_content += "\n"
-
-    # Gemini送信用・rawログ保存用の結合ログ
-    full_application_and_solver_log_content = captured_app_log + captured_solver_log_with_markers
-
-    status_name = solver.StatusName(status_code) # Get the status name
-    results = []
-    objective_value = None
-    solution_status_str = "解なし"
-
-    if status_code == cp_model.OPTIMAL or status_code == cp_model.FEASIBLE:
-        # solution_status_str と objective_value はこのブロック内で設定
-        solution_status_str = "最適解" if status_code == cp_model.OPTIMAL else "実行可能解" # type: ignore
-        objective_value = solver.ObjectiveValue() / 100 # スケーリングを戻す
-        
-        # まず、今回の割り当てで各講師が何回割り当てられたかを計算
-        lecturer_assignment_counts_this_round = {}
-        for pa_data_count_check in possible_assignments_dict.values():
-            if solver.Value(pa_data_count_check["variable"]) == 1: # type: ignore
-                lecturer_id_for_count = pa_data_count_check["lecturer_id"]
-                lecturer_assignment_counts_this_round[lecturer_id_for_count] = \
-                    lecturer_assignment_counts_this_round.get(lecturer_id_for_count, 0) + 1
-
-        # 解決された連続ペア割り当てをマップに格納
-        solved_consecutive_assignments_map = {} # key: (lecturer_id, course_id), value: pair_id
-        if weight_consecutive_assignment > 0 and consecutive_assignment_pair_vars_details:
-            for pair_detail in consecutive_assignment_pair_vars_details:
-                if solver.Value(pair_detail["variable"]) == 1: # type: ignore
-                    lect_id = pair_detail["lecturer_id"]
-                    c1_id_res = pair_detail["course1_id"]
-                    c2_id_res = pair_detail["course2_id"]
-                    p_id_res = pair_detail["pair_id"]
-                    solved_consecutive_assignments_map[(lect_id, c1_id_res)] = p_id_res
-                    solved_consecutive_assignments_map[(lect_id, c2_id_res)] = p_id_res
-                    log_to_stream(f"  Confirmed consecutive assignment for L:{lect_id} on Pair:{p_id_res} (C1:{c1_id_res}, C2:{c2_id_res})")
-        # possible_assignments_dict を反復処理して結果を構築
-        for (lecturer_id_res, course_id_res), pa_data in possible_assignments_dict.items():
-            if solver.Value(pa_data["variable"]) == 1: # type: ignore
-                lecturer = lecturers_dict[lecturer_id_res] # 事前処理した辞書から取得
-                course = courses_dict[course_id_res] # 事前処理した辞書から取得
-                results.append({
-                    # ... (他のフィールドは変更なし)
-                    "講師ID": lecturer["id"],
-                    "講師名": lecturer["name"],
-                    "講座ID": course["id"],
-                    "講座名": course["name"],
-                    "教室ID": course["classroom_id"],
-                    "スケジュール": course['schedule'],
-                    "算出コスト(x100)": pa_data["cost"],
-                    "教室名": classrooms_dict.get(course["classroom_id"], {}).get("location", "不明"), # 教室名を追加
-                    "移動コスト(元)": pa_data["raw_costs"]["travel"],
-                    "年齢コスト(元)": pa_data["raw_costs"]["age"],
-                    "頻度コスト(元)": pa_data["raw_costs"]["frequency"],
-                    "資格コスト(元)": pa_data["raw_costs"]["qualification"],
-                    "当該教室最終割当日からの日数": pa_data["debug_days_since_last_assignment"], # これはそのまま
-                    "講師一般ランク": lecturer.get("qualification_general_rank"),
-                    "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
-                    "講座タイプ": course.get("course_type"),
-                    "講座ランク": course.get("rank"),
-                    "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0),
-                    "連続ペア割当": solved_consecutive_assignments_map.get((lecturer["id"], course["id"]), "なし") # 元の計算ロジックを復元
-                })
-    elif status_code == cp_model.INFEASIBLE:
-        solution_status_str = "実行不可能 (制約を満たす解なし)"
-    else:
-        solution_status_str = f"解探索失敗 (ステータス: {status_name} [{status_code}])" # Include name and code
-
-    return SolverOutput(
-        solution_status_str=solution_status_str,
-        objective_value=objective_value,
-        assignments=results,
-        all_courses=list(courses_dict.values()), # courses_data の代わりに辞書の値を渡す
-        all_lecturers=list(lecturers_dict.values()), # lecturers_data の代わりに辞書の値を渡す
-        solver_raw_status_code=status_code,
-        full_application_and_solver_log=full_application_and_solver_log_content,
-        pure_solver_log=pure_solver_log_content,
-        application_log=captured_app_log
-    )
+# --- [修正点2] solve_assignment関数とSolverOutputクラスはここから削除されている ---
 
 # --- 3. Streamlit UI ---
 def initialize_app_data(force_regenerate: bool = False):
@@ -1009,24 +480,40 @@ def main():
         try:
             logger.info("Starting optimization calculation (solve_assignment).")
             with st.spinner("最適化計算を実行中..."):
-                solver_output = solve_assignment(
-                    st.session_state.DEFAULT_LECTURERS_DATA, st.session_state.DEFAULT_COURSES_DATA,
-                    st.session_state.DEFAULT_CLASSROOMS_DATA, st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX,
-                    st.session_state.get("weight_past_assignment_exp", 0.5),
-                    st.session_state.get("weight_qualification_exp", 0.5),
-                    st.session_state.get("weight_travel_exp", 0.5),
-                    st.session_state.get("weight_age_exp", 0.5),
-                    st.session_state.get("weight_frequency_exp", 0.5),
-                    st.session_state.get("weight_assignment_shortage_exp", 0.5),
-                    st.session_state.get("weight_lecturer_concentration_exp", 0.5),
-                    st.session_state.get("weight_consecutive_assignment_exp", 0.5),
-                    st.session_state.allow_under_assignment_cb,
-                    st.session_state.TODAY, # today_date を適切な位置に渡す
-                    st.session_state.get("fixed_assignments_for_solver"), # 追加
-                    st.session_state.get("forced_unassignments_for_solver")
+                # --- [修正点3] アダプターとエンジンを呼び出す ---
+                engine_input_data = data_adapter.adapt_data_for_engine(
+                    lecturers_data=st.session_state.DEFAULT_LECTURERS_DATA,
+                    courses_data=st.session_state.DEFAULT_COURSES_DATA,
+                    classrooms_data=st.session_state.DEFAULT_CLASSROOMS_DATA,
+                    travel_costs_matrix=st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX,
+                    # kwargs は現状未使用だが、将来的な拡張のために残す
                 )
+                
+                solver_output = optimization_engine.solve_assignment(
+                    lecturers_data=engine_input_data["lecturers_data"],
+                    courses_data=engine_input_data["courses_data"],
+                    classrooms_data=engine_input_data["classrooms_data"],
+                    travel_costs_matrix=engine_input_data["travel_costs_matrix"],
+                    weight_past_assignment_recency=st.session_state.get("weight_past_assignment_exp", 0.5),
+                    weight_qualification=st.session_state.get("weight_qualification_exp", 0.5),
+                    weight_travel=st.session_state.get("weight_travel_exp", 0.5),
+                    weight_age=st.session_state.get("weight_age_exp", 0.5),
+                    weight_frequency=st.session_state.get("weight_frequency_exp", 0.5),
+                    weight_assignment_shortage=st.session_state.get("weight_assignment_shortage_exp", 0.5),
+                    weight_lecturer_concentration=st.session_state.get("weight_lecturer_concentration_exp", 0.5),
+                    weight_consecutive_assignment=st.session_state.get("weight_consecutive_assignment_exp", 0.5),
+                    allow_under_assignment=st.session_state.allow_under_assignment_cb,
+                    today_date=st.session_state.TODAY,
+                    fixed_assignments=st.session_state.get("fixed_assignments_for_solver"),
+                    forced_unassignments=st.session_state.get("forced_unassignments_for_solver")
+                )
+                # ---------------------------------------------
             logger.info("solve_assignment completed.")
 
+            # SolverOutput は optimization_engine.SolverOutput なので、isinstance での型チェックは
+            # optimization_engine.SolverOutput を使うべきだが、現状は dict でチェックしているため、
+            # 構造が変わらなければ問題ない。より厳密にするなら型をインポートしてチェックする。
+            # ここでは、戻り値が辞書であることを期待する。
             if not isinstance(solver_output, dict):
                 raise TypeError(f"最適化関数の戻り値が不正です。型: {type(solver_output)}")
 
