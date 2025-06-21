@@ -12,7 +12,7 @@ class InvalidInputError(ValueError):
 def _validate_date_string(date_str: Any, context: str) -> None:
     """日付文字列が 'YYYY-MM-DD' 形式か検証する"""
     if not isinstance(date_str, str):
-        raise InvalidInputError(f"{context}: 日付は文字列である必要がありますが、型 '{type(date_str).__name__}' を受け取りました。")
+        raise InvalidInputError(f"{context}: 日付は文字列である必要がありますが、型 '{type(date_str).__name__}' を受け取りました。値: {date_str}")
     try:
         datetime.datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
@@ -106,7 +106,7 @@ def _validate_lecturers(lecturers_data: List[Dict[str, Any]], valid_classroom_id
         if not isinstance(lecturer["availability"], list):
             raise InvalidInputError(f"{context}: 'availability' はリストである必要があります。")
         for date_str in lecturer["availability"]:
-            _validate_date_string(date_str, f"{context} の 'availability' 内の日付 '{date_str}'")
+            _validate_date_string(date_str, f"{context} の 'availability' 内の日付")
 
         if not isinstance(lecturer["past_assignments"], list):
             raise InvalidInputError(f"{context}: 'past_assignments' はリストである必要があります。")
