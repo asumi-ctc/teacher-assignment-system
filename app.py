@@ -595,15 +595,28 @@ def main():
     def run_optimization():
         """最適化を実行し、結果をセッション状態に保存するコールバック関数"""
         keys_to_clear_on_execute = [
-            "solver_result_cache", "raw_log_on_server", 
-            "solver_log_for_download", "optimization_error_message", # solver_log_for_download を追加
-            "application_log_for_download", # 追加
+            "solver_result_cache", "raw_log_on_server",
+            "solver_log_for_download", "optimization_error_message",
+            "application_log_for_download",
+            "data_adapter_log_for_download",
+            "optimization_engine_app_log_for_download",
+            "app_log_for_download",
             "gemini_explanation", "gemini_api_requested", "gemini_api_error", "last_full_prompt_for_gemini"
         ]
         for key in keys_to_clear_on_execute:
             if key in st.session_state:
                 del st.session_state[key]
         logger.info("Cleared previous optimization results from session_state.")
+
+        def read_log_file(log_path: str) -> str:
+            """ログファイルを読み込んで内容を返す。存在しない場合は空文字列を返す。"""
+            try:
+                if os.path.exists(log_path):
+                    with open(log_path, 'r', encoding='utf-8') as f:
+                        return f.read()
+            except Exception as e:
+                logger.error(f"Failed to read log file {log_path}: {e}")
+            return ""
 
         try:
             with st.spinner("最適化計算を実行中..."):
@@ -671,7 +684,6 @@ def main():
             import traceback
             error_trace = traceback.format_exc()
             st.session_state.optimization_error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
-            # ログダウンロード用に空のログを設定
             st.session_state.solver_log_for_download = ""
             st.session_state.application_log_for_download = ""
             st.session_state.raw_log_on_server = f"VALIDATION FAILED:\n{st.session_state.optimization_error_message}\n\n{error_trace}"
@@ -685,12 +697,19 @@ def main():
             import traceback
             error_trace = traceback.format_exc()
             st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
-            st.session_state.solver_log_for_download = "" # エラー時は空
-            st.session_state.application_log_for_download = "" # エラー時は空
+            st.session_state.solver_log_for_download = ""
+            st.session_state.application_log_for_download = ""
             st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
 
+        finally:
+            # 処理の最後にログファイルを読み込む
+            logger.info("Reading log files to store in session state.")
+            st.session_state.data_adapter_log_for_download = read_log_file("logs/data_adapter.log")
+            st.session_state.optimization_engine_app_log_for_download = read_log_file("logs/optimization_engine.log")
+            st.session_state.app_log_for_download = read_log_file("logs/app.log")
+            logger.info("Finished reading log files.")
     # OLD CALLBACK - to be removed or replaced
     # def handle_change_lecturer_callback(lecturer_id_to_remove: str, course_id_to_reassign: str):
     def handle_execute_changes_callback():
@@ -1364,27 +1383,59 @@ else:
                 if st.session_state.get("solution_executed"):
                     st.markdown("---") # 区切り線
                     st.subheader("ログのダウンロード")
-                    dl_cols = st.columns(2)
-                    with dl_cols[0]:
+                    dl_cols_1 = st.columns(2)
+                    dl_cols_2 = st.columns(2)
+
+                    with dl_cols_1[0]:
+                        if st.session_state.get("data_adapter_log_for_download"):
+                            st.download_button(
+                                label="データアダプターのログ",
+                                data=st.session_state.data_adapter_log_for_download,
+                                file_name="data_adapter.log",
+                                mime="text/plain",
+                                key="download_data_adapter_log_button",
+                                help="データバリデーションとアダプター処理に関するログです。"
+                            )
+                    with dl_cols_1[1]:
+                        if st.session_state.get("optimization_engine_app_log_for_download"):
+                            st.download_button(
+                                label="データ前処理のログ",
+                                data=st.session_state.optimization_engine_app_log_for_download,
+                                file_name="optimization_engine.log",
+                                mime="text/plain",
+                                key="download_optimization_engine_log_button",
+                                help="最適化エンジンのセットアップとコスト計算に関するログです。"
+                            )
+                    with dl_cols_2[0]:
                         if st.session_state.get("solver_log_for_download"):
                             st.download_button(
-                                label="ソルバーログのダウンロード",
+                                label="OR-Toolsソルバーのログ",
                                 data=st.session_state.solver_log_for_download,
                                 file_name="solver_log.txt",
                                 mime="text/plain",
                                 key="download_solver_log_button",
                                 help="最適化ソルバーが生成したログです。"
                             )
-                    with dl_cols[1]:
-                        if st.session_state.get("application_log_for_download"):
+                    with dl_cols_2[1]:
+                        if st.session_state.get("app_log_for_download"):
                             st.download_button(
-                                label="アプリケーションログのダウンロード",
-                                data=st.session_state.application_log_for_download,
-                                file_name="application_log.txt",
+                                label="その他のシステムログ",
+                                data=st.session_state.app_log_for_download,
+                                file_name="app.log",
                                 mime="text/plain",
-                                key="download_application_log_button",
-                                help="最適化処理中のアプリケーション内部ログです。"
+                                key="download_app_log_button",
+                                help="UI操作や全体フローに関するシステムログです。"
                             )
+
+                    if st.session_state.get("application_log_for_download"):
+                        st.download_button(
+                            label="最適化エンジン内部ログ",
+                            data=st.session_state.application_log_for_download,
+                            file_name="optimization_engine_internal.log",
+                            mime="text/plain",
+                            key="download_application_log_button",
+                            help="最適化エンジン内部でキャプチャされた、割り当て候補のフィルタリングやコスト計算の詳細ログです。"
+                        )
                 
                 if not GEMINI_API_KEY and st.session_state.get("solution_executed"):
                     if not GEMINI_API_KEY:
