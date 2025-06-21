@@ -1,12 +1,12 @@
 # optimization_engine.py
 import io
 import logging
-import datetime
-import random # 指示にはあったが、solve_assignment内では直接未使用。データ生成側で使用。
+import datetime # 日付処理用
 import numpy as np
-import os # os.cpu_count() のために必要 (現在はコメントアウトされているが将来使う可能性)
 from ortools.sat.python import cp_model
 from typing import TypedDict, List, Optional, Tuple, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 # --- グローバル定数 (ログマーカー) ---
 SOLVER_LOG_START_MARKER = "--- Solver Log (Captured by app.py) ---" # app.py から移動したが、元々の名前を維持
@@ -50,7 +50,6 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     # --- ログキャプチャ用の StringIO ---
     app_log_stream = io.StringIO() # アプリケーションログ用 (エンジン内の処理ログ)
     solver_capture_stream = io.StringIO() # ソルバーログキャプチャ用
-    logger = logging.getLogger(__name__) # solve_assignment内でロガーを取得
 
     # アプリケーションログ出力関数 (標準ロガーとapp_log_streamに出力)
     def log_to_stream(message: str):

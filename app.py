@@ -450,10 +450,133 @@ def initialize_app_data(force_regenerate: bool = False):
 
     logger.info(f"  Exiting initialize_app_data. 'app_data_initialized': {st.session_state.get('app_data_initialized')}")
 
+def _corrupt_duplicate_classroom_id():
+    """教室データのIDを重複させる"""
+    classrooms = st.session_state.DEFAULT_CLASSROOMS_DATA
+    if len(classrooms) > 1:
+        classrooms[1]['id'] = classrooms[0]['id']
+        st.session_state.DEFAULT_CLASSROOMS_DATA = classrooms
+        return "教室データのIDを重複させました (classrooms[1]['id'] = classrooms[0]['id'])。"
+    return "教室データが少なく、IDを重複させられませんでした。"
+
+def _corrupt_missing_classroom_location():
+    """教室データのlocationを欠落させる"""
+    classrooms = st.session_state.DEFAULT_CLASSROOMS_DATA
+    if classrooms:
+        del classrooms[0]['location']
+        st.session_state.DEFAULT_CLASSROOMS_DATA = classrooms
+        return "教室データの必須項目 'location' を欠落させました。"
+    return "教室データが空で、不正化できませんでした。"
+
+def _corrupt_lecturer_bad_age():
+    """講師データのageを範囲外にする"""
+    lecturers = st.session_state.DEFAULT_LECTURERS_DATA
+    if lecturers:
+        lecturers[0]['age'] = 101
+        st.session_state.DEFAULT_LECTURERS_DATA = lecturers
+        return "講師データの 'age' を範囲外の値 (101) にしました。"
+    return "講師データが空で、不正化できませんでした。"
+
+def _corrupt_lecturer_bad_availability_date():
+    """講師データのavailabilityに不正な日付形式を含める"""
+    lecturers = st.session_state.DEFAULT_LECTURERS_DATA
+    if lecturers and lecturers[0]['availability']:
+        lecturers[0]['availability'][0] = "2025/01/01" # 不正な形式
+        st.session_state.DEFAULT_LECTURERS_DATA = lecturers
+        return "講師データの 'availability' に不正な日付形式 ('YYYY/MM/DD') を含めました。"
+    return "講師データまたはavailabilityが空で、不正化できませんでした。"
+
+def _corrupt_course_bad_rank():
+    """講座データのrankを非整数にする"""
+    courses = st.session_state.DEFAULT_COURSES_DATA
+    if courses:
+        courses[0]['rank'] = "A"
+        st.session_state.DEFAULT_COURSES_DATA = courses
+        return "講座データの 'rank' を非整数 ('A') にしました。"
+    return "講座データが空で、不正化できませんでした。"
+
+def _corrupt_course_with_nonexistent_classroom():
+    """講座データが、存在しない教室IDを参照するようにする"""
+    courses = st.session_state.DEFAULT_COURSES_DATA
+    if courses:
+        courses[0]['classroom_id'] = "C_NON_EXISTENT_ID"
+        st.session_state.DEFAULT_COURSES_DATA = courses
+        return "講座データの 'classroom_id' を存在しないIDにしました。"
+    return "講座データが空で、不正化できませんでした。"
+
+def _corrupt_travel_costs_negative_value():
+    """移動コストに負の値を含める"""
+    costs = st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX
+    if costs:
+        first_key = next(iter(costs))
+        costs[first_key] = -100
+        st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX = costs
+        return "移動コスト行列に負の値を含めました。"
+    return "移動コスト行列が空で、不正化できませんでした。"
+
+def generate_invalid_sample_data():
+    """意図的に不正なデータを生成し、st.session_state を上書きする。"""
+    initialize_app_data(force_regenerate=True)
+    logger = logging.getLogger('app')
+    logger.info("Generated a fresh set of valid data to be corrupted for testing.")
+
+    corruption_functions = [
+        _corrupt_duplicate_classroom_id, _corrupt_missing_classroom_location,
+        _corrupt_lecturer_bad_age, _corrupt_lecturer_bad_availability_date,
+        _corrupt_course_bad_rank, _corrupt_course_with_nonexistent_classroom,
+        _corrupt_travel_costs_negative_value,
+    ]
+    chosen_corruption = random.choice(corruption_functions)
+    description = chosen_corruption()
+    logger.info(f"Data corruption applied: {description}")
+    return description
+
+def setup_logging():
+    """アプリケーション全体のロギングを設定する"""
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    # ターゲットロガーとファイルパスの辞書
+    loggers_to_configure = {
+        'app': os.path.join(log_dir, 'app.log'),
+        'data_adapter': os.path.join(log_dir, 'data_adapter.log'),
+        'optimization_engine': os.path.join(log_dir, 'optimization_engine.log')
+    }
+
+    # ルートロガーにコンソール出力を設定
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+
+    # 各モジュール用のロガーを設定
+    for name, log_file in loggers_to_configure.items():
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.INFO)
+        # ルートロガーへの伝播を防ぎ、コンソールへの二重出力を回避
+        logger.propagate = False
+
+        # コンソールハンドラ (既に追加されていなければ)
+        if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+            ch = logging.StreamHandler()
+            ch.setFormatter(formatter)
+            logger.addHandler(ch)
+
+        # ファイルハンドラ (既に追加されていなければ)
+        if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+            # 実行のたびにログファイルを上書きする
+            fh = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
+
 def main():
     # --- ロガーやデータ初期化など ---
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-    logger = logging.getLogger(__name__)
+    setup_logging()
+    logger = logging.getLogger('app')
     st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
     initialize_app_data() # 初回呼び出し (force_regenerate=False デフォルト)
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
@@ -463,6 +586,11 @@ def main():
         logger.info("Regenerate sample data button clicked, callback triggered.")
         initialize_app_data(force_regenerate=True)
         st.session_state.show_regenerate_success_message = True # メッセージ表示用フラグ
+
+    def handle_generate_invalid_data():
+        logger.info("Generate invalid data button clicked, callback triggered.")
+        description = generate_invalid_sample_data()
+        st.session_state.show_invalid_data_message = description # メッセージを保存
 
     def run_optimization():
         """最適化を実行し、結果をセッション状態に保存するコールバック関数"""
@@ -478,8 +606,8 @@ def main():
         logger.info("Cleared previous optimization results from session_state.")
 
         try:
-            logger.info("Starting optimization calculation (solve_assignment).")
             with st.spinner("最適化計算を実行中..."):
+                logger.info("Starting data adaptation and validation.")
                 # --- [修正点3] アダプターとエンジンを呼び出す ---
                 engine_input_data = data_adapter.adapt_data_for_engine(
                     lecturers_data=st.session_state.DEFAULT_LECTURERS_DATA,
@@ -488,7 +616,9 @@ def main():
                     travel_costs_matrix=st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX,
                     # kwargs は現状未使用だが、将来的な拡張のために残す
                 )
+                logger.info("Data adaptation and validation successful.")
                 
+                logger.info("Starting optimization calculation (solve_assignment).")
                 solver_output = optimization_engine.solve_assignment(
                     lecturers_data=engine_input_data["lecturers_data"],
                     courses_data=engine_input_data["courses_data"],
@@ -535,6 +665,20 @@ def main():
 
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
+
+        except data_adapter.InvalidInputError as e:
+            logger.error(f"データバリデーションエラーが発生しました: {e}", exc_info=True)
+            import traceback
+            error_trace = traceback.format_exc()
+            st.session_state.optimization_error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
+            # ログダウンロード用に空のログを設定
+            st.session_state.solver_log_for_download = ""
+            st.session_state.application_log_for_download = ""
+            st.session_state.raw_log_on_server = f"VALIDATION FAILED:\n{st.session_state.optimization_error_message}\n\n{error_trace}"
+            # UIにエラーを表示するための設定
+            st.session_state.solution_executed = True
+            st.session_state.view_mode = "optimization_result"
+            st.rerun() # UIを即時更新してエラーを表示
 
         except Exception as e:
             logger.error(f"Unexpected error during optimization process: {e}", exc_info=True)
@@ -698,10 +842,17 @@ def main():
     if st.session_state.view_mode == "sample_data":
         # (サンプルデータ表示ロジックは省略)
         st.header("入力データ")
-
+        
         if st.session_state.get("show_regenerate_success_message"):
             st.success("サンプルデータを再生成しました。")
             del st.session_state.show_regenerate_success_message # メッセージ表示後にフラグを削除
+        
+        if st.session_state.get("show_invalid_data_message"):
+            st.warning(f"テスト用の不正データを生成しました: {st.session_state.show_invalid_data_message}")
+            del st.session_state.show_invalid_data_message
+
+        st.button("テスト用不正データ生成", key="generate_invalid_data_button", on_click=handle_generate_invalid_data, help="データバリデーションのテスト用に、意図的に不正なデータを生成します。")
+
 
         st.button("サンプルデータ再生成", key="regenerate_sample_data_button", on_click=handle_regenerate_sample_data)
         logger.info("Displaying sample data.")

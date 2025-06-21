@@ -4,6 +4,8 @@ import datetime
 from typing import List, Dict, Any, Tuple, Set
 
 # --- カスタム例外 ---
+logger = logging.getLogger(__name__)
+
 class InvalidInputError(ValueError):
     """データバリデーションエラーを示すカスタム例外"""
     pass
@@ -166,7 +168,6 @@ def _validate_courses(courses_data: List[Dict[str, Any]], valid_classroom_ids: S
 
 def _validate_travel_costs(travel_costs_matrix: Dict[Tuple[str, str], int], valid_classroom_ids: Set[str]) -> None:
     """移動コストデータのバリデーションを行う"""
-    logger = logging.getLogger(__name__)
     if not isinstance(travel_costs_matrix, dict):
         raise InvalidInputError(f"移動コストデータは辞書である必要がありますが、型 '{type(travel_costs_matrix).__name__}' を受け取りました。")
 
@@ -205,7 +206,6 @@ def adapt_data_for_engine(
     バリデーションに失敗した場合は InvalidInputError を送出する。
     """
     logger = logging.getLogger(__name__)
-    logger.info("入力データのバリデーションを開始します。")
 
     try:
         # 1. 教室データのバリデーション (他データが参照するため最初に行う)
