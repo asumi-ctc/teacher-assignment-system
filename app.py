@@ -364,7 +364,7 @@ def initialize_app_data(force_regenerate: bool = False):
     アプリケーションの初期データを生成し、セッション状態に保存する。
     force_regenerate=True の場合、既存のデータがあっても強制的に再生成する。
     """
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger('app')
     logger.info(f"Entering initialize_app_data(force_regenerate={force_regenerate})")
     logger.info(f"  Initial 'app_data_initialized': {st.session_state.get('app_data_initialized')}")
 
