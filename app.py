@@ -634,15 +634,17 @@ def run_optimization():
         if missing_keys:
             raise KeyError(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}")
 
-            st.session_state.solver_result_cache = {
-                k: v for k, v in solver_output.items() 
-            }
-            # 修正実行後は、次回通常の最適化のためにこれらのパラメータをクリア
-            if "fixed_assignments_for_solver" in st.session_state: del st.session_state.fixed_assignments_for_solver
-            if "forced_unassignments_for_solver" in st.session_state: del st.session_state.forced_unassignments_for_solver
+        # [修正] 上記のifブロックから移動。キーのチェックをパスした場合に実行されるようにインデントを修正。
+        # このブロックは、前回の修正で誤って if missing_keys: ブロック内に配置され、
+        # raise KeyError の後にあるため、到達不能になっていました。
+        st.session_state.solver_result_cache = {
+            k: v for k, v in solver_output.items()
+        }
+        if "fixed_assignments_for_solver" in st.session_state: del st.session_state.fixed_assignments_for_solver
+        if "forced_unassignments_for_solver" in st.session_state: del st.session_state.forced_unassignments_for_solver
 
-            st.session_state.solution_executed = True
-            st.session_state.view_mode = "optimization_result"
+        st.session_state.solution_executed = True
+        st.session_state.view_mode = "optimization_result"
 
     except optimization_gateway.InvalidInputError as e:
         logger.error(f"データバリデーションエラーが発生しました: {e}", exc_info=True)
