@@ -376,9 +376,13 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     solver.parameters.max_time_in_seconds = 60.0
     log_to_stream(f"Solver time limit set to {solver.parameters.max_time_in_seconds} seconds.")
 
-    num_workers_to_set = 1
+    # CPUコア数に応じて並列探索数を動的に設定
+    available_cores = os.cpu_count() or 1 # os.cpu_count() が None を返す場合を考慮
+    # 対話的なアプリケーションのため、すべてのコアを使い切らないように上限を設けることも検討できます (例: max(1, available_cores - 1))
+    # ここでは利用可能なコアを最大限活用します。
+    num_workers_to_set = available_cores
     solver.parameters.num_search_workers = num_workers_to_set
-    log_to_stream(f"Solver configured to use {num_workers_to_set} worker(s) (fixed for performance testing).")
+    log_to_stream(f"Solver configured to use {num_workers_to_set} worker(s) based on available CPU cores ({available_cores}).")
 
     solver.log_callback = lambda msg: solver_capture_stream.write(msg + "\n")
 
