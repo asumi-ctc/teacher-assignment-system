@@ -8,6 +8,20 @@ from typing import TypedDict, List, Optional, Tuple, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# --- 定数定義 ---
+RECENCY_COST_CONSTANT = 100000.0
+BASE_PENALTY_SHORTAGE_SCALED = 50000 * 100
+BASE_PENALTY_CONCENTRATION_SCALED = 20000 * 100
+BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
+# ---
+
+# --- ログ出力ヘルパー ---
+def log_to_stream(message: str):
+    """アプリケーションログとしてメッセージを記録する"""
+    log_line = f"[SolverEngineLog] {message}\n" # プレフィックス変更
+    logger.info(log_line.strip()) # 標準ロガーには改行なしで
+# ---
+
 # --- [ここから app.py より移動] ---
 class SolverOutput(TypedDict):
     solution_status_str: str
@@ -39,11 +53,6 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
     courses_dict = {course['id']: course for course in courses_data}
     classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
-
-    # アプリケーションログ出力関数 (標準ロガーとapp_log_streamに出力)
-    def log_to_stream(message: str):
-        log_line = f"[SolverEngineLog] {message}\n" # プレフィックス変更
-        logger.info(log_line.strip()) # 標準ロガーには改行なしで
 
     # --- ステップ1: 連日講座ペアのリストアップ ---
     consecutive_day_pairs: List[Dict[str, Any]] = []
@@ -91,8 +100,6 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     forced_unassignments_set = set(forced_unassignments) if forced_unassignments else set()
     if forced_unassignments_set:
         log_to_stream(f"  Forced unassignments specified: {forced_unassignments_set}")
-
-    RECENCY_COST_CONSTANT = 100000.0
 
     for lecturer_id_loop, lecturer in lecturers_dict.items():
         for course_id_loop, course in courses_dict.items():
@@ -259,9 +266,8 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
                 if weight_assignment_shortage > 0:
                     shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{course_id}')
                     model.Add(shortage_var >= target_assignment_count - sum(possible_assignments_for_course))
-                    
-                    base_penalty_shortage_scaled = 50000 * 100
-                    actual_penalty_for_shortage = int(weight_assignment_shortage * base_penalty_shortage_scaled)
+
+                    actual_penalty_for_shortage = int(weight_assignment_shortage * BASE_PENALTY_SHORTAGE_SCALED)
                     if actual_penalty_for_shortage > 0:
                         shortage_penalty_terms.append(shortage_var * actual_penalty_for_shortage)
                         log_to_stream(f"  + Course {course_id}: Added shortage penalty term (shortage_var * {actual_penalty_for_shortage}) for target {target_assignment_count}.")
@@ -275,8 +281,7 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
         log_to_stream(f"  + Added {len(shortage_penalty_terms)} shortage penalty terms to objective.")
 
     if weight_lecturer_concentration > 0:
-        base_penalty_concentration_scaled = 20000 * 100
-        actual_penalty_concentration = int(weight_lecturer_concentration * base_penalty_concentration_scaled)
+        actual_penalty_concentration = int(weight_lecturer_concentration * BASE_PENALTY_CONCENTRATION_SCALED)
 
         if actual_penalty_concentration > 0:
             for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
@@ -322,9 +327,8 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
                 model.Add(pair_var <= individual_var_c1)
                 model.Add(pair_var <= individual_var_c2)
 
-                base_reward_consecutive_scaled = 30000 * 100
-                actual_reward_for_pair = int(weight_consecutive_assignment * base_reward_consecutive_scaled)
-                
+                actual_reward_for_pair = int(weight_consecutive_assignment * BASE_REWARD_CONSECUTIVE_SCALED)
+
                 if actual_reward_for_pair > 0:
                     objective_terms.append(pair_var * -actual_reward_for_pair)
                     log_to_stream(f"    Added reward {-actual_reward_for_pair} for pair_var {pair_var_name}")
