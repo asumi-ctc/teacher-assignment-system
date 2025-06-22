@@ -4,6 +4,7 @@ import pandas as pd
 import io
 import re # 正規表現モジュール
 import datetime # 日付処理用に追加
+import time # 処理時間測定用に追加
 import google.generativeai as genai # Gemini API 用
 # from streamlit_oauth import OAuth2Component # OIDC認証用 # 削除
 # from google.oauth2 import id_token # IDトークン検証用 # 削除
@@ -599,8 +600,8 @@ def main():
             "solver_log_for_download", "optimization_error_message",
             "application_log_for_download",
             "data_adapter_log_for_download",
-            "app_log_for_download",
-            "gemini_explanation", "gemini_api_requested", "gemini_api_error", "last_full_prompt_for_gemini"
+            "app_log_for_download", "gemini_explanation", "gemini_api_requested",
+            "gemini_api_error", "last_full_prompt_for_gemini", "optimization_duration" # 処理時間もクリア
         ]
         for key in keys_to_clear_on_execute:
             if key in st.session_state:
@@ -619,6 +620,7 @@ def main():
 
         try:
             with st.spinner("最適化計算を実行中..."):
+                start_time = time.time() # 処理時間測定開始
                 logger.info("Starting data adaptation and validation.")
                 # --- [修正点3] アダプターとエンジンを呼び出す ---
                 engine_input_data = data_adapter.adapt_data_for_engine(
@@ -650,6 +652,12 @@ def main():
                     forced_unassignments=st.session_state.get("forced_unassignments_for_solver")
                 )
                 # ---------------------------------------------
+            
+            end_time = time.time() # 処理時間測定終了
+            elapsed_time = end_time - start_time
+            logger.info(f"Optimization process (data adapt + solve) took {elapsed_time:.2f} seconds.")
+            st.session_state.optimization_duration = elapsed_time # 結果をセッションに保存
+
             logger.info("solve_assignment completed.")
 
             # SolverOutput は optimization_engine.SolverOutput なので、isinstance での型チェックは
@@ -1230,8 +1238,14 @@ else:
                 logger.info("solver_result_cache found. Displaying results.")
                 solver_result = st.session_state.solver_result_cache
                 st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
-                if solver_result['objective_value'] is not None:
-                    st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
+                
+                metric_cols = st.columns(2)
+                with metric_cols[0]:
+                    if solver_result['objective_value'] is not None:
+                        st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
+                with metric_cols[1]:
+                    if 'optimization_duration' in st.session_state:
+                        st.metric("処理時間", f"{st.session_state.optimization_duration:.2f} 秒", help="データ準備から最適化完了までの時間です。")
 
                 if solver_result['solver_raw_status_code'] in [cp_model.FEASIBLE, cp_model.UNKNOWN]:
                     st.warning(
