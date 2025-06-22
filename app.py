@@ -7,6 +7,7 @@ import google.generativeai as genai # Gemini API 用
 # from streamlit_oauth import OAuth2Component # OIDC認証用 # 削除
 # from google.oauth2 import id_token # IDトークン検証用 # 削除
 # from google.auth.transport import requests as google_requests # IDトークン検証用 # 削除
+import multiprocessing
 import random # データ生成用
 import os # CPUコア数を取得するために追加
 import numpy as np # データ型変換のために追加
@@ -1568,4 +1569,11 @@ else:
         st.info("サイドバーから表示するデータを選択してください。")
     logger.info("Exiting main function.")
 if __name__ == "__main__":
+    try:
+        # Streamlit環境で安全にmultiprocessingを使用するため、'spawn'メソッドを強制的に設定
+        # これはアプリケーションの起動時に一度だけ実行されるべき。
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        # Streamlitの内部的な再実行サイクルなどで既に設定されている場合があるので無視する
+        pass
     main()

@@ -250,37 +250,9 @@ def adapt_data_for_engine(
 RETRY_LIMIT = 2
 PROCESS_TIMEOUT_SECONDS = 90
 
-def _reconfigure_logging_for_child_process():
-    """
-    子プロセス用にロガーを再設定する。
-    親プロセスから継承したハンドラをクリアし、独立したファイルハンドラを設定することで、
-    ファイルアクセスの競合によるデッドロックを防ぐ。
-    """
-    engine_logger = logging.getLogger('optimization_engine')
-    if not engine_logger.handlers:
-        # ハンドラがなければ何もしない（テスト環境など）
-        return
-
-    engine_logger.handlers.clear()
-
-    log_dir = "logs"
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, 'optimization_engine.log')
-
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-    # 実行のたびにログファイルを上書きする
-    fh = logging.FileHandler(log_file, mode='w', encoding='utf-8')
-    fh.setFormatter(formatter)
-
-    engine_logger.addHandler(fh)
-    engine_logger.setLevel(logging.INFO)
-    engine_logger.propagate = False
-
 def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
     """子プロセスで実行されるソルバー呼び出しラッパー"""
     try:
-        _reconfigure_logging_for_child_process()
         # optimization_engine.solve_assignment を直接呼び出す
         result = optimization_engine.solve_assignment(**solver_args)
         conn.send(result)
