@@ -373,13 +373,8 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     solver = cp_model.CpSolver()
     solver.parameters.log_search_progress = True
 
-    # 0.0 を設定すると、時間制限なしを意味します。
-    # これにより、ソルバーは時間制限を意識した探索戦略（実行可能解の改善優先）に切り替えることなく、
-    # デフォルトの効率的な探索戦略（最適性の発見と証明のバランス）を使用します。
-    # 以前の40秒での最適解到達という結果を参考に、実用的な時間制限を設定します。
-    # 計算時間と解の品質のバランスを取るための時間制限。180秒に延長してテスト。
-    solver.parameters.max_time_in_seconds = 180.0
-    log_to_stream(f"Solver time limit set to {solver.parameters.max_time_in_seconds} seconds (extended for testing).")
+    # 制限時間なしで実行
+    log_to_stream("Solver will run without a time limit.")
 
     # CPUコア数に応じて並列探索数を動的に設定
     available_cores = os.cpu_count() or 1 # os.cpu_count() が None を返す場合を考慮
