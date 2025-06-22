@@ -375,10 +375,10 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     solver.parameters.max_time_in_seconds = 20.0
     log_to_stream(f"Solver time limit set to {solver.parameters.max_time_in_seconds} seconds.")
 
-    # パフォーマンス測定のため、ワーカー数を固定値に設定 (1, 2, 4 などで試す)
-    num_workers_to_set = 4
+    # パフォーマンス測定のため、ワーカー数を固定値に設定 (1, 2, 4, os.cpu_count() などで試す)
+    num_workers_to_set = 1 # ベースライン測定のため、まずはシングルスレッドで実行
     solver.parameters.num_search_workers = num_workers_to_set
-    log_to_stream(f"Solver configured to use {num_workers_to_set} workers (fixed for performance testing).")
+    log_to_stream(f"Solver configured to use {num_workers_to_set} worker(s) (fixed for performance testing).")
 
     solver.log_callback = lambda msg: solver_capture_stream.write(msg + "\n")
 
