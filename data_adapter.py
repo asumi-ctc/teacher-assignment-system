@@ -2,6 +2,7 @@
 import logging
 import datetime
 import multiprocessing
+from multiprocessing.connection import Connection
 import optimization_engine
 from typing import List, Dict, Any, Tuple, Set
 
@@ -248,7 +249,7 @@ def adapt_data_for_engine(
 RETRY_LIMIT = 2
 PROCESS_TIMEOUT_SECONDS = 90
 
-def _run_solver_process(conn: multiprocessing.connection.Connection, solver_args: Dict[str, Any]):
+def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
     """子プロセスで実行されるソルバー呼び出しラッパー"""
     try:
         # optimization_engine.solve_assignment を直接呼び出す
