@@ -19,7 +19,7 @@ import logging # logging モジュールをインポート
 from typing import List, Optional, Any, Tuple # TypedDict は optimization_engine に移動
 
 # --- [修正点1] 分離したモジュールをインポート ---
-import data_adapter
+import optimization_gateway
 import optimization_engine
 from ortools.sat.python import cp_model # solver_raw_status_code の比較等で使用
 # ---------------------------------------------
@@ -542,7 +542,7 @@ def setup_logging():
     # ターゲットロガーとファイルパスの辞書
     loggers_to_configure = {
         'app': os.path.join(log_dir, 'app.log'),
-        'data_adapter': os.path.join(log_dir, 'data_adapter.log'),
+        'optimization_gateway': os.path.join(log_dir, 'optimization_gateway.log'),
         'optimization_engine': os.path.join(log_dir, 'optimization_engine.log')
     }
 
@@ -598,8 +598,7 @@ def main():
         keys_to_clear_on_execute = [
             "solver_result_cache", "raw_log_on_server",
             "solver_log_for_download", "optimization_error_message",
-            "application_log_for_download",
-            "data_adapter_log_for_download",
+            "application_log_for_download", "optimization_gateway_log_for_download",
             "app_log_for_download", "gemini_explanation", "gemini_api_requested",
             "gemini_api_error", "last_full_prompt_for_gemini", "optimization_duration" # 処理時間もクリア
         ]
@@ -623,7 +622,7 @@ def main():
                 start_time = time.time() # 処理時間測定開始
                 logger.info("Starting data adaptation and validation.")
                 # --- [修正点3] アダプターとエンジンを呼び出す ---
-                engine_input_data = data_adapter.adapt_data_for_engine(
+                engine_input_data = optimization_gateway.adapt_data_for_engine(
                     lecturers_data=st.session_state.DEFAULT_LECTURERS_DATA,
                     courses_data=st.session_state.DEFAULT_COURSES_DATA,
                     classrooms_data=st.session_state.DEFAULT_CLASSROOMS_DATA,
@@ -632,8 +631,8 @@ def main():
                 )
                 logger.info("Data adaptation and validation successful.")
                 
-                logger.info("Starting optimization calculation (run_optimization_with_monitoring).")
-                solver_output = data_adapter.run_optimization_with_monitoring(
+                logger.info("Starting optimization calculation (optimization_gateway.run_optimization_with_monitoring).")
+                solver_output = optimization_gateway.run_optimization_with_monitoring(
                     lecturers_data=engine_input_data["lecturers_data"],
                     courses_data=engine_input_data["courses_data"],
                     classrooms_data=engine_input_data["classrooms_data"],
@@ -686,13 +685,13 @@ def main():
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
 
-        except data_adapter.InvalidInputError as e:
+        except optimization_gateway.InvalidInputError as e:
             logger.error(f"データバリデーションエラーが発生しました: {e}", exc_info=True)
             import traceback
             error_trace = traceback.format_exc()
             st.session_state.optimization_error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
             st.session_state.solver_log_for_download = ""
-            st.session_state.data_adapter_log_for_download = ""
+            st.session_state.optimization_gateway_log_for_download = ""
             st.session_state.app_log_for_download = ""
             st.session_state.application_log_for_download = ""
             st.session_state.raw_log_on_server = f"VALIDATION FAILED:\n{st.session_state.optimization_error_message}\n\n{error_trace}"
@@ -707,7 +706,7 @@ def main():
             error_trace = traceback.format_exc()
             st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
             st.session_state.solver_log_for_download = ""
-            st.session_state.data_adapter_log_for_download = ""
+            st.session_state.optimization_gateway_log_for_download = ""
             st.session_state.app_log_for_download = ""
             st.session_state.application_log_for_download = ""
             st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
@@ -717,7 +716,7 @@ def main():
         finally:
             # 処理の最後にログファイルを読み込む
             logger.info("Reading log files to store in session state.")
-            st.session_state.data_adapter_log_for_download = read_log_file("logs/data_adapter.log")
+            st.session_state.optimization_gateway_log_for_download = read_log_file("logs/optimization_gateway.log")
             st.session_state.app_log_for_download = read_log_file("logs/app.log")
             logger.info("Finished reading log files.")
     # OLD CALLBACK - to be removed or replaced
@@ -1412,14 +1411,14 @@ else:
                     dl_cols_2 = st.columns(2)
 
                     with dl_cols_1[0]:
-                        if st.session_state.get("data_adapter_log_for_download"):
+                        if st.session_state.get("optimization_gateway_log_for_download"):
                             st.download_button(
-                                label="データアダプターのログ",
-                                data=st.session_state.data_adapter_log_for_download,
-                                file_name="data_adapter.log",
+                                label="最適化ゲートウェイのログ",
+                                data=st.session_state.optimization_gateway_log_for_download,
+                                file_name="optimization_gateway.log",
                                 mime="text/plain",
-                                key="download_data_adapter_log_button",
-                                help="データバリデーションとアダプター処理に関するログです。"
+                                key="download_optimization_gateway_log_button",
+                                help="データバリデーション、プロセス監視、最適化エンジン呼び出しに関するログです。"
                             )
                     with dl_cols_1[1]:
                         if st.session_state.get("application_log_for_download"):
