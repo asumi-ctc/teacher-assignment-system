@@ -1,11 +1,10 @@
 # optimization_engine.py
-import io
 import logging
 import datetime # 日付処理用
 import os # 並列探索用にインポート
 import numpy as np
 from ortools.sat.python import cp_model
-from typing import TypedDict, List, Optional, Tuple, Dict, Any # io は不要
+from typing import TypedDict, List, Optional, Tuple, Dict, Any
 
 logger = logging.getLogger(__name__)
 

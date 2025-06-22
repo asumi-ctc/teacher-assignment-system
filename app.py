@@ -1,8 +1,6 @@
 import streamlit as st
 # import streamlit.components.v1 as components # 削除
 import pandas as pd
-import io
-import re # 正規表現モジュール
 import datetime # 日付処理用に追加
 import time # 処理時間測定用に追加
 import google.generativeai as genai # Gemini API 用
@@ -30,50 +28,19 @@ from ortools.sat.python import cp_model # solver_raw_status_code の比較等で
 
 # --- Gemini API送信用ログのフィルタリング関数 (グローバルスコープに移動) ---
 def filter_log_for_gemini(log_content: str) -> str:
+    """
+    ログ全体から OR-Tools ソルバーに関連するログ行のみを抽出する。
+    [OR-Tools Solver] プレフィックスを持つ行をフィルタリングします。
+    """
     lines = log_content.splitlines()
-    gemini_log_lines_final = [] # このリストには、処理されたソルバーログのみが格納されるようになります。
+    solver_log_prefix = "[OR-Tools Solver]"
     
-    solver_log_block = []
-    app_summary_lines = [] # 詳細パターンに一致しない、かつソルバーブロック外のアプリログ
-    app_detailed_lines_collected = [] # 詳細パターンに一致するアプリログ
-
-    in_solver_log_block = False
+    solver_log_lines = [line for line in lines if solver_log_prefix in line]
     
-    # 除外するアプリケーションログのパターン (詳細な割り当て試行ログ)
-    detailed_app_log_patterns = [
-        r"^\s*\+ Potential assignment:",
-        r"^\s*- Filtered out:", # 資格ランクや過去教室の重複による除外
-        r"^\s*Cost for ",
-        r"^\s*- Schedule incompatible", # スケジュール不一致 (許容されるがログは出る)
-        r"^\s*    Warning: Could not parse date", # 日付パースエラー
-    ]
-    
-    for line in lines:
-        if optimization_engine.SOLVER_LOG_START_MARKER in line: # optimization_engine から定数を参照
-            in_solver_log_block = True
-            solver_log_block.append(line)
-            continue 
-        if optimization_engine.SOLVER_LOG_END_MARKER in line: # optimization_engine から定数を参照
-            solver_log_block.append(line)
-            in_solver_log_block = False
-            continue
-
-        if in_solver_log_block:
-            solver_log_block.append(line)
-        else: # Application log
-            is_detailed = any(re.search(pattern, line) for pattern in detailed_app_log_patterns)
-            if is_detailed:
-                app_detailed_lines_collected.append(line)
-            else:
-                app_summary_lines.append(line)
-    
-    # アプリケーションログ（サマリーおよび詳細）は gemini_log_lines_final に追加されなくなります。
-
-    # Gemini用に solver_log_block のみを処理します
-    # ソルバーログの切り詰め処理を削除し、solver_log_block全体をそのまま使用します。
-    gemini_log_lines_final.extend(solver_log_block)
-    
-    return "\n".join(gemini_log_lines_final)
+    if not solver_log_lines:
+        return "ソルバーのログが見つかりませんでした。最適化が実行されなかったか、ログの形式が変更された可能性があります。"
+        
+    return "\n".join(solver_log_lines)
 
 # --- 大規模データ生成 ---
 # (変更なし)
@@ -714,8 +681,20 @@ def main():
             logger.info("Reading log files to store in session state.")
             st.session_state.optimization_gateway_log_for_download = read_log_file("logs/optimization_gateway.log")
             # optimization_engine のログは直接ファイルから読み込む
-            st.session_state.optimization_engine_log_for_download_from_file = read_log_file("logs/optimization_engine.log")
+            engine_log_content = read_log_file("logs/optimization_engine.log")
+            st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
             st.session_state.app_log_for_download = read_log_file("logs/app.log")
+
+            # OR-Toolsソルバーログを抽出してダウンロード用に設定
+            solver_log_lines = []
+            if engine_log_content:
+                solver_log_prefix = "[OR-Tools Solver]"
+                for line in engine_log_content.splitlines():
+                    if solver_log_prefix in line:
+                        solver_log_lines.append(line)
+            st.session_state.solver_log_for_download = "\n".join(solver_log_lines)
+            logger.info(f"Extracted {len(solver_log_lines)} lines of OR-Tools solver log for download.")
+
             logger.info("Finished reading log files.")
     # OLD CALLBACK - to be removed or replaced
     # def handle_change_lecturer_callback(lecturer_id_to_remove: str, course_id_to_reassign: str):
