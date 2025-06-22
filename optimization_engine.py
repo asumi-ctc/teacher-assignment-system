@@ -371,6 +371,9 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
 
     solver = cp_model.CpSolver()
     solver.parameters.log_search_progress = True
+    solver.parameters.max_time_in_seconds = 20.0
+    log_to_stream(f"Solver time limit set to {solver.parameters.max_time_in_seconds} seconds.")
+
     
     # num_workers = os.cpu_count()
     # if num_workers: 
@@ -413,7 +416,11 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     solution_status_str = "解なし"
 
     if status_code == cp_model.OPTIMAL or status_code == cp_model.FEASIBLE:
-        solution_status_str = "最適解" if status_code == cp_model.OPTIMAL else "実行可能解"
+        if status_code == cp_model.OPTIMAL:
+            solution_status_str = "最適解"
+        else: # FEASIBLE
+            solution_status_str = "実行可能解 (時間制限到達の可能性あり)"
+
         objective_value_solved = solver.ObjectiveValue() / 100
         
         lecturer_assignment_counts_this_round: Dict[str, int] = {}
@@ -462,6 +469,8 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
                 })
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
+    elif status_code == cp_model.UNKNOWN:
+        solution_status_str = "解探索失敗 (時間制限到達の可能性あり)"
     else:
         solution_status_str = f"解探索失敗 (ステータス: {status_name} [{status_code}])"
 

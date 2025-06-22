@@ -1233,6 +1233,15 @@ else:
                 if solver_result['objective_value'] is not None:
                     st.metric("総コスト (目的値)", f"{solver_result['objective_value']:.2f}")
 
+                if solver_result['solver_raw_status_code'] in [cp_model.FEASIBLE, cp_model.UNKNOWN]:
+                    st.warning(
+                        """
+                        時間制限(Time Limit)内に最適解が見つかりませんでした。現在の最良の解を表示します。
+                        
+                        もう一度やり直す場合は、余り必要としない最適化目標の重みを0.0に設定することで、その最適化目標が除外されて計算時間が短縮される可能性があります。
+                        """
+                    )
+
                 if solver_result.get('assignments') and solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]: # assignments の存在確認を追加
                     if solver_result['assignments']:
                         assigned_course_ids_for_message = {res["講座ID"] for res in solver_result['assignments']}
