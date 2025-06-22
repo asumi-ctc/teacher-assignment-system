@@ -2,6 +2,7 @@
 import io
 import logging
 import datetime # 日付処理用
+import os # 並列探索用にインポート
 import numpy as np
 from ortools.sat.python import cp_model
 from typing import TypedDict, List, Optional, Tuple, Dict, Any
@@ -374,11 +375,10 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     solver.parameters.max_time_in_seconds = 20.0
     log_to_stream(f"Solver time limit set to {solver.parameters.max_time_in_seconds} seconds.")
 
-    
-    # num_workers = os.cpu_count()
-    # if num_workers: 
-    #     solver.parameters.num_search_workers = num_workers
-    #     log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
+    num_workers = os.cpu_count()
+    if num_workers:
+        solver.parameters.num_search_workers = num_workers
+        log_to_stream(f"Solver configured to use {num_workers} workers (CPU cores).")
 
     solver.log_callback = lambda msg: solver_capture_stream.write(msg + "\n")
 
