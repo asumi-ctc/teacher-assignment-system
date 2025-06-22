@@ -1372,13 +1372,12 @@ else:
                             "- 割り当て可能な講師と講座のペアが元々存在しない (制約が厳しすぎる、データ不適合)。\n"
                             "- 結果として、総コスト 0.00 (何も割り当てない) が最適と判断された可能性があります。"
                         )
-                    st.subheader("全ての講座が割り当てられませんでした")
-                    st.dataframe(pd.DataFrame(solver_result['all_courses']))
-
-                elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE:
-                    st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
-                else:
-                    st.error(solver_result['solution_status_str'])
+                        st.subheader("全ての講座が割り当てられませんでした")
+                        st.dataframe(pd.DataFrame(solver_result['all_courses']))
+                    elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE:
+                        st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
+                    else:
+                        st.error(solver_result['solution_status_str'])
                 # --- [リファクタリングここまで] ---
 
                 if GEMINI_API_KEY and "raw_log_on_server" in st.session_state and st.session_state.raw_log_on_server:
