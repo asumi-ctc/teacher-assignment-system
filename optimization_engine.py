@@ -373,7 +373,7 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     solver = cp_model.CpSolver()
     solver.parameters.log_search_progress = True
 
-    solver.parameters.max_time_in_seconds = 40.0
+    solver.parameters.max_time_in_seconds = 60.0
     log_to_stream(f"Solver time limit set to {solver.parameters.max_time_in_seconds} seconds.")
 
     num_workers_to_set = 1
