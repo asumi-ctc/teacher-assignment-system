@@ -1,6 +1,8 @@
 # data_adapter.py
 import logging
 import datetime
+import multiprocessing
+import optimization_engine
 from typing import List, Dict, Any, Tuple, Set
 
 # --- カスタム例外 ---
@@ -240,3 +242,76 @@ def adapt_data_for_engine(
     except InvalidInputError as e:
         logger.error(f"入力データのバリデーションに失敗しました: {e}", exc_info=True)
         raise # エラーを呼び出し元に伝播させる
+
+# --- 最適化実行ラッパー (監視・再試行付き) ---
+
+RETRY_LIMIT = 2
+PROCESS_TIMEOUT_SECONDS = 90
+
+def _run_solver_process(conn: multiprocessing.connection.Connection, solver_args: Dict[str, Any]):
+    """子プロセスで実行されるソルバー呼び出しラッパー"""
+    try:
+        # optimization_engine.solve_assignment を直接呼び出す
+        result = optimization_engine.solve_assignment(**solver_args)
+        conn.send(result)
+    except Exception as e:
+        # プロセス内で発生した予期せぬエラーも親に送る
+        conn.send(e)
+    finally:
+        conn.close()
+
+def run_optimization_with_monitoring(
+    lecturers_data: List[Dict[str, Any]],
+    courses_data: List[Dict[str, Any]],
+    classrooms_data: List[Dict[str, Any]],
+    travel_costs_matrix: Dict[Tuple[str, str], int],
+    **kwargs: Any
+) -> optimization_engine.SolverOutput:
+    """
+    最適化エンジンを監視付きの別プロセスで実行し、タイムアウトや再試行を管理する。
+    """
+    logger = logging.getLogger(__name__)
+
+    # solve_assignment に渡す引数を辞書にまとめる
+    solver_args = {
+        "lecturers_data": lecturers_data,
+        "courses_data": courses_data,
+        "classrooms_data": classrooms_data,
+        "travel_costs_matrix": travel_costs_matrix,
+        **kwargs
+    }
+
+    for attempt in range(RETRY_LIMIT):
+        logger.info(f"最適化プロセスを開始します。(試行 {attempt + 1}/{RETRY_LIMIT})")
+        parent_conn, child_conn = multiprocessing.Pipe()
+
+        process = multiprocessing.Process(
+            target=_run_solver_process,
+            args=(child_conn, solver_args)
+        )
+
+        process.start()
+        process.join(timeout=PROCESS_TIMEOUT_SECONDS)
+
+        if process.is_alive():
+            logger.error(f"最適化プロセスがタイムアウトしました ({PROCESS_TIMEOUT_SECONDS}秒)。プロセスを強制終了します。")
+            process.terminate()
+            process.join() # 終了を待つ
+            if attempt < RETRY_LIMIT - 1:
+                logger.info("再試行します...")
+            continue # 次の試行へ
+
+        # タイムアウトしなかった場合
+        if parent_conn.poll(1): # 少し待ってデータがあるか確認
+            result = parent_conn.recv()
+            if isinstance(result, Exception):
+                raise InvalidInputError(f"最適化プロセスで予期せぬエラーが発生しました: {result}") from result
+
+            logger.info("最適化プロセスが正常に完了しました。")
+            return result
+
+    # ループが完了しても成功しなかった場合
+    raise InvalidInputError(
+        "最適化処理が複数回の試行で設定時間内に完了しませんでした。"
+        "プロセスを強制終了しました。問題が解決しない場合は、データを簡素化するか、モデル設定を見直してください。"
+    )

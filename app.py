@@ -632,8 +632,8 @@ def main():
                 )
                 logger.info("Data adaptation and validation successful.")
                 
-                logger.info("Starting optimization calculation (solve_assignment).")
-                solver_output = optimization_engine.solve_assignment(
+                logger.info("Starting optimization calculation (run_optimization_with_monitoring).")
+                solver_output = data_adapter.run_optimization_with_monitoring(
                     lecturers_data=engine_input_data["lecturers_data"],
                     courses_data=engine_input_data["courses_data"],
                     classrooms_data=engine_input_data["classrooms_data"],

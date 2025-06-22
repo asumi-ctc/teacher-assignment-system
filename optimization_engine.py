@@ -373,19 +373,15 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     solver = cp_model.CpSolver()
     solver.parameters.log_search_progress = True
 
-    # 制限時間なしで実行
-    log_to_stream("Solver will run without a time limit.")
-
     # CPUコア数に応じて並列探索数を動的に設定
     available_cores = os.cpu_count() or 1 # os.cpu_count() が None を返す場合を考慮
     # 対話的なアプリケーションのため、すべてのコアを使い切らないように上限を設けることも検討できます (例: max(1, available_cores - 1))
     # ここでは利用可能なコアを最大限活用します。
     num_workers_to_set = available_cores
     solver.parameters.num_search_workers = num_workers_to_set
-    log_to_stream(f"Solver configured to use {num_workers_to_set} worker(s) based on available CPU cores ({available_cores}).")
+    log_to_stream(f"Solver configured to use {num_workers_to_set} workers (dynamically set).")
 
     solver.log_callback = lambda msg: solver_capture_stream.write(msg + "\n")
-
     solver_capture_stream.write(f"{SOLVER_LOG_START_MARKER}\n")
     
     status_code = cp_model.UNKNOWN 
@@ -423,7 +419,7 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
         if status_code == cp_model.OPTIMAL:
             solution_status_str = "最適解"
         else: # FEASIBLE
-            solution_status_str = "実行可能解 (時間制限到達の可能性あり)"
+            solution_status_str = "実行可能解"
 
         objective_value_solved = solver.ObjectiveValue() / 100
         
@@ -474,7 +470,7 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     elif status_code == cp_model.INFEASIBLE:
         solution_status_str = "実行不可能 (制約を満たす解なし)"
     elif status_code == cp_model.UNKNOWN:
-        solution_status_str = "解探索失敗 (時間制限到達の可能性あり)"
+        solution_status_str = "解探索失敗"
     else:
         solution_status_str = f"解探索失敗 (ステータス: {status_name} [{status_code}])"
 
