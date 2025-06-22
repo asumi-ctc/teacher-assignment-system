@@ -1255,41 +1255,40 @@ else:
                         """
                     )
 
-                if solver_result.get('assignments') and solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]: # assignments の存在確認を追加
-                    if solver_result['assignments']:
-                        assigned_course_ids_for_message = {res["講座ID"] for res in solver_result['assignments']}
-                        unassigned_courses_for_message = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids_for_message]
-                        if not unassigned_courses_for_message:
-                            st.success("全ての講座が割り当てられました。")
+                # --- [リファクタリング] 結果表示ロジック ---
+                # assignments が存在し、空でない場合のみ結果を表示する
+                if solver_result.get('assignments'):
+                    results_df = pd.DataFrame(solver_result['assignments'])
 
-                if solver_result['assignments']:
-                    results_df = pd.DataFrame(solver_result['assignments']) # この位置は問題なし
+                    # 全講座割り当てメッセージ
+                    assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
+                    unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
+                    if not unassigned_courses:
+                        st.success("全ての講座が割り当てられました。")
+
+                    # --- サマリー表示 ---
                     st.subheader("割り当て結果サマリー")
-                    # ... (サマリー表示ロジックは変更なしのため省略) ...
                     summary_data = []
-                    # ▼▼▼ 関連ロジックを修正 ▼▼▼
-                    assignments_count = len(results_df)
-                    summary_data.append(("**総割り当て件数**", f"{assignments_count}件"))
-                    # ▲▲▲ ここまで修正 ▲▲▲
+                    summary_data.append(("**総割り当て件数**", f"{len(results_df)}件"))
 
                     total_travel_cost = results_df["移動コスト(元)"].sum()
                     summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
+
                     assigned_lecturer_ids = results_df["講師ID"].unique()
                     temp_assigned_lecturers = [l for l in st.session_state.DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
+
                     if temp_assigned_lecturers:
                         avg_age = sum(l.get("age", 0) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
                         summary_data.append(("**平均年齢**", f"{avg_age:.1f}才"))
                         avg_frequency = sum(len(l.get("past_assignments", [])) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)
                         summary_data.append(("**平均頻度**", f"{avg_frequency:.1f}回"))
-                        # ... (ランク別、割り当て回数別サマリーも同様に省略) ...
-                        # 一般資格ランク別割り当て状況
+
                         summary_data.append(("**一般資格ランク別割り当て**", "(講師が保有する一般資格ランク / 全講師中の同ランク保有者数)"))
                         general_rank_total_counts = {i: 0 for i in range(1, 6)}
-                        for lecturer in st.session_state.DEFAULT_LECTURERS_DATA: # st.session_state から取得
+                        for lecturer in st.session_state.DEFAULT_LECTURERS_DATA:
                             rank = lecturer.get("qualification_general_rank")
                             if rank in general_rank_total_counts:
                                 general_rank_total_counts[rank] += 1
-                        
                         assigned_general_rank_counts = {i: 0 for i in range(1, 6)}
                         for l_assigned in temp_assigned_lecturers:
                             rank = l_assigned.get("qualification_general_rank")
@@ -1298,103 +1297,89 @@ else:
                         for rank_num in range(1, 6):
                             summary_data.append((f"　一般ランク{rank_num}", f"{assigned_general_rank_counts.get(rank_num, 0)}人 / {general_rank_total_counts.get(rank_num, 0)}人中"))
 
-                        # 特別資格ランク別割り当て状況
                         summary_data.append(("**特別資格ランク別割り当て**", "(講師が保有する特別資格ランク / 全講師中の同ランク保有者数)"))
                         special_rank_total_counts = {i: 0 for i in range(1, 6)}
-                        for lecturer in st.session_state.DEFAULT_LECTURERS_DATA: # st.session_state から取得
+                        for lecturer in st.session_state.DEFAULT_LECTURERS_DATA:
                             rank = lecturer.get("qualification_special_rank")
-                            if rank is not None and rank in special_rank_total_counts: # None は除外
+                            if rank is not None and rank in special_rank_total_counts:
                                 special_rank_total_counts[rank] += 1
-                        
                         assigned_special_rank_counts = {i: 0 for i in range(1, 6)}
                         for l_assigned in temp_assigned_lecturers:
                             rank = l_assigned.get("qualification_special_rank")
-                            if rank is not None and rank in assigned_special_rank_counts: # None は除外
+                            if rank is not None and rank in assigned_special_rank_counts:
                                 assigned_special_rank_counts[rank] += 1
                         for rank_num in range(1, 6):
                             summary_data.append((f"　特別ランク{rank_num}", f"{assigned_special_rank_counts.get(rank_num, 0)}人 / {special_rank_total_counts.get(rank_num, 0)}人中"))
 
                     if '今回の割り当て回数' in results_df.columns:
-                        lecturer_assignment_counts_per_lecturer = results_df['講師ID'].value_counts()
-                        counts_of_lecturers_by_assignment_num = lecturer_assignment_counts_per_lecturer.value_counts().sort_index()
+                        counts_of_lecturers_by_assignment_num = results_df['講師ID'].value_counts().value_counts().sort_index()
                         summary_data.append(("**講師の割り当て回数別**", "(今回の最適化での担当講座数)"))
                         for num_assignments, num_lecturers in counts_of_lecturers_by_assignment_num.items():
                             if num_assignments >= 1:
                                 summary_data.append((f"　{num_assignments}回 担当した講師", f"{num_lecturers}人"))
-                    
-                    # 「当該教室最終割当日からの日数」が実績なしを示す値 (-1, -3 など) の件数を集計
-                    # -1: 過去実績なし, -2: 日付パースは成功したが未来など異常, -3: 日付パース失敗
-                    # これらは実績なし優先コスト計算でコスト0になるケース
+
                     past_assignment_new_count = results_df[results_df["当該教室最終割当日からの日数"] < 0].shape[0]
                     past_assignment_existing_count = results_df.shape[0] - past_assignment_new_count
-
                     summary_data.append(("**同教室への過去の割り当て**", "(実績なし優先コスト計算に基づく)"))
                     summary_data.append(("　新規", f"{past_assignment_new_count}人"))
                     summary_data.append(("　割当て実績あり", f"{past_assignment_existing_count}人"))
+
                     markdown_table = "| 項目 | 値 |\n| :---- | :---- |\n"
                     for item, value in summary_data:
                         markdown_table += f"| {item} | {value} |\n"
                     st.markdown(markdown_table)
                     st.markdown("---")
 
-                # --- 割り当て変更サマリーの表示 ---
-                if "pending_change_summary_info" in st.session_state and \
-                   st.session_state.pending_change_summary_info and \
-                   solver_result.get('assignments') is not None: # solver_result['assignments'] が None でないことを確認
-                    
-                    st.subheader("今回の割り当て変更による影響")
-                    change_details_markdown = ""
-                    
-                    current_assignments_df_for_summary = pd.DataFrame(solver_result.get('assignments', []))
-                    
-                    for change_item in st.session_state.pending_change_summary_info:
-                        original_lecturer_id = change_item['lecturer_id']
-                        original_lecturer_name = change_item['lecturer_name']
-                        course_id_changed = change_item['course_id']
-                        course_name_changed = change_item['course_name']
+                    # --- 割り当て変更サマリーの表示 ---
+                    if "pending_change_summary_info" in st.session_state and st.session_state.pending_change_summary_info:
+                        st.subheader("今回の割り当て変更による影響")
+                        change_details_markdown = ""
+                        for change_item in st.session_state.pending_change_summary_info:
+                            original_lecturer_id = change_item['lecturer_id']
+                            original_lecturer_name = change_item['lecturer_name']
+                            course_id_changed = change_item['course_id']
+                            course_name_changed = change_item['course_name']
 
-                        new_assignment_for_course_df = pd.DataFrame() # 空のDataFrameで初期化
-                        if not current_assignments_df_for_summary.empty:
-                             new_assignment_for_course_df = current_assignments_df_for_summary[current_assignments_df_for_summary['講座ID'] == course_id_changed]
+                            new_assignment_for_course_df = results_df[results_df['講座ID'] == course_id_changed]
 
-                        new_assignment_str = "割り当てなし"
-                        if not new_assignment_for_course_df.empty:
-                            new_lecturers_info = [f"{new_row['講師名']} (`{new_row['講師ID']}`)" for _, new_row in new_assignment_for_course_df.iterrows()]
-                            new_assignment_str = "、".join(new_lecturers_info)
+                            new_assignment_str = "割り当てなし"
+                            if not new_assignment_for_course_df.empty:
+                                new_lecturers_info = [f"{new_row['講師名']} (`{new_row['講師ID']}`)" for _, new_row in new_assignment_for_course_df.iterrows()]
+                                new_assignment_str = "、".join(new_lecturers_info)
+                            
+                            change_details_markdown += f"- **講座:** {course_name_changed} (`{course_id_changed}`)\n  - **変更前:** {original_lecturer_name} (`{original_lecturer_id}`)\n  - **変更後:** {new_assignment_str}\n"
                         
-                        change_details_markdown += f"- **講座:** {course_name_changed} (`{course_id_changed}`)\n  - **変更前:** {original_lecturer_name} (`{original_lecturer_id}`)\n  - **変更後:** {new_assignment_str}\n"
-                    
-                    if change_details_markdown:
-                        st.markdown(change_details_markdown)
-                    st.markdown("---")
-                    del st.session_state.pending_change_summary_info # 表示後にクリア
-                if solver_result.get('assignments') and solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]: # assignments の存在確認を追加
-                    if solver_result['assignments']:
-                        results_df = pd.DataFrame(solver_result['assignments']) # Use results_df
-                        st.subheader("割り当て結果詳細")
-                        # Display the full results dataframe
-                        st.dataframe(results_df)
+                        if change_details_markdown:
+                            st.markdown(change_details_markdown)
                         st.markdown("---")
+                        del st.session_state.pending_change_summary_info # 表示後にクリア
 
-                        assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
-                        unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
-                        if unassigned_courses:
-                            st.subheader("割り当てられなかった講座")
-                            st.dataframe(pd.DataFrame(unassigned_courses))
-                            st.caption("上記の講座は、スケジュール違反を許容しても、他の制約（資格ランクなど）により割り当て可能な講師が見つからなかったか、または他の割り当てと比較してコストが高すぎると判断された可能性があります。")
-                    else:
+                    # --- 詳細結果と未割り当て講座 ---
+                    st.subheader("割り当て結果詳細")
+                    st.dataframe(results_df)
+                    st.markdown("---")
+
+                    if unassigned_courses:
+                        st.subheader("割り当てられなかった講座")
+                        st.dataframe(pd.DataFrame(unassigned_courses))
+                        st.caption("上記の講座は、制約（資格ランクなど）により割り当て可能な講師が見つからなかったか、または他の割り当てと比較してコストが高すぎると判断された可能性があります。")
+
+                else: # solver_result['assignments'] が存在しないか、空の場合
+                    if solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                         st.error("解が見つかりましたが、実際の割り当ては行われませんでした。")
                         st.warning(
                             "考えられる原因:\n"
-                            "- 割り当て可能なペアが元々存在しない (制約が厳しすぎる、データ不適合)。\n"
-                            "**結果として、総コスト 0.00 (何も割り当てない) が最適と判断された可能性があります。**"
+                            "- 割り当て可能な講師と講座のペアが元々存在しない (制約が厳しすぎる、データ不適合)。\n"
+                            "- 結果として、総コスト 0.00 (何も割り当てない) が最適と判断された可能性があります。"
                         )
-                        st.subheader("全ての講座が割り当てられませんでした")
-                        st.dataframe(pd.DataFrame(solver_result['all_courses']))
+                    st.subheader("全ての講座が割り当てられませんでした")
+                    st.dataframe(pd.DataFrame(solver_result['all_courses']))
+
                 elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE:
                     st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
                 else:
                     st.error(solver_result['solution_status_str'])
+                # --- [リファクタリングここまで] ---
 
                 if GEMINI_API_KEY and "raw_log_on_server" in st.session_state and st.session_state.raw_log_on_server:
                     if st.button("Gemini API によるログ解説を実行", key="run_gemini_explanation_button"):
@@ -1423,12 +1408,12 @@ else:
                     with dl_cols_1[1]:
                         if st.session_state.get("application_log_for_download"):
                             st.download_button(
-                                label="データ前処理のログ",
+                                label="最適化エンジン内部ログ",
                                 data=st.session_state.application_log_for_download,
                                 file_name="optimization_engine_internal.log",
                                 mime="text/plain",
-                                key="download_preprocessing_log_button",
-                                help="最適化エンジンの内部でキャプチャされた、割り当て候補のフィルタリングやコスト計算の詳細ログです。"
+                                key="download_engine_internal_log_button",
+                                help="最適化エンジンの内部でキャプチャされた、割り当て候補のフィルタリングやコスト計算、制約構築などの詳細ログです。"
                             )
                     with dl_cols_2[0]:
                         if st.session_state.get("solver_log_for_download"):

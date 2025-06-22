@@ -241,7 +241,7 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
             weight_qualification * norm_qualification +
             weight_past_assignment_recency * norm_recency
         )
-        total_weighted_cost_int = int(total_weighted_cost_float * 100)
+        total_weighted_cost_int = int(round(total_weighted_cost_float * 100))
         log_to_stream(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} (norm_travel={norm_travel:.2f}, norm_age={norm_age:.2f}, norm_freq={norm_frequency:.2f}, norm_qual={norm_qualification:.2f}, norm_recency={norm_recency:.2f})")
         possible_assignments_dict[key] = {**temp_data, "cost": total_weighted_cost_int}
 
