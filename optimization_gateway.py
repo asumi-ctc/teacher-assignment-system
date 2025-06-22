@@ -299,9 +299,7 @@ def run_optimization_with_monitoring(
             if parent_conn.poll(PROCESS_TIMEOUT_SECONDS):
                 result = parent_conn.recv()
                 if isinstance(result, Exception):
-                    # 子プロセスで発生した例外を親プロセスで再スローする。
-                    # ここでは、エンジン内のあらゆるエラー（ロジックエラー等も含む）を InvalidInputError としてラップする。
-                    # これは、呼び出し元の app.py がこの例外をキャッチしてユーザーにフィードバックするため。
+                    # 子プロセスで発生した例外を InvalidInputError としてラップし、親プロセスで再スローする。
                     raise InvalidInputError(f"最適化プロセスでエラーが発生しました: {result}") from result
                 
                 # 正常な結果を受信

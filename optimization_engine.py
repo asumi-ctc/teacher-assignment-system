@@ -5,13 +5,9 @@ import datetime # 日付処理用
 import os # 並列探索用にインポート
 import numpy as np
 from ortools.sat.python import cp_model
-from typing import TypedDict, List, Optional, Tuple, Dict, Any
+from typing import TypedDict, List, Optional, Tuple, Dict, Any # io は不要
 
 logger = logging.getLogger(__name__)
-
-# --- グローバル定数 (ログマーカー) ---
-SOLVER_LOG_START_MARKER = "--- Solver Log (Captured by app.py) ---" # app.py から移動したが、元々の名前を維持
-SOLVER_LOG_END_MARKER = "--- End Solver Log (Captured by app.py) ---"   # app.py から移動したが、元々の名前を維持
 
 # --- [ここから app.py より移動] ---
 class SolverOutput(TypedDict):
@@ -20,10 +16,7 @@ class SolverOutput(TypedDict):
     assignments: List[dict]
     all_courses: List[dict]
     all_lecturers: List[dict]
-    solver_raw_status_code: int
-    full_application_and_solver_log: str
-    pure_solver_log: str
-    application_log: str
+    solver_raw_status_code: int # このフィールドは残す
 
 def solve_assignment(lecturers_data: List[Dict[str, Any]],
                      courses_data: List[Dict[str, Any]],
@@ -48,15 +41,10 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     courses_dict = {course['id']: course for course in courses_data}
     classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
 
-    # --- ログキャプチャ用の StringIO ---
-    app_log_stream = io.StringIO() # アプリケーションログ用 (エンジン内の処理ログ)
-    solver_capture_stream = io.StringIO() # ソルバーログキャプチャ用
-
     # アプリケーションログ出力関数 (標準ロガーとapp_log_streamに出力)
     def log_to_stream(message: str):
         log_line = f"[SolverEngineLog] {message}\n" # プレフィックス変更
         logger.info(log_line.strip()) # 標準ロガーには改行なしで
-        app_log_stream.write(log_line) # app_log_stream には改行ありでキャプチャ
 
     # --- ステップ1: 連日講座ペアのリストアップ ---
     consecutive_day_pairs: List[Dict[str, Any]] = []
@@ -198,17 +186,13 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
 
     if not possible_assignments_temp_data:
         log_to_stream("No possible assignments found after filtering. Optimization will likely result in no assignments.")
-        captured_app_log_early = app_log_stream.getvalue()
         return SolverOutput(
             solution_status_str="前提条件エラー (割り当て候補なし)",
             objective_value=None,
             assignments=[],
             all_courses=list(courses_dict.values()),
             all_lecturers=list(lecturers_dict.values()),
-            solver_raw_status_code=cp_model.UNKNOWN, 
-            full_application_and_solver_log=captured_app_log_early,
-            pure_solver_log="",
-            application_log=captured_app_log_early
+            solver_raw_status_code=cp_model.UNKNOWN
         )
 
     def get_norm_factor(cost_list: List[float], name: str) -> float:
@@ -381,34 +365,11 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     solver.parameters.num_search_workers = num_workers_to_set
     log_to_stream(f"Solver configured to use {num_workers_to_set} workers (dynamically set).")
 
-    solver.log_callback = lambda msg: solver_capture_stream.write(msg + "\n")
-    solver_capture_stream.write(f"{SOLVER_LOG_START_MARKER}\n")
+    # OR-Tools ソルバーのログ出力を直接 optimization_engine ロガーに流す
+    solver.log_callback = lambda msg: logger.info(f"[OR-Tools Solver] {msg.strip()}")
     
     status_code = cp_model.UNKNOWN 
     status_code = solver.Solve(model)
-
-    solver_capture_stream.write(f"\n{SOLVER_LOG_END_MARKER}\n")
-
-    captured_solver_log_with_markers = solver_capture_stream.getvalue()
-    captured_app_log = app_log_stream.getvalue() # This is now engine's internal processing log
-
-    pure_solver_lines = []
-    capturing_solver_log = False
-    for line in captured_solver_log_with_markers.splitlines(keepends=False):
-        if line == SOLVER_LOG_START_MARKER:
-            capturing_solver_log = True
-            continue
-        if line == SOLVER_LOG_END_MARKER:
-            capturing_solver_log = False
-            break
-        if capturing_solver_log:
-            pure_solver_lines.append(line)
-    
-    pure_solver_log_content = "\n".join(pure_solver_lines)
-    if pure_solver_lines:
-        pure_solver_log_content += "\n"
-
-    full_application_and_solver_log_content = captured_app_log + captured_solver_log_with_markers
 
     status_name = solver.StatusName(status_code)
     results: List[Dict[str, Any]] = []
@@ -480,9 +441,6 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
         assignments=results,
         all_courses=list(courses_dict.values()),
         all_lecturers=list(lecturers_dict.values()),
-        solver_raw_status_code=status_code,
-        full_application_and_solver_log=full_application_and_solver_log_content,
-        pure_solver_log=pure_solver_log_content,
-        application_log=captured_app_log # This is now the engine's internal processing log
+        solver_raw_status_code=status_code
     )
 # --- [ここまで app.py より移動] ---

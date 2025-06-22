@@ -598,7 +598,7 @@ def main():
         keys_to_clear_on_execute = [
             "solver_result_cache", "raw_log_on_server",
             "solver_log_for_download", "optimization_error_message",
-            "application_log_for_download", "optimization_gateway_log_for_download",
+            "optimization_gateway_log_for_download", # application_log_for_download は削除
             "app_log_for_download", "gemini_explanation", "gemini_api_requested",
             "gemini_api_error", "last_full_prompt_for_gemini", "optimization_duration" # 処理時間もクリア
         ]
@@ -664,19 +664,17 @@ def main():
             # 構造が変わらなければ問題ない。より厳密にするなら型をインポートしてチェックする。
             # ここでは、戻り値が辞書であることを期待する。
             if not isinstance(solver_output, dict):
-                raise TypeError(f"最適化関数の戻り値が不正です。型: {type(solver_output)}")
+                raise TypeError(f"最適化関数の戻り値が不正です。型: {type(solver_output).__name__}")
 
-            required_keys = ["full_application_and_solver_log", "pure_solver_log", "application_log", "solution_status_str", "objective_value", "assignments", "all_courses", "all_lecturers", "solver_raw_status_code"]
+            required_keys = ["solution_status_str", "objective_value", "assignments", "all_courses", "all_lecturers", "solver_raw_status_code"]
             missing_keys = [key for key in required_keys if key not in solver_output]
             if missing_keys:
                 raise KeyError(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}")
-            st.session_state.solver_log_for_download = solver_output["pure_solver_log"] # 純粋なソルバーログを保存
-            st.session_state.application_log_for_download = solver_output["application_log"] # アプリケーションログを保存
+            # optimization_engine からログは返されないため、直接ファイルから読み込む
 
-            st.session_state.raw_log_on_server = solver_output["full_application_and_solver_log"]
             st.session_state.solver_result_cache = {
                 k: v for k, v in solver_output.items() 
-                if k not in ["full_application_and_solver_log", "pure_solver_log", "application_log"]
+                # ログ関連のキーは optimization_engine から返されないため、除外リストは不要
             }
             # 修正実行後は、次回通常の最適化のためにこれらのパラメータをクリア
             if "fixed_assignments_for_solver" in st.session_state: del st.session_state.fixed_assignments_for_solver
@@ -691,7 +689,6 @@ def main():
             error_trace = traceback.format_exc()
             st.session_state.optimization_error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
             st.session_state.solver_log_for_download = ""
-            st.session_state.optimization_gateway_log_for_download = ""
             st.session_state.app_log_for_download = ""
             st.session_state.application_log_for_download = ""
             st.session_state.raw_log_on_server = f"VALIDATION FAILED:\n{st.session_state.optimization_error_message}\n\n{error_trace}"
@@ -706,7 +703,6 @@ def main():
             error_trace = traceback.format_exc()
             st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
             st.session_state.solver_log_for_download = ""
-            st.session_state.optimization_gateway_log_for_download = ""
             st.session_state.app_log_for_download = ""
             st.session_state.application_log_for_download = ""
             st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
@@ -717,6 +713,8 @@ def main():
             # 処理の最後にログファイルを読み込む
             logger.info("Reading log files to store in session state.")
             st.session_state.optimization_gateway_log_for_download = read_log_file("logs/optimization_gateway.log")
+            # optimization_engine のログは直接ファイルから読み込む
+            st.session_state.optimization_engine_log_for_download_from_file = read_log_file("logs/optimization_engine.log")
             st.session_state.app_log_for_download = read_log_file("logs/app.log")
             logger.info("Finished reading log files.")
     # OLD CALLBACK - to be removed or replaced
@@ -1405,13 +1403,13 @@ else:
                                 help="データバリデーション、プロセス監視、最適化エンジン呼び出しに関するログです。"
                             )
                     with dl_cols_1[1]:
-                        if st.session_state.get("application_log_for_download"):
+                        if st.session_state.get("optimization_engine_log_for_download_from_file"):
                             st.download_button(
                                 label="最適化エンジン内部ログ",
-                                data=st.session_state.application_log_for_download,
+                                data=st.session_state.optimization_engine_log_for_download_from_file,
                                 file_name="optimization_engine_internal.log",
                                 mime="text/plain",
-                                key="download_engine_internal_log_button",
+                                key="download_engine_internal_log_button", # key は変更なし
                                 help="最適化エンジンの内部でキャプチャされた、割り当て候補のフィルタリングやコスト計算、制約構築などの詳細ログです。"
                             )
                     with dl_cols_2[0]:
@@ -1422,6 +1420,9 @@ else:
                                 file_name="solver_log.txt",
                                 mime="text/plain",
                                 key="download_solver_log_button",
+                                # OR-Toolsソルバーのログは optimization_engine.py が直接 logger に出力するため、
+                                # optimization_engine.log の一部として含まれる。
+                                # ここでは純粋なソルバーログをダウンロードするボタンとして残す。
                                 help="OR-Toolsソルバーが生成した、求解過程に関する技術的なログです。"
                             )
                     with dl_cols_2[1]:
@@ -1436,7 +1437,7 @@ else:
                             )
                 
                 if not GEMINI_API_KEY and st.session_state.get("solution_executed"):
-                    if not GEMINI_API_KEY:
+                    if not GEMINI_API_KEY: # 重複チェックだが、念のため
                         st.info("Gemini APIキーが設定されていません。ログ関連機能を利用するには設定が必要です。")
                         logger.info("Gemini API key not set. Log features disabled.")
 
@@ -1445,7 +1446,8 @@ else:
                    "gemini_api_error" not in st.session_state:
                     logger.info("Gemini API explanation requested. Calling API.")
                     with st.spinner("Gemini API でログを解説中..."):
-                        full_log_to_filter = st.session_state.raw_log_on_server
+                        # Gemini API に渡すログは、ファイルから読み込んだものを結合して渡す
+                        full_log_to_filter = st.session_state.app_log_for_download + st.session_state.optimization_gateway_log_for_download + st.session_state.optimization_engine_log_for_download_from_file
                         filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
                         solver_cache = st.session_state.solver_result_cache
                         solver_status = solver_cache["solution_status_str"]
