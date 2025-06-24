@@ -6,17 +6,29 @@ APP_LOG_FILE = os.path.join(LOG_DIR, "app.log")
 GATEWAY_LOG_FILE = os.path.join(LOG_DIR, "optimization_gateway.log")
 ENGINE_LOG_FILE = os.path.join(LOG_DIR, "optimization_engine.log")
 
-def setup_logging():
-    """アプリケーション全体のロギングを設定する"""
+def setup_logging(target_loggers: Optional[List[str]] = None):
+    """
+    アプリケーション全体のロギングを設定する。
+
+    Args:
+        target_loggers: 設定対象のロガー名のリスト。
+                        Noneの場合は 'app', 'optimization_gateway', 'optimization_engine' の全てを設定する。
+                        子プロセスから呼び出す際に、特定のロガーのみを再設定するために使用する。
+    """
     os.makedirs(LOG_DIR, exist_ok=True)
 
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     # ターゲットロガーとファイルパスの辞書
-    loggers_to_configure = {
+    all_loggers = {
         'app': APP_LOG_FILE,
         'optimization_gateway': GATEWAY_LOG_FILE,
         'optimization_engine': ENGINE_LOG_FILE
+    }
+
+    # 設定対象のロガーを決定
+    loggers_to_configure = all_loggers if target_loggers is None else {
+        name: path for name, path in all_loggers.items() if name in target_loggers
     }
 
     # ルートロガーにコンソール出力を設定

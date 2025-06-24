@@ -254,7 +254,9 @@ PROCESS_TIMEOUT_SECONDS = 90
 def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
     """子プロセスで実行されるソルバー呼び出しラッパー"""
     try:
-        setup_logging() # [修正点5] 子プロセスでロギングを再設定
+        # 子プロセスでは、自身が担当する 'optimization_engine' のロガーのみを再設定する。
+        # これにより、親プロセスが書き込んでいる他のログファイル(app.log, optimization_gateway.log)が上書きされるのを防ぐ。
+        setup_logging(target_loggers=['optimization_engine'])
         # optimization_engine.solve_assignment を直接呼び出す
         result = optimization_engine.solve_assignment(**solver_args)
         conn.send(result)
