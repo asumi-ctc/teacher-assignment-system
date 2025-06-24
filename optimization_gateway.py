@@ -4,6 +4,7 @@ import datetime
 import os
 import multiprocessing
 from multiprocessing.connection import Connection
+from utils.logging_config import setup_logging # [修正点4] ログ設定関数をインポート
 import optimization_engine
 from typing import List, Dict, Any, Tuple, Set
 
@@ -253,6 +254,7 @@ PROCESS_TIMEOUT_SECONDS = 90
 def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
     """子プロセスで実行されるソルバー呼び出しラッパー"""
     try:
+        setup_logging() # [修正点5] 子プロセスでロギングを再設定
         # optimization_engine.solve_assignment を直接呼び出す
         result = optimization_engine.solve_assignment(**solver_args)
         conn.send(result)

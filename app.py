@@ -23,11 +23,8 @@ import optimization_engine
 from ortools.sat.python import cp_model # solver_raw_status_code の比較等で使用
 # ---------------------------------------------
 
-# --- [提案] ログファイルのパスを定数として定義 ---
-LOG_DIR = "logs"
-APP_LOG_FILE = os.path.join(LOG_DIR, "app.log")
-GATEWAY_LOG_FILE = os.path.join(LOG_DIR, "optimization_gateway.log")
-ENGINE_LOG_FILE = os.path.join(LOG_DIR, "optimization_engine.log")
+# --- [修正点3] ログ設定を別ファイルに分離し、定数をインポート ---
+from utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, ENGINE_LOG_FILE
 # ---
 
 
