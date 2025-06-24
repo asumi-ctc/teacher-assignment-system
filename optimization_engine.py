@@ -43,8 +43,16 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
     # --- パフォーマンス向上のため、詳細ログをメモリにバッファリング ---
     log_buffer = []
     def log_to_buffer(message: str):
-        """詳細ログをメモリ上のバッファに格納する"""
+        """詳細ログをメモリ上のバッファに格納する。"""
         log_buffer.append(f"[SolverEngineLog] {message}")
+
+    def flush_log_buffer():
+        """バッファされたログをファイルに書き出し、バッファをクリアする。"""
+        nonlocal log_buffer
+        if log_buffer:
+            # ログが空でなければ、まとめてファイルに出力
+            logger.info("\n".join(log_buffer))
+            log_buffer = [] # バッファをクリア
 
     try:
         model = cp_model.CpModel()
@@ -190,6 +198,9 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
         log_to_buffer(f"Total potential assignments after filtering: {potential_assignment_count}")
         log_to_buffer(f"Number of entries in possible_assignments_temp_data: {len(possible_assignments_temp_data)}")
 
+        # --- 中間フラッシュポイント 1: 割り当て候補の生成後 ---
+        flush_log_buffer()
+
         if not possible_assignments_temp_data:
             log_to_buffer("No possible assignments found after filtering. Optimization will likely result in no assignments.")
             return SolverOutput(
@@ -234,6 +245,9 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
             total_weighted_cost_int = int(round(total_weighted_cost_float * 100))
             log_to_buffer(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} (norm_travel={norm_travel:.2f}, norm_age={norm_age:.2f}, norm_freq={norm_frequency:.2f}, norm_qual={norm_qualification:.2f}, norm_recency={norm_recency:.2f})")
             possible_assignments_dict[key] = {**temp_data, "cost": total_weighted_cost_int}
+
+        # --- 中間フラッシュポイント 2: コスト計算完了後 ---
+        flush_log_buffer()
 
         assignments_by_course: Dict[str, List[Any]] = {} # Var type
         for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
@@ -357,6 +371,9 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
             log_to_buffer("Warning: Objective terms list was empty. Minimizing 0.")
             model.Minimize(0) 
 
+        # --- 中間フラッシュポイント 3: モデル構築完了後、求解開始前 ---
+        flush_log_buffer()
+
         solver = cp_model.CpSolver()
         solver.parameters.log_search_progress = True
 
@@ -448,7 +465,5 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
         )
     finally:
         # 求解プロセスの成否にかかわらず、バッファされたログをまとめて出力
-        if log_buffer:
-            full_log_message = "\n--- Batched Solver Engine Logs ---\n" + "\n".join(log_buffer) + "\n--- End of Batched Logs ---"
-            logger.info(full_log_message)
+        flush_log_buffer()
 # --- [ここまで app.py より移動] ---
