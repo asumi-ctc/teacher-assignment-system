@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Optional, List # 追加
 
 LOG_DIR = "logs"
 APP_LOG_FILE = os.path.join(LOG_DIR, "app.log")
