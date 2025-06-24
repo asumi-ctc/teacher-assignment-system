@@ -521,7 +521,7 @@ def run_optimization():
     """最適化を実行し、結果をセッション状態に保存するコールバック関数"""
     logger = logging.getLogger('app') # Get logger inside function
     keys_to_clear_on_execute = [
-        "solver_result_cache", "raw_log_on_server",
+        "solver_result_cache",
         "solver_log_for_download", "optimization_error_message",
         "optimization_gateway_log_for_download",
         "app_log_for_download", "gemini_explanation", "gemini_api_requested",
@@ -585,17 +585,13 @@ def run_optimization():
         if not isinstance(solver_output, dict):
             raise TypeError(f"最適化関数の戻り値が不正です。型: {type(solver_output).__name__}")
 
-        required_keys = ["solution_status_str", "objective_value", "assignments", "all_courses", "all_lecturers", "solver_raw_status_code"]
+        required_keys = ["status", "message", "solution_status", "objective_value", "assignments_df", "lecturer_course_counts", "course_assignment_counts", "course_remaining_capacity", "raw_solver_status_code"]
         missing_keys = [key for key in required_keys if key not in solver_output]
         if missing_keys:
             raise KeyError(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}")
 
-        # [修正] 上記のifブロックから移動。キーのチェックをパスした場合に実行されるようにインデントを修正。
-        # このブロックは、前回の修正で誤って if missing_keys: ブロック内に配置され、
-        # raise KeyError の後にあるため、到達不能になっていました。
-        st.session_state.solver_result_cache = {
-            k: v for k, v in solver_output.items()
-        }
+        st.session_state.solver_result_cache = solver_output
+
         if "fixed_assignments_for_solver" in st.session_state: del st.session_state.fixed_assignments_for_solver
         if "forced_unassignments_for_solver" in st.session_state: del st.session_state.forced_unassignments_for_solver
 
@@ -609,7 +605,6 @@ def run_optimization():
         st.session_state.optimization_error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
         st.session_state.solver_log_for_download = ""
         st.session_state.app_log_for_download = ""
-        st.session_state.raw_log_on_server = f"VALIDATION FAILED:\n{st.session_state.optimization_error_message}\n\n{error_trace}"
         # UIにエラーを表示するための設定
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
@@ -622,7 +617,6 @@ def run_optimization():
         st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
         st.session_state.solver_log_for_download = ""
         st.session_state.app_log_for_download = ""
-        st.session_state.raw_log_on_server = f"OPTIMIZATION FAILED:\n{st.session_state.optimization_error_message}"
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
 
@@ -1075,7 +1069,7 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
         else: # solution_executed is True and solver_result_cache exists
             logger.info("solver_result_cache found. Displaying results.")
             solver_result = st.session_state.solver_result_cache
-            st.subheader(f"求解ステータス: {solver_result['solution_status_str']}")
+            st.subheader(f"求解ステータス: {solver_result['solution_status']}")
 
             metric_cols = st.columns(2)
             with metric_cols[0]:
@@ -1085,7 +1079,7 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                 if 'optimization_duration' in st.session_state:
                     st.metric("処理時間", f"{st.session_state.optimization_duration:.2f} 秒", help="データ準備から最適化完了までの時間です。")
 
-            if solver_result['solver_raw_status_code'] in [cp_model.FEASIBLE, cp_model.UNKNOWN]:
+            if solver_result['raw_solver_status_code'] in [cp_model.FEASIBLE, cp_model.UNKNOWN]:
                 st.warning(
                     """
                     時間制限(Time Limit)内に最適解が見つかりませんでした。現在の最良の解を表示します。
@@ -1096,12 +1090,12 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
 
             # --- [リファクタリング] 結果表示ロジック ---
             # assignments が存在し、空でない場合のみ結果を表示する
-            if solver_result.get('assignments'):
-                results_df = pd.DataFrame(solver_result['assignments'])
+            if solver_result.get('assignments_df'):
+                results_df = pd.DataFrame(solver_result['assignments_df'])
 
                 # 全講座割り当てメッセージ
-                assigned_course_ids = {res["講座ID"] for res in solver_result['assignments']}
-                unassigned_courses = [c for c in solver_result['all_courses'] if c["id"] not in assigned_course_ids]
+                assigned_course_ids = set(results_df["講座ID"])
+                unassigned_courses = [c for c in st.session_state.DEFAULT_COURSES_DATA if c["id"] not in assigned_course_ids]
                 if not unassigned_courses:
                     st.success("全ての講座が割り当てられました。")
 
@@ -1204,7 +1198,7 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                     st.caption("上記の講座は、制約（資格ランクなど）により割り当て可能な講師が見つからなかったか、または他の割り当てと比較してコストが高すぎると判断された可能性があります。")
 
             else: # solver_result['assignments'] が存在しないか、空の場合
-                if solver_result['solver_raw_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                if solver_result['raw_solver_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                     st.error("解が見つかりましたが、実際の割り当ては行われませんでした。")
                     st.warning(
                         "考えられる原因:\n"
@@ -1212,8 +1206,8 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                         "- 結果として、総コスト 0.00 (何も割り当てない) が最適と判断された可能性があります。"
                     )
                     st.subheader("全ての講座が割り当てられませんでした")
-                    st.dataframe(pd.DataFrame(solver_result['all_courses']))
-                elif solver_result['solver_raw_status_code'] == cp_model.INFEASIBLE:
+                    st.dataframe(pd.DataFrame(st.session_state.DEFAULT_COURSES_DATA))
+                elif solver_result['raw_solver_status_code'] == cp_model.INFEASIBLE:
                     st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
                 else:
                     st.error(solver_result['solution_status_str'])
@@ -1290,9 +1284,9 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                     full_log_to_filter = st.session_state.app_log_for_download + st.session_state.optimization_gateway_log_for_download + st.session_state.optimization_engine_log_for_download_from_file
                     filtered_log_for_gemini = filter_log_for_gemini(full_log_to_filter)
                     solver_cache = st.session_state.solver_result_cache
-                    solver_status = solver_cache["solution_status_str"]
+                    solver_status = solver_cache["solution_status"]
                     objective_value = solver_cache["objective_value"]
-                    assignments_list = solver_cache.get("assignments", [])
+                    assignments_list = solver_cache.get("assignments_df", [])
                     assignments_summary_df = pd.DataFrame(assignments_list) if assignments_list else None
 
                     explanation_or_error_text, full_prompt_for_gemini = get_gemini_explanation(
@@ -1342,11 +1336,11 @@ def display_change_assignment_view():
 
     if not st.session_state.get("solution_executed", False) or \
        "solver_result_cache" not in st.session_state or \
-       not st.session_state.solver_result_cache.get("assignments"):
+       not st.session_state.solver_result_cache.get("assignments_df"):
         st.warning("割り当て結果が存在しないため、この機能は利用できません。まず最適化を実行してください。")
     else: # 割り当て結果が存在する場合
         solver_result = st.session_state.solver_result_cache
-        results_df = pd.DataFrame(solver_result['assignments'])
+        results_df = pd.DataFrame(solver_result['assignments_df'])
 
         if results_df.empty:
             st.info("変更対象の割り当てがありません。")
@@ -1480,7 +1474,7 @@ def main():
     # This button appears only if optimization has run and produced assignments.
     if st.session_state.get("solution_executed", False) and \
        st.session_state.get("solver_result_cache") and \
-       st.session_state.solver_result_cache.get("assignments"):
+       st.session_state.solver_result_cache.get("assignments_df"):
         if st.sidebar.button("割り当て結果を変更", key="change_assignment_view_button", type="secondary" if st.session_state.view_mode != "change_assignment_view" else "primary"):
             st.session_state.view_mode = "change_assignment_view"
             st.rerun()

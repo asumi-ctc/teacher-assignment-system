@@ -426,27 +426,17 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
             for (lecturer_id_res, course_id_res), pa_data in possible_assignments_dict.items():
                 if solver.Value(pa_data["variable"]) == 1:
                     lecturer = lecturers_dict[lecturer_id_res]
-                    course = courses_dict[course_id_res]
                     results.append({
-                        "講師ID": lecturer["id"],
-                        "講師名": lecturer["name"],
-                        "講座ID": course["id"],
-                        "講座名": course["name"],
-                        "教室ID": course["classroom_id"],
-                        "スケジュール": course['schedule'],
+                        "講師ID": lecturer_id_res,
+                        "講座ID": course_id_res,
                         "算出コスト(x100)": pa_data["cost"],
-                        "教室名": classrooms_dict.get(course["classroom_id"], {}).get("location", "不明"),
                         "移動コスト(元)": pa_data["raw_costs"]["travel"],
                         "年齢コスト(元)": pa_data["raw_costs"]["age"],
                         "頻度コスト(元)": pa_data["raw_costs"]["frequency"],
                         "資格コスト(元)": pa_data["raw_costs"]["qualification"],
                         "当該教室最終割当日からの日数": pa_data["debug_days_since_last_assignment"],
-                        "講師一般ランク": lecturer.get("qualification_general_rank"),
-                        "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
-                        "講座タイプ": course.get("course_type"),
-                        "講座ランク": course.get("rank"),
-                        "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer["id"], 0),
-                        "連続ペア割当": solved_consecutive_assignments_map.get((lecturer["id"], course["id"]), "なし")
+                        "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer_id_res, 0),
+                        "連続ペア割当": solved_consecutive_assignments_map.get((lecturer_id_res, course_id_res), "なし")
                     })
         elif status_code == cp_model.INFEASIBLE:
             solution_status_str = "実行不可能 (制約を満たす解なし)"

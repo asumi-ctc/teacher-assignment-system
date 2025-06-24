@@ -35,16 +35,16 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
     # ルートロガーにコンソール出力を設定
     root_logger = logging.getLogger() # ルートロガーを取得
     root_logger.setLevel(logging.INFO)
-    # Ensure root logger only has one console handler
-    if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
-    # Remove any existing file handlers from root logger to prevent duplicates
+    
+    # ルートロガーの既存ハンドラーを全て削除
+    # これにより、Streamlitのリロード時にハンドラーが重複するのを防ぐ
     for handler in root_logger.handlers[:]:
-        if isinstance(handler, logging.FileHandler):
-            root_logger.removeHandler(handler)
+        root_logger.removeHandler(handler)
 
+    # ルートロガーにコンソールハンドラを追加
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
 
     # 各モジュール用のロガーを設定
     for name, log_file in loggers_to_configure.items():
@@ -52,14 +52,9 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
         logger.setLevel(logging.INFO)
         # ルートロガーへの伝播を防ぎ、コンソールへの二重出力を回避
         logger.propagate = False
-
-        # コンソールハンドラ (既に追加されていなければ)
-        if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
-            ch = logging.StreamHandler()
-            ch.setFormatter(formatter)
-            logger.addHandler(ch)
-
-        # ファイルハンドラ (既に追加されていなければ)
+        
+        # 既存のハンドラーを全て削除
+        # これにより、Streamlitのリロードや子プロセスでの再設定時にハンドラーが重複するのを防ぐ
         for handler in logger.handlers[:]:
             if isinstance(handler, logging.FileHandler):
                 logger.removeHandler(handler)
@@ -68,3 +63,8 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
         fh = logging.FileHandler(log_file, mode='w', encoding='utf-8')
         fh.setFormatter(formatter)
         logger.addHandler(fh)
+
+        # コンソールハンドラを追加
+        ch = logging.StreamHandler()
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)

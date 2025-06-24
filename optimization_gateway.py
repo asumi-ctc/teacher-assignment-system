@@ -4,12 +4,24 @@ import datetime
 import os
 import multiprocessing
 from multiprocessing.connection import Connection
-from utils.logging_config import setup_logging # [修正点4] ログ設定関数をインポート
+from utils.logging_config import setup_logging
 import optimization_engine
-from typing import List, Dict, Any, Tuple, Set
+from typing import List, Dict, Any, Tuple, Set, TypedDict, Optional, Union
 
 # --- カスタム例外 ---
 logger = logging.getLogger(__name__)
+
+class OptimizationResult(TypedDict):
+    status: str
+    message: str
+    solution_status: str
+    objective_value: Optional[float]
+    assignments_df: List[Dict[str, Union[str, int, float, None]]] # 整形された割り当て結果のリスト
+    lecturer_course_counts: Dict[str, int]
+    course_assignment_counts: Dict[str, int]
+    course_remaining_capacity: Dict[str, int]
+    raw_solver_status_code: int
+
 
 class InvalidInputError(ValueError):
     """データバリデーションエラーを示すカスタム例外"""
@@ -274,7 +286,7 @@ def run_optimization_with_monitoring(
     classrooms_data: List[Dict[str, Any]],
     travel_costs_matrix: Dict[Tuple[str, str], int],
     **kwargs: Any
-) -> optimization_engine.SolverOutput:
+) -> OptimizationResult:
     """
     最適化エンジンを監視付きの別プロセスで実行し、タイムアウトや再試行を管理する。
     """
@@ -335,7 +347,67 @@ def run_optimization_with_monitoring(
         # 結果を評価
         if solver_output is not None:
             logger.info("最適化プロセスが正常に完了しました。")
-            return solver_output # 成功、ループを抜ける
+            # --- ここから Output 層のロジック ---
+            logger.info("最適化結果を整形します...")
+
+            all_lecturers_dict = {l['id']: l for l in solver_output['all_lecturers']}
+            all_courses_dict = {c['id']: c for c in solver_output['all_courses']}
+            all_classrooms_dict = {c['id']: c for c in solver_args['classrooms_data']}
+
+            processed_assignments = []
+            for assignment in solver_output['assignments']:
+                lecturer_id = assignment['講師ID']
+                course_id = assignment['講座ID']
+
+                lecturer = all_lecturers_dict.get(lecturer_id, {})
+                course = all_courses_dict.get(course_id, {})
+                classroom = all_classrooms_dict.get(course.get('classroom_id'), {})
+
+                processed_assignments.append({
+                    **assignment,
+                    "講師名": lecturer.get("name", "不明"),
+                    "講座名": course.get("name", "不明"),
+                    "教室ID": course.get("classroom_id", "不明"),
+                    "スケジュール": course.get("schedule", "不明"),
+                    "教室名": classroom.get("location", "不明"),
+                    "講師一般ランク": lecturer.get("qualification_general_rank"),
+                    "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
+                    "講座タイプ": course.get("course_type"),
+                    "講座ランク": course.get("rank"),
+                })
+
+            # 集計情報の算出
+            lecturer_course_counts: Dict[str, int] = {}
+            for assignment in processed_assignments:
+                lecturer_id = assignment['講師ID']
+                lecturer_course_counts[lecturer_id] = lecturer_course_counts.get(lecturer_id, 0) + 1
+
+            course_assignment_counts: Dict[str, int] = {}
+            course_remaining_capacity: Dict[str, int] = {}
+            TARGET_PREFECTURES_FOR_TWO_LECTURERS = ["東京都", "愛知県", "大阪府"]
+            for course_item in solver_output['all_courses']:
+                course_id = course_item['id']
+                assigned_count = sum(1 for a in processed_assignments if a['講座ID'] == course_id)
+                course_assignment_counts[course_id] = assigned_count
+                
+                classroom_id = course_item.get('classroom_id')
+                location = all_classrooms_dict.get(classroom_id, {}).get('location')
+                capacity = 2 if location in TARGET_PREFECTURES_FOR_TWO_LECTURERS else 1
+                course_remaining_capacity[course_id] = capacity - assigned_count
+
+            final_result: OptimizationResult = {
+                "status": "成功",
+                "message": "最適化処理が正常に完了しました。",
+                "solution_status": solver_output["solution_status_str"],
+                "objective_value": solver_output["objective_value"],
+                "assignments_df": processed_assignments,
+                "lecturer_course_counts": lecturer_course_counts,
+                "course_assignment_counts": course_assignment_counts,
+                "course_remaining_capacity": course_remaining_capacity,
+                "raw_solver_status_code": solver_output["raw_solver_status_code"]
+            }
+            logger.info("最適化結果の整形が完了しました。")
+            return final_result
 
         # 失敗した場合、再試行するかどうか
         if attempt < RETRY_LIMIT - 1:
