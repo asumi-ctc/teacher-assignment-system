@@ -404,7 +404,7 @@ def run_optimization_with_monitoring(
                 "lecturer_course_counts": lecturer_course_counts,
                 "course_assignment_counts": course_assignment_counts,
                 "course_remaining_capacity": course_remaining_capacity,
-                "raw_solver_status_code": solver_output["raw_solver_status_code"]
+                "raw_solver_status_code": solver_output["solver_raw_status_code"]
             }
             logger.info("最適化結果の整形が完了しました。")
             return final_result
