@@ -65,6 +65,6 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
                 logger.removeHandler(handler)
         
         # Add new file handler
-        fh = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+        fh = logging.FileHandler(log_file, mode='w', encoding='utf-8')
         fh.setFormatter(formatter)
         logger.addHandler(fh)
