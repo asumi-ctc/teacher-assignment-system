@@ -10,7 +10,7 @@ protobuf==4.25.3
 
 google-generativeai==0.8.5
 numpy==2.2.6
-ortools==9.12.4544
+ortools==9.9.3926
 pandas==2.2.3
 python-dateutil==2.9.0.post0
 streamlit==1.45.1
