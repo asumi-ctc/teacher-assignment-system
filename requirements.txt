@@ -5,12 +5,12 @@
 
 # Pinning specific versions of ortools' transitive dependencies is critical
 # for performance, ensuring the C++ backend is used correctly.
-absl-py==1.4.0
+absl-py==2.1.0
 protobuf==4.25.3
 
 google-generativeai==0.8.5
 numpy==1.26.4
-ortools==9.8.3296
+ortools==9.9.3926
 pandas==2.2.3
 python-dateutil==2.9.0.post0
 streamlit==1.45.1
