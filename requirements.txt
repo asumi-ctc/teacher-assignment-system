@@ -3,6 +3,11 @@
 # To generate a full list of pinned dependencies (including transitive ones),
 # you can use `pip freeze > requirements.lock.txt` after installing from this file.
 
+# Pinning specific versions of ortools' transitive dependencies is critical
+# for performance, ensuring the C++ backend is used correctly.
+absl-py==1.4.0
+protobuf==4.25.3
+
 google-generativeai==0.8.5
 numpy==2.2.6
 ortools==9.12.4544
