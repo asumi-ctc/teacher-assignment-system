@@ -1,11 +1,7 @@
 {
   "name": "Python 3 Streamlit OR-Tools",
-  "image": "mcr.microsoft.com/devcontainers/python:3.10-bullseye",
-  "features": {
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.12"
-    }
-  },
+  // Use a Python 3.12 base image directly to ensure a clean environment.
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bullseye",
   "postCreateCommand": "pip install -r requirements.txt",
   "customizations": {
     "vscode": {
