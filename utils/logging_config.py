@@ -82,6 +82,7 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
                     'class': 'logging.FileHandler', # RotatingFileHandler から FileHandler に変更
                     'mode': 'w', # オリジナルの挙動に合わせて 'w' (上書き) に設定
                     'filename': os.path.abspath(log_file), # 各ロガーのファイルパス (絶対パスに変換)
+                    'encoding': 'utf-8', # 元のコードにあったエンコーディング指定を追加
                     'formatter': 'standard',
                     'level': 'INFO', # ファイルへの書き込みレベルは INFO で固定 (必要に応じて調整)
                 } for name, log_file in loggers_to_configure_map.items()
@@ -91,9 +92,9 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
             # 各モジュールロガーの設定
             **{
                 name: {
-                    'handlers': ['console', f'{name}_file'], # コンソールとファイルの両方に出力
+                    'handlers': [f'{name}_file'], # ファイルハンドラーのみに設定
                     'level': 'INFO', # ロガーのレベルは INFO で固定 (必要に応じて調整)
-                    'propagate': False, # ルートロガーへの伝播を停止
+                    'propagate': True, # コンソール出力をルートロガーに委譲するため伝播を許可
                 } for name in loggers_to_configure_map.keys()
             },
             'django': { # Django 自身のログ（settings.pyへの移植時に必要）
@@ -103,7 +104,7 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
             }
         },
         'root': { # ルートロガー: 上記で捕捉されない全てのログのデフォルト
-            'handlers': ['console'], # ルートはコンソールのみに設定し、各ロガーがファイルハンドラを持つ
+            'handlers': ['console'], # ルートロガーが全てのコンソール出力を担当
             'level': 'INFO', # ルートロガーの最低レベル
             # propagate: True はデフォルトなので不要
         },
