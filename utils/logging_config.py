@@ -6,7 +6,7 @@ from logging.config import dictConfig
 LOG_DIR = "logs"
 APP_LOG_FILE = os.path.join(LOG_DIR, "app.log")
 GATEWAY_LOG_FILE = os.path.join(LOG_DIR, "optimization_gateway.log")
-ENGINE_LOG_FILE = os.path.join(LOG_DIR, "optimization_solver.log")
+SOLVER_LOG_FILE = os.path.join(LOG_DIR, "optimization_solver.log")
 
 def setup_logging(target_loggers: Optional[List[str]] = None):
     """
