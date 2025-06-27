@@ -1,6 +1,7 @@
 import logging
 import os
 from typing import Optional, List # 追加
+from logging.config import dictConfig # 新規追加: dictConfig をインポート
 
 LOG_DIR = "logs"
 APP_LOG_FILE = os.path.join(LOG_DIR, "app.log")
