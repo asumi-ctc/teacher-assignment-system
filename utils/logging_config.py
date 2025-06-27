@@ -11,32 +11,90 @@ APP_LOG_FILE = os.path.join(LOG_DIR, "app.log")
 GATEWAY_LOG_FILE = os.path.join(LOG_DIR, "optimization_gateway.log")
 SOLVER_LOG_FILE = os.path.join(LOG_DIR, "optimization_solver.log")
 
+
+# --- 静的ロギング設定辞書 ---
+# Djangoのsettings.pyに容易に移植できるよう、静的な辞書として定義。
+# Streamlit環境では、setup_logging関数がこの辞書を適用する。
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard'
+        },
+        'app_file': {
+            'class': 'logging.FileHandler',
+            'mode': 'w',
+            'filename': os.path.abspath(APP_LOG_FILE),
+            'encoding': 'utf-8',
+            'formatter': 'standard',
+            'level': 'INFO',
+        },
+        'gateway_file': {
+            'class': 'logging.FileHandler',
+            'mode': 'w',
+            'filename': os.path.abspath(GATEWAY_LOG_FILE),
+            'encoding': 'utf-8',
+            'formatter': 'standard',
+            'level': 'INFO',
+        },
+        'solver_file': {
+            'class': 'logging.FileHandler',
+            'mode': 'w',
+            'filename': os.path.abspath(SOLVER_LOG_FILE),
+            'encoding': 'utf-8',
+            'formatter': 'standard',
+            'level': 'INFO',
+        },
+    },
+    'loggers': {
+        'app': {
+            'handlers': ['app_file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'optimization_gateway': {
+            'handlers': ['gateway_file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'optimization_solver': {
+            'handlers': ['solver_file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        }
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
+
 def setup_logging(target_loggers: Optional[List[str]] = None):
     """
     アプリケーション全体のロギングを設定する。
+    Streamlit環境での重複設定を防ぎつつ、Djangoにも移植しやすい静的な設定辞書を使用します。
 
     Args:
-        target_loggers: 設定対象のロガー名のリスト。
-                        Noneの場合は 'app', 'optimization_gateway', 'optimization_solver' の全てを設定する。
-                        子プロセスから呼び出す際に、特定のロガーのみを再設定するために使用する。
+        target_loggers: (Streamlit/multiprocessing環境用) この引数は主にメインプロセスと
+                        子プロセスを区別するために使用されます。Noneの場合はメインプロセスと見なします。
     """
     global _is_main_logging_configured
 
     # Ensure log directory exists
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    # ターゲットロガーとファイルパスの辞書
-    all_loggers_files = { # ロガー名と対応するファイルパスのマップ
-        'app': APP_LOG_FILE,
-        'optimization_gateway': GATEWAY_LOG_FILE,
-        'optimization_solver': SOLVER_LOG_FILE # optimization_engine.log から変更済み
-    }
-
-    # 設定対象のロガーを決定
-    loggers_to_configure_map = all_loggers_files if target_loggers is None else {
-        name: path for name, path in all_loggers_files.items() if name in target_loggers
-    }
-    
     # --- Prevent repeated full configuration in Streamlit's main process ---
     # If target_loggers is None, it's the main application's full setup.
     # We only want this to happen once per process.
@@ -46,69 +104,15 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
             return
         _is_main_logging_configured = True # Mark as configured
 
-        # For the very first full configuration, clear root logger handlers
-        # to ensure a clean slate for the main app's console output.
-        root_logger = logging.getLogger()
-        for handler in root_logger.handlers[:]:
-            root_logger.removeHandler(handler)
-    
-    # --- Clear handlers for specific loggers being configured ---
-    # This applies to both the main setup (for app, gateway, solver loggers)
-    # and child process setups (for optimization_solver logger).
-    # This is necessary because disable_existing_loggers is False.
-    for logger_name in loggers_to_configure_map.keys():
-        logger_obj = logging.getLogger(logger_name)
-        for handler in logger_obj.handlers[:]: # ハンドラーリストのコピーをイテレート
-            logger_obj.removeHandler(handler)
+        # 初回実行時に既存のハンドラーをクリアして、クリーンな状態を保証します。
+        # これはStreamlitの再実行モデルにおいて重要です。
+        all_logger_names = list(LOGGING_CONFIG['loggers'].keys())
+        all_logger_names.append('') # ルートロガー('')を追加
 
-    # dictConfig 形式のロギング設定辞書を構築
-    LOGGING_CONFIG_DICT = {
-        'version': 1,
-        'disable_existing_loggers': False, # 既存ロガーの設定を無効化しない (Djangoとの互換性のため)
-
-        'formatters': {
-            'standard': {
-                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            },
-        },
-        'handlers': {
-            'console': { # コンソール出力用ハンドラー
-                'class': 'logging.StreamHandler', # クラスは文字列で指定
-                'formatter': 'standard'
-            },
-            # 各モジュール用のファイルハンドラーを動的に追加
-            **{
-                f'{name}_file': { # ハンドラー名は '{ロガー名}_file' とする
-                    'class': 'logging.FileHandler', # RotatingFileHandler から FileHandler に変更
-                    'mode': 'w', # オリジナルの挙動に合わせて 'w' (上書き) に設定
-                    'filename': os.path.abspath(log_file), # 各ロガーのファイルパス (絶対パスに変換)
-                    'encoding': 'utf-8', # 元のコードにあったエンコーディング指定を追加
-                    'formatter': 'standard',
-                    'level': 'INFO', # ファイルへの書き込みレベルは INFO で固定 (必要に応じて調整)
-                } for name, log_file in loggers_to_configure_map.items()
-            }
-        },
-        'loggers': {
-            # 各モジュールロガーの設定
-            **{
-                name: {
-                    'handlers': [f'{name}_file'], # ファイルハンドラーのみに設定
-                    'level': 'INFO', # ロガーのレベルは INFO で固定 (必要に応じて調整)
-                    'propagate': True, # コンソール出力をルートロガーに委譲するため伝播を許可
-                } for name in loggers_to_configure_map.keys()
-            },
-            'django': { # Django 自身のログ（settings.pyへの移植時に必要）
-                'handlers': ['console'], # Djangoのログはsettings.pyで別途ファイルハンドラを持つことが多い
-                'level': 'INFO',
-                'propagate': False,
-            }
-        },
-        'root': { # ルートロガー: 上記で捕捉されない全てのログのデフォルト
-            'handlers': ['console'], # ルートロガーが全てのコンソール出力を担当
-            'level': 'INFO', # ルートロガーの最低レベル
-            # propagate: True はデフォルトなので不要
-        },
-    }
+        for logger_name in all_logger_names:
+            logger_obj = logging.getLogger(logger_name)
+            for handler in logger_obj.handlers[:]:
+                logger_obj.removeHandler(handler)
 
     # ロギング設定を適用
-    dictConfig(LOGGING_CONFIG_DICT)
+    dictConfig(LOGGING_CONFIG)
