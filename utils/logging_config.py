@@ -3,6 +3,9 @@ import os
 from typing import Optional, List
 from logging.config import dictConfig
 
+# Global flag to prevent repeated full configuration in the main process
+# This flag is specific to the process it's running in.
+_is_main_logging_configured = False
 LOG_DIR = "logs"
 APP_LOG_FILE = os.path.join(LOG_DIR, "app.log")
 GATEWAY_LOG_FILE = os.path.join(LOG_DIR, "optimization_gateway.log")
@@ -17,35 +20,45 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
                         Noneの場合は 'app', 'optimization_gateway', 'optimization_solver' の全てを設定する。
                         子プロセスから呼び出す際に、特定のロガーのみを再設定するために使用する。
     """
+    global _is_main_logging_configured
+
+    # Ensure log directory exists
     os.makedirs(LOG_DIR, exist_ok=True)
 
     # ターゲットロガーとファイルパスの辞書
     all_loggers_files = { # ロガー名と対応するファイルパスのマップ
         'app': APP_LOG_FILE,
         'optimization_gateway': GATEWAY_LOG_FILE,
-        'optimization_solver': SOLVER_LOG_FILE
+        'optimization_solver': SOLVER_LOG_FILE # optimization_engine.log から変更済み
     }
 
     # 設定対象のロガーを決定
     loggers_to_configure_map = all_loggers_files if target_loggers is None else {
         name: path for name, path in all_loggers_files.items() if name in target_loggers
     }
-
-    # --- ハンドラーの重複追加を防ぐための既存ハンドラー削除ロジック ---
-    # dictConfig は disable_existing_loggers=False の場合、既存ハンドラーを削除しないため、
-    # 繰り返し呼び出される環境（Streamlitなど）ではハンドラーが重複する。
-    # そのため、設定対象のロガーから既存のハンドラーを明示的に削除する。
-    for logger_name in loggers_to_configure_map.keys():
-        logger_obj = logging.getLogger(logger_name)
-        for handler in logger_obj.handlers[:]: # ハンドラーリストのコピーをイテレート
-            logger_obj.removeHandler(handler)
     
-    # target_loggers が None の場合（全体設定時）は、ルートロガーのハンドラーもクリアする
+    # --- Prevent repeated full configuration in Streamlit's main process ---
+    # If target_loggers is None, it's the main application's full setup.
+    # We only want this to happen once per process.
     if target_loggers is None:
+        if _is_main_logging_configured:
+            # Full logging setup already done in this process, return immediately.
+            return
+        _is_main_logging_configured = True # Mark as configured
+
+        # For the very first full configuration, clear root logger handlers
+        # to ensure a clean slate for the main app's console output.
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
             root_logger.removeHandler(handler)
-    # --- 既存ハンドラー削除ロジックここまで ---
+    
+    # --- Clear handlers for specific loggers being configured ---
+    # This applies to both the main setup (for app, gateway, solver loggers)
+    # and child process setups (for optimization_solver logger).
+    # This is necessary because disable_existing_loggers is False.
+    for logger_name in loggers_to_configure_map.keys():
+        logger_obj = logging.getLogger(logger_name)
+        for handler in logger_obj.handlers[:]: # ハンドラーリストのコピーをイテレート
 
     # dictConfig 形式のロギング設定辞書を構築
     LOGGING_CONFIG_DICT = {
