@@ -84,8 +84,6 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
                     'filename': os.path.abspath(log_file), # 各ロガーのファイルパス (絶対パスに変換)
                     'formatter': 'standard',
                     'level': 'INFO', # ファイルへの書き込みレベルは INFO で固定 (必要に応じて調整)
-                    'maxBytes': 1024 * 1024 * 5, # 5 MB
-                    'backupCount': 5, # 5世代のバックアップ
                 } for name, log_file in loggers_to_configure_map.items()
             }
         },
