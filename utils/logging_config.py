@@ -59,6 +59,7 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
     for logger_name in loggers_to_configure_map.keys():
         logger_obj = logging.getLogger(logger_name)
         for handler in logger_obj.handlers[:]: # ハンドラーリストのコピーをイテレート
+            logger_obj.removeHandler(handler)
 
     # dictConfig 形式のロギング設定辞書を構築
     LOGGING_CONFIG_DICT = {
