@@ -24,7 +24,7 @@ from ortools.sat.python import cp_model # solver_raw_status_code の比較等で
 # ---------------------------------------------
 
 # --- [修正点3] ログ設定を別ファイルに分離し、定数をインポート ---
-from utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, ENGINE_LOG_FILE
+from utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
 # ---
 
 
@@ -625,7 +625,7 @@ def run_optimization():
         logger.info("Reading log files to store in session state.")
         st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE)
         # optimization_engine のログは直接ファイルから読み込む
-        engine_log_content = read_log_file(ENGINE_LOG_FILE)
+        engine_log_content = read_log_file(SOLVER_LOG_FILE)
         st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
         st.session_state.app_log_for_download = read_log_file(APP_LOG_FILE)
 
