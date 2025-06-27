@@ -1455,16 +1455,16 @@ def main():
     # --- ナビゲーションボタン ---
     nav_cols = st.columns([2, 2, 2, 1])  # ボタン数を3つに合わせ、比率を調整
     with nav_cols[0]:
-        if st.button("サンプルデータ", use_container_width=True, type="primary"):
+        if st.button("サンプルデータ", use_container_width=True, type="primary" if st.session_state.view_mode == "sample_data" else "secondary"):
             st.session_state.view_mode = "sample_data"
             st.rerun()
     with nav_cols[1]:
-        if st.button("ソルバーとmodelオブジェクト", use_container_width=True, type="primary"):
+        if st.button("ソルバーとmodelオブジェクト", use_container_width=True, type="primary" if st.session_state.view_mode == "objective_function" else "secondary"):
             st.session_state.view_mode = "objective_function"
             st.rerun()
     with nav_cols[2]:
         if st.session_state.get("solution_executed", False):
-            if st.button("最適化結果", use_container_width=True, type="primary"):
+            if st.button("最適化結果", use_container_width=True, type="primary" if st.session_state.view_mode == "optimization_result" else "secondary"):
                 st.session_state.view_mode = "optimization_result"
                 st.rerun()
 
