@@ -79,7 +79,8 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
             # 各モジュール用のファイルハンドラーを動的に追加
             **{
                 f'{name}_file': { # ハンドラー名は '{ロガー名}_file' とする
-                    'class': 'logging.handlers.RotatingFileHandler', # RotatingFileHandler を使用
+                    'class': 'logging.FileHandler', # RotatingFileHandler から FileHandler に変更
+                    'mode': 'w', # オリジナルの挙動に合わせて 'w' (上書き) に設定
                     'filename': os.path.abspath(log_file), # 各ロガーのファイルパス (絶対パスに変換)
                     'formatter': 'standard',
                     'level': 'INFO', # ファイルへの書き込みレベルは INFO で固定 (必要に応じて調整)
