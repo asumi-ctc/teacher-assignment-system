@@ -708,10 +708,24 @@ def display_sample_data_view():
         st.warning(f"テスト用の不正データを生成しました: {st.session_state.show_invalid_data_message}")
         del st.session_state.show_invalid_data_message
 
-    st.button("テスト用不正データ生成", key="generate_invalid_data_button", on_click=handle_generate_invalid_data, help="データバリデーションのテスト用に、意図的に不正なデータを生成します。")
+    # ボタンを横並びに配置し、配色を変更
+    col1, col2 = st.columns(2)
+    with col1:
+        st.button(
+            "サンプルデータ再生成",
+            key="regenerate_sample_data_button",
+            on_click=handle_regenerate_sample_data,
+            type="primary", # 重要な操作のため primary (青系) に変更
+            help="現在の入力データを破棄し、新しいサンプルデータを生成します。注意：未保存の変更は失われます。"
+        )
+    with col2:
+        st.button(
+            "テスト用不正データ生成",
+            key="generate_invalid_data_button",
+            on_click=handle_generate_invalid_data,
+            help="データバリデーションのテスト用に、意図的に不正なデータを生成します。"
+        )
 
-
-    st.button("サンプルデータ再生成", key="regenerate_sample_data_button", on_click=handle_regenerate_sample_data)
     logger.info("Displaying sample data.")
     st.markdown(
         f"**現在の割り当て対象月:** {st.session_state.ASSIGNMENT_TARGET_MONTH_START.strftime('%Y年%m月%d日')} "
@@ -1441,24 +1455,16 @@ def main():
     # --- ナビゲーションボタン ---
     nav_cols = st.columns([2, 2, 2, 1])  # ボタン数を3つに合わせ、比率を調整
     with nav_cols[0]:
-        if st.button("サンプルデータ", use_container_width=True, type="primary" if st.session_state.view_mode == "sample_data" else "secondary"):
+        if st.button("サンプルデータ", use_container_width=True, type="primary"):
             st.session_state.view_mode = "sample_data"
             st.rerun()
     with nav_cols[1]:
-        if st.button("ソルバーとmodelオブジェクト", use_container_width=True, type="primary" if st.session_state.view_mode == "objective_function" else "secondary"):
+        if st.button("ソルバーとmodelオブジェクト", use_container_width=True, type="primary"):
             st.session_state.view_mode = "objective_function"
             st.rerun()
     with nav_cols[2]:
-        # The "最適化結果" button in the top navigation bar
-        # It should be active if a solution has been executed.
-        # It will always point to the main results view (tabular data).
-        # The new "Change Assignment" functionality will be via a separate sidebar button.
-        # The type="primary" logic for this button remains the same.
-        # The actual content of the "optimization_result" view will be modified
-        # to show the table, and the interactive "change lecturer" part will move
-        # to a new view mode triggered by the new sidebar button.
-        if st.session_state.get("solution_executed", False): 
-            if st.button("最適化結果", use_container_width=True, type="primary" if st.session_state.view_mode == "optimization_result" else "secondary"):
+        if st.session_state.get("solution_executed", False):
+            if st.button("最適化結果", use_container_width=True, type="primary"):
                 st.session_state.view_mode = "optimization_result"
                 st.rerun()
 
