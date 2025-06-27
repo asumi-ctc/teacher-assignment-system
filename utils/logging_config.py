@@ -5,7 +5,7 @@ from typing import Optional, List # 追加
 LOG_DIR = "logs"
 APP_LOG_FILE = os.path.join(LOG_DIR, "app.log")
 GATEWAY_LOG_FILE = os.path.join(LOG_DIR, "optimization_gateway.log")
-ENGINE_LOG_FILE = os.path.join(LOG_DIR, "optimization_engine.log")
+ENGINE_LOG_FILE = os.path.join(LOG_DIR, "optimization_solver.log")
 
 def setup_logging(target_loggers: Optional[List[str]] = None):
     """
@@ -13,7 +13,7 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
 
     Args:
         target_loggers: 設定対象のロガー名のリスト。
-                        Noneの場合は 'app', 'optimization_gateway', 'optimization_engine' の全てを設定する。
+                        Noneの場合は 'app', 'optimization_gateway', 'optimization_solver' の全てを設定する。
                         子プロセスから呼び出す際に、特定のロガーのみを再設定するために使用する。
     """
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -24,7 +24,7 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
     all_loggers = {
         'app': APP_LOG_FILE,
         'optimization_gateway': GATEWAY_LOG_FILE,
-        'optimization_engine': ENGINE_LOG_FILE
+        'optimization_solver': ENGINE_LOG_FILE
     }
 
     # 設定対象のロガーを決定

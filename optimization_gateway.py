@@ -5,7 +5,7 @@ import os
 import multiprocessing
 from multiprocessing.connection import Connection
 from utils.logging_config import setup_logging
-import optimization_engine
+import optimization_solver
 from typing import List, Dict, Any, Tuple, Set, TypedDict, Optional, Union
 
 # --- カスタム例外 ---
@@ -268,13 +268,13 @@ def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
     try:
         # 子プロセスでは、自身が担当する 'optimization_engine' のロガーのみを再設定する。
         # これにより、親プロセスが書き込んでいる他のログファイル(app.log, optimization_gateway.log)が上書きされるのを防ぐ。
-        setup_logging(target_loggers=['optimization_engine'])
-        # optimization_engine.solve_assignment を直接呼び出す
-        result = optimization_engine.solve_assignment(**solver_args)
+        setup_logging(target_loggers=['optimization_solver'])
+        # optimization_solver.solve_assignment を直接呼び出す
+        result = optimization_solver.solve_assignment(**solver_args)
         conn.send(result)
     except Exception as e:
         # プロセス内で発生した予期せぬエラーもログに記録し、親に送る
-        child_logger = logging.getLogger('optimization_engine')
+        child_logger = logging.getLogger('optimization_solver')
         child_logger.error(f"最適化子プロセスで致命的なエラーが発生: {e}", exc_info=True)
         conn.send(e)
     finally:

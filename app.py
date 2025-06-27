@@ -19,7 +19,7 @@ from typing import List, Optional, Any, Tuple # TypedDict は optimization_engin
 
 # --- [修正点1] 分離したモジュールをインポート ---
 import optimization_gateway
-import optimization_engine
+import optimization_solver
 from ortools.sat.python import cp_model # solver_raw_status_code の比較等で使用
 # ---------------------------------------------
 
