@@ -31,6 +31,22 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
         name: path for name, path in all_loggers_files.items() if name in target_loggers
     }
 
+    # --- ハンドラーの重複追加を防ぐための既存ハンドラー削除ロジック ---
+    # dictConfig は disable_existing_loggers=False の場合、既存ハンドラーを削除しないため、
+    # 繰り返し呼び出される環境（Streamlitなど）ではハンドラーが重複する。
+    # そのため、設定対象のロガーから既存のハンドラーを明示的に削除する。
+    for logger_name in loggers_to_configure_map.keys():
+        logger_obj = logging.getLogger(logger_name)
+        for handler in logger_obj.handlers[:]: # ハンドラーリストのコピーをイテレート
+            logger_obj.removeHandler(handler)
+    
+    # target_loggers が None の場合（全体設定時）は、ルートロガーのハンドラーもクリアする
+    if target_loggers is None:
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+    # --- 既存ハンドラー削除ロジックここまで ---
+
     # dictConfig 形式のロギング設定辞書を構築
     LOGGING_CONFIG_DICT = {
         'version': 1,
