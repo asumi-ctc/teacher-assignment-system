@@ -219,21 +219,21 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
             log_to_buffer(f"  Normalization factor for {name}: {factor:.4f} (avg: {avg:.4f}, count: {len(cost_list)})")
             return factor
 
-        norm_factor_travel = get_norm_factor([d["raw_costs"]["travel"] for d in possible_assignments_temp_data.values() if "travel" in d["raw_costs"]], "travel")
-        norm_factor_age = get_norm_factor([d["raw_costs"]["age"] for d in possible_assignments_temp_data.values() if "age" in d["raw_costs"]], "age")
-        norm_factor_frequency = get_norm_factor([d["raw_costs"]["frequency"] for d in possible_assignments_temp_data.values() if "frequency" in d["raw_costs"]], "frequency")
-        norm_factor_qualification = get_norm_factor([d["raw_costs"]["qualification"] for d in possible_assignments_temp_data.values() if "qualification" in d["raw_costs"]], "qualification")
-        norm_factor_recency = get_norm_factor([d["raw_costs"]["recency"] for d in possible_assignments_temp_data.values() if "recency" in d["raw_costs"]], "recency")
+        cost_keys_for_norm = ["travel", "age", "frequency", "qualification", "recency"]
+        norm_factors = {}
+        for key in cost_keys_for_norm:
+            cost_list = [d["raw_costs"][key] for d in possible_assignments_temp_data.values() if key in d["raw_costs"]]
+            norm_factors[key] = get_norm_factor(cost_list, key)
 
         possible_assignments_dict: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for key, temp_data in possible_assignments_temp_data.items():
             raw = temp_data["raw_costs"]
             
-            norm_travel = raw["travel"] / norm_factor_travel
-            norm_age = raw["age"] / norm_factor_age
-            norm_frequency = raw["frequency"] / norm_factor_frequency
-            norm_qualification = raw["qualification"] / norm_factor_qualification
-            norm_recency = raw["recency"] / norm_factor_recency
+            norm_travel = raw["travel"] / norm_factors["travel"]
+            norm_age = raw["age"] / norm_factors["age"]
+            norm_frequency = raw["frequency"] / norm_factors["frequency"]
+            norm_qualification = raw["qualification"] / norm_factors["qualification"]
+            norm_recency = raw["recency"] / norm_factors["recency"]
 
             total_weighted_cost_float = (
                 weight_travel * norm_travel +
