@@ -89,20 +89,18 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
     Args:
         target_loggers: (Streamlit/multiprocessing環境用) この引数は主にメインプロセスと
                         子プロセスを区別するために使用されます。Noneの場合はメインプロセスと見なします。
+                        指定された場合、そのロガーに関連する設定のみを適用します。
     """
     global _is_main_logging_configured
 
     # Ensure log directory exists
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    # --- Prevent repeated full configuration in Streamlit's main process ---
-    # If target_loggers is None, it's the main application's full setup.
-    # We only want this to happen once per process.
     if target_loggers is None:
+        # --- メインプロセス用の完全な設定 ---
         if _is_main_logging_configured:
-            # Full logging setup already done in this process, return immediately.
             return
-        _is_main_logging_configured = True # Mark as configured
+        _is_main_logging_configured = True
 
         # 初回実行時に既存のハンドラーをクリアして、クリーンな状態を保証します。
         # これはStreamlitの再実行モデルにおいて重要です。
@@ -114,5 +112,28 @@ def setup_logging(target_loggers: Optional[List[str]] = None):
             for handler in logger_obj.handlers[:]:
                 logger_obj.removeHandler(handler)
 
-    # ロギング設定を適用
-    dictConfig(LOGGING_CONFIG)
+        # 完全なロギング設定を適用
+        dictConfig(LOGGING_CONFIG)
+    else:
+        # --- 子プロセス用の部分的な設定 ---
+        # 子プロセス用に、指定されたロガーの設定のみを含む部分的な設定辞書を作成します。
+        # これにより、他のプロセスのログファイルを上書きするのを防ぎます。
+        partial_config = {
+            'version': 1,
+            'disable_existing_loggers': False,
+            'formatters': LOGGING_CONFIG['formatters'],
+            'handlers': {},
+            'loggers': {},
+        }
+        for logger_name in target_loggers:
+            if logger_name in LOGGING_CONFIG['loggers']:
+                logger_config = LOGGING_CONFIG['loggers'][logger_name]
+                partial_config['loggers'][logger_name] = logger_config
+                for handler_name in logger_config.get('handlers', []):
+                    if handler_name in LOGGING_CONFIG['handlers']:
+                        # ハンドラーがまだ追加されていなければ追加
+                        if handler_name not in partial_config['handlers']:
+                            partial_config['handlers'][handler_name] = LOGGING_CONFIG['handlers'][handler_name]
+        
+        if partial_config['loggers']:
+            dictConfig(partial_config)
