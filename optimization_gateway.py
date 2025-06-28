@@ -265,12 +265,6 @@ PROCESS_TIMEOUT_SECONDS = 90
 
 def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
     """子プロセスで実行されるソルバー呼び出しラッパー"""
-    # --- プロファイリング用の設定 ---
-    # 最適化プロセスのパフォーマンスを計測するためにcProfileを有効化します。
-    import cProfile
-    profiler = cProfile.Profile()
-    profiler.enable()
-    # --------------------------
     try:
         # 子プロセスでは、自身が担当する 'optimization_engine' のロガーのみを再設定する。
         # これにより、親プロセスが書き込んでいる他のログファイル(app.log, optimization_gateway.log)が上書きされるのを防ぐ。
@@ -283,9 +277,6 @@ def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
         child_logger.error(f"最適化子プロセスで致命的なエラーが発生: {e}", exc_info=True)
         conn.send(e)
     finally:
-        profiler.disable() # プロファイリング終了
-        # プロファイリング結果をファイルに保存します。このファイルはUIからダウンロードできます。
-        profiler.dump_stats('solver_profile.prof')
         conn.close()
 
 def run_optimization_with_monitoring(

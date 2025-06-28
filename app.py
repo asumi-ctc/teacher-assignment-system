@@ -11,10 +11,7 @@ import multiprocessing
 import random # データ生成用
 import os # CPUコア数を取得するために追加
 import numpy as np # データ型変換のために追加
-# dateutil.relativedelta を使用するため、インストールが必要な場合があります。
-# pip install python-dateutil
-import pstats # プロファイル結果をデコードするために追加
-import io # プロファイル結果をメモリ内で扱うために追加
+# dateutil.relativedelta を使用するため、インストールが必要な場合があります。 (pip install python-dateutil)
 from dateutil.relativedelta import relativedelta
 import logging # logging モジュールをインポート
 from typing import List, Optional, Any, Tuple # TypedDict は optimization_engine に移動
@@ -528,7 +525,6 @@ def run_optimization():
         "optimization_gateway_log_for_download",
         "app_log_for_download", "gemini_explanation", "gemini_api_requested",
         "gemini_api_error", "last_full_prompt_for_gemini", "optimization_duration",
-        "solver_profile_text" # プロファイルテキストもクリア
     ]
     for key in keys_to_clear_on_execute:
         if key in st.session_state:
@@ -629,21 +625,6 @@ def run_optimization():
         st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE)
         # optimization_engine のログは直接ファイルから読み込む
         engine_log_content = read_log_file(SOLVER_LOG_FILE)
-
-        # プロファイリング結果をデコードしてセッションに保存
-        profiling_file_path = 'solver_profile.prof'
-        st.session_state.solver_profile_text = "" # デフォルトは空文字列
-        try:
-            if os.path.exists(profiling_file_path):
-                s = io.StringIO()
-                # pstats.Statsの出力をリダイレクト
-                ps = pstats.Stats(profiling_file_path, stream=s).sort_stats('cumulative')
-                ps.print_stats(50) # 上位50件を表示
-                st.session_state.solver_profile_text = s.getvalue()
-                logger.info(f"Successfully decoded profiling file: {profiling_file_path}")
-        except Exception as e:
-            logger.error(f"Failed to decode profiling file {profiling_file_path}: {e}")
-            st.session_state.solver_profile_text = f"プロファイルファイルのデコードに失敗しました: {e}"
 
         st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
         st.session_state.app_log_for_download = read_log_file(APP_LOG_FILE)
@@ -1111,11 +1092,6 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
             with metric_cols[1]:
                 if 'optimization_duration' in st.session_state:
                     st.metric("処理時間", f"{st.session_state.optimization_duration:.2f} 秒", help="データ準備から最適化完了までの時間です。")
-
-            # プロファイル結果を折り畳みUIで表示
-            if st.session_state.get("solver_profile_text"):
-                with st.expander("パフォーマンスプロファイル詳細 (処理時間上位50件)"):
-                    st.code(st.session_state.solver_profile_text)
 
             if solver_result['raw_solver_status_code'] in [cp_model.FEASIBLE, cp_model.UNKNOWN]:
                 st.warning(
