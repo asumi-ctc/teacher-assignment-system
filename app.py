@@ -1119,10 +1119,14 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                 summary_data.append(("**総割り当て件数**", f"{len(results_df)}件"))
 
                 total_travel_cost = results_df["移動コスト(元)"].sum()
-                summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
+                summary_data.append(("**移動コストの合計値**", f"{int(total_travel_cost)} 円"))
 
                 assigned_lecturer_ids = results_df["講師ID"].unique()
-                temp_assigned_lecturers = [l for l in st.session_state.DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
+                
+                # ★★★ パフォーマンス改善点 ★★★
+                # 講師データを毎回線形探索するのではなく、辞書に変換して高速にルックアップします。
+                all_lecturers_dict = {l['id']: l for l in st.session_state.DEFAULT_LECTURERS_DATA}
+                temp_assigned_lecturers = [all_lecturers_dict[lect_id] for lect_id in assigned_lecturer_ids if lect_id in all_lecturers_dict]
 
                 if temp_assigned_lecturers:
                     avg_age = sum(l.get("age", 0) for l in temp_assigned_lecturers) / len(temp_assigned_lecturers)

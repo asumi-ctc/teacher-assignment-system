@@ -376,18 +376,22 @@ def run_optimization_with_monitoring(
                 })
 
             # 集計情報の算出
-            lecturer_course_counts: Dict[str, int] = {}
+            lecturer_course_counts: Dict[str, int] = {} # 講師ごとの割り当て数
+            course_assignment_counts: Dict[str, int] = {} # 講座ごとの割り当て数
             for assignment in processed_assignments:
                 lecturer_id = assignment['講師ID']
                 lecturer_course_counts[lecturer_id] = lecturer_course_counts.get(lecturer_id, 0) + 1
+                course_id = assignment['講座ID']
+                course_assignment_counts[course_id] = course_assignment_counts.get(course_id, 0) + 1
 
-            course_assignment_counts: Dict[str, int] = {}
+            # ★★★ パフォーマンス改善点 ★★★
+            # 以前は以下のループ内で講座ごとの割り当て数を毎回計算していましたが (O(講座数 * 割り当て数))、
+            # 事前に一括で計算する方式 (O(割り当て数)) に変更し、計算量を削減しました。
             course_remaining_capacity: Dict[str, int] = {}
             TARGET_PREFECTURES_FOR_TWO_LECTURERS = ["東京都", "愛知県", "大阪府"]
             for course_item in solver_output['all_courses']:
                 course_id = course_item['id']
-                assigned_count = sum(1 for a in processed_assignments if a['講座ID'] == course_id)
-                course_assignment_counts[course_id] = assigned_count
+                assigned_count = course_assignment_counts.get(course_id, 0)
                 
                 classroom_id = course_item.get('classroom_id')
                 location = all_classrooms_dict.get(classroom_id, {}).get('location')
