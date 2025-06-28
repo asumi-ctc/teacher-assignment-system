@@ -1112,6 +1112,11 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                 if 'optimization_duration' in st.session_state:
                     st.metric("処理時間", f"{st.session_state.optimization_duration:.2f} 秒", help="データ準備から最適化完了までの時間です。")
 
+            # プロファイル結果を折り畳みUIで表示
+            if st.session_state.get("solver_profile_text"):
+                with st.expander("パフォーマンスプロファイル詳細 (処理時間上位50件)"):
+                    st.code(st.session_state.solver_profile_text)
+
             if solver_result['raw_solver_status_code'] in [cp_model.FEASIBLE, cp_model.UNKNOWN]:
                 st.warning(
                     """
@@ -1257,8 +1262,8 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
             if st.session_state.get("solution_executed"):
                 st.markdown("---") # 区切り線
                 st.subheader("ログのダウンロード")
-                dl_cols_1 = st.columns(3)
-                dl_cols_2 = st.columns(3)
+                dl_cols_1 = st.columns(2)
+                dl_cols_2 = st.columns(2)
 
                 with dl_cols_1[0]:
                     if st.session_state.get("optimization_gateway_log_for_download"):
@@ -1279,16 +1284,6 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                             mime="text/plain",
                             key="download_engine_internal_log_button", # key は変更なし
                             help="最適化エンジンの内部でキャプチャされた、割り当て候補のフィルタリングやコスト計算、制約構築などの詳細ログです。"
-                        )
-                with dl_cols_1[2]:
-                    if st.session_state.get("solver_profile_for_download"):
-                        st.download_button(
-                            label="ソルバープロファイル",
-                            data=st.session_state.solver_profile_for_download,
-                            file_name="solver_profile.prof",
-                            mime="application/octet-stream",
-                            key="download_solver_profile_button",
-                            help="最適化プロセスの詳細なパフォーマンス分析データです。snakevizなどのツールで可視化できます。"
                         )
                 with dl_cols_2[0]:
                     if st.session_state.get("solver_log_for_download"):
