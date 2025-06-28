@@ -525,7 +525,8 @@ def run_optimization():
         "solver_log_for_download", "optimization_error_message",
         "optimization_gateway_log_for_download",
         "app_log_for_download", "gemini_explanation", "gemini_api_requested",
-        "gemini_api_error", "last_full_prompt_for_gemini", "optimization_duration" # 処理時間もクリア
+        "gemini_api_error", "last_full_prompt_for_gemini", "optimization_duration", # 処理時間もクリア
+        "solver_profile_for_download" # プロファイルデータもクリア
     ]
     for key in keys_to_clear_on_execute:
         if key in st.session_state:
@@ -626,6 +627,18 @@ def run_optimization():
         st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE)
         # optimization_engine のログは直接ファイルから読み込む
         engine_log_content = read_log_file(SOLVER_LOG_FILE)
+
+        # プロファイリング結果ファイルを読み込む
+        profiling_file_path = 'solver_profile.prof'
+        st.session_state.solver_profile_for_download = b'' # デフォルトは空のバイト列
+        try:
+            if os.path.exists(profiling_file_path):
+                with open(profiling_file_path, 'rb') as f: # バイナリモードで読み込み
+                    st.session_state.solver_profile_for_download = f.read()
+                logger.info(f"Successfully read profiling file: {profiling_file_path}")
+        except Exception as e:
+            logger.error(f"Failed to read profiling file {profiling_file_path}: {e}")
+
         st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
         st.session_state.app_log_for_download = read_log_file(APP_LOG_FILE)
 
@@ -1238,8 +1251,8 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
             if st.session_state.get("solution_executed"):
                 st.markdown("---") # 区切り線
                 st.subheader("ログのダウンロード")
-                dl_cols_1 = st.columns(2)
-                dl_cols_2 = st.columns(2)
+                dl_cols_1 = st.columns(3)
+                dl_cols_2 = st.columns(3)
 
                 with dl_cols_1[0]:
                     if st.session_state.get("optimization_gateway_log_for_download"):
@@ -1260,6 +1273,16 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                             mime="text/plain",
                             key="download_engine_internal_log_button", # key は変更なし
                             help="最適化エンジンの内部でキャプチャされた、割り当て候補のフィルタリングやコスト計算、制約構築などの詳細ログです。"
+                        )
+                with dl_cols_1[2]:
+                    if st.session_state.get("solver_profile_for_download"):
+                        st.download_button(
+                            label="ソルバープロファイル",
+                            data=st.session_state.solver_profile_for_download,
+                            file_name="solver_profile.prof",
+                            mime="application/octet-stream",
+                            key="download_solver_profile_button",
+                            help="最適化プロセスの詳細なパフォーマンス分析データです。snakevizなどのツールで可視化できます。"
                         )
                 with dl_cols_2[0]:
                     if st.session_state.get("solver_log_for_download"):
