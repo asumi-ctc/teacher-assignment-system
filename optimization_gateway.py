@@ -273,6 +273,7 @@ def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
         result = optimization_solver.solve_assignment(**solver_args)
         conn.send(result)
     except Exception as e:
+        # プロセス内で発生した予期せぬエラーもログに記録し、親に送る
         child_logger = logging.getLogger('optimization_solver')
         child_logger.error(f"最適化子プロセスで致命的なエラーが発生: {e}", exc_info=True)
         conn.send(e)
