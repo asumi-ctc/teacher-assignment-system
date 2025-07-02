@@ -25,6 +25,7 @@ from ortools.sat.python import cp_model # solver_raw_status_code の比較等で
 
 # --- [修正点3] ログ設定を別ファイルに分離し、定数をインポート ---
 from utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
+from utils.error_definitions import InvalidInputError
 # ---
 
 
@@ -598,7 +599,7 @@ def run_optimization():
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
 
-    except optimization_gateway.InvalidInputError as e:
+    except InvalidInputError as e:
         logger.error(f"データバリデーションエラーが発生しました: {e}", exc_info=True)
         import traceback
         error_trace = traceback.format_exc()

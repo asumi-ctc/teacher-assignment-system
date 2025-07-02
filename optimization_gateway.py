@@ -1,14 +1,17 @@
 # optimization_gateway.py
+
 import logging
 import datetime
 import os
 import multiprocessing
 from multiprocessing.connection import Connection
 from utils.logging_config import setup_logging
+from utils.error_definitions import InvalidInputError  # <<< 変更: 新しいエラー定義をインポート
 import optimization_solver
 from typing import List, Dict, Any, Tuple, Set, TypedDict, Optional, Union
 
-# --- カスタム例外 ---
+# --- [削除] ここにあった InvalidInputError クラス定義を削除 ---
+
 logger = logging.getLogger(__name__)
 
 class OptimizationResult(TypedDict):
@@ -16,16 +19,12 @@ class OptimizationResult(TypedDict):
     message: str
     solution_status: str
     objective_value: Optional[float]
-    assignments_df: List[Dict[str, Union[str, int, float, None]]] # 整形された割り当て結果のリスト
+    assignments_df: List[Dict[str, Union[str, int, float, None]]]
     lecturer_course_counts: Dict[str, int]
     course_assignment_counts: Dict[str, int]
     course_remaining_capacity: Dict[str, int]
     raw_solver_status_code: int
 
-
-class InvalidInputError(ValueError):
-    """データバリデーションエラーを示すカスタム例外"""
-    pass
 
 # --- バリデーションヘルパー関数 ---
 def _validate_date_string(date_str: Any, context: str) -> None:
@@ -38,6 +37,7 @@ def _validate_date_string(date_str: Any, context: str) -> None:
         raise InvalidInputError(f"{context}: 日付形式が無効です。'{date_str}' は 'YYYY-MM-DD' 形式ではありません。")
 
 # --- 各データセットのバリデーション関数 ---
+# (以下、関数の内部ロジックは変更なし)
 
 def _validate_classrooms(classrooms_data: List[Dict[str, Any]]) -> Set[str]:
     """教室データのバリデーションを行い、有効な教室IDのセットを返す"""
@@ -52,19 +52,16 @@ def _validate_classrooms(classrooms_data: List[Dict[str, Any]]) -> Set[str]:
         if not isinstance(classroom, dict):
             raise InvalidInputError(f"{context}: 各教室は辞書である必要がありますが、型 '{type(classroom).__name__}' を受け取りました。")
 
-        # 必須フィールドのチェック
         for key in ["id", "location"]:
             if key not in classroom:
                 raise InvalidInputError(f"{context}: 必須フィールド '{key}' がありません。")
 
-        # IDのバリデーション
         classroom_id = classroom.get("id", f"不明(インデックス:{i})")
         if not isinstance(classroom_id, str) or not classroom_id:
             raise InvalidInputError(f"{context}: 'id' は空でない文字列である必要がありますが、'{classroom_id}' を受け取りました。")
         if classroom_id in validated_ids:
             raise InvalidInputError(f"{context}: 教室ID '{classroom_id}' が重複しています。IDは一意である必要があります。")
         
-        # Locationのバリデーション
         if not isinstance(classroom["location"], str) or not classroom["location"]:
             raise InvalidInputError(f"{context} (ID:{classroom_id}): 'location' は空でない文字列である必要があります。")
 
@@ -85,23 +82,20 @@ def _validate_lecturers(lecturers_data: List[Dict[str, Any]], valid_classroom_id
         if not isinstance(lecturer, dict):
             raise InvalidInputError(f"{context}: 各講師は辞書である必要がありますが、型 '{type(lecturer).__name__}' を受け取りました。")
 
-        # 必須フィールドのチェック
         required_keys = ["id", "name", "age", "home_classroom_id", "qualification_general_rank", "availability", "past_assignments"]
         for key in required_keys:
             if key not in lecturer:
                 raise InvalidInputError(f"{context}: 必須フィールド '{key}' がありません。")
 
         lecturer_id = lecturer.get("id", f"不明(インデックス:{i})")
-        context = f"講師データ (ID:{lecturer_id})" # エラーメッセージ用にコンテキストを更新
+        context = f"講師データ (ID:{lecturer_id})"
 
-        # IDのバリデーション
         if not isinstance(lecturer_id, str) or not lecturer_id:
             raise InvalidInputError(f"{context}: 'id' は空でない文字列である必要があります。")
         if lecturer_id in validated_ids:
             raise InvalidInputError(f"{context}: 講師ID '{lecturer_id}' が重複しています。")
         validated_ids.add(lecturer_id)
 
-        # 各フィールドのバリデーション
         if not isinstance(lecturer["name"], str) or not lecturer["name"]:
             raise InvalidInputError(f"{context}: 'name' は空でない文字列である必要があります。")
         
@@ -209,6 +203,7 @@ def _validate_travel_costs(travel_costs_matrix: Dict[Tuple[str, str], int], vali
         if not isinstance(value, (int, float)) or value < 0:
             raise InvalidInputError(f"{context}: 値は0以上の数値である必要がありますが、'{value}' を受け取りました。")
 
+
 # --- メインアダプター関数 ---
 
 def adapt_data_for_engine(
@@ -216,38 +211,31 @@ def adapt_data_for_engine(
     courses_data: List[Dict[str, Any]],
     classrooms_data: List[Dict[str, Any]],
     travel_costs_matrix: Dict[Tuple[str, str], int],
-    **kwargs # 将来的な拡張のために残す
+    **kwargs
 ) -> Dict[str, Any]:
     """
     最適化エンジンへの入力データを準備し、その過程で厳格なバリデーションを実行する。
-    バリデーションに失敗した場合は InvalidInputError を送出する。
     """
     logger = logging.getLogger(__name__)
-
     try:
-        # 1. 教室データのバリデーション (他データが参照するため最初に行う)
         logger.info("ステップ1/4: 教室データを検証中...")
         valid_classroom_ids = _validate_classrooms(classrooms_data)
         logger.info(f"教室データの検証が完了しました。{len(valid_classroom_ids)}件の有効な教室を確認しました。")
 
-        # 2. 講師データのバリデーション
         logger.info("ステップ2/4: 講師データを検証中...")
         _validate_lecturers(lecturers_data, valid_classroom_ids)
         logger.info(f"講師データの検証が完了しました。{len(lecturers_data)}件の講師データは有効です。")
 
-        # 3. 講座データのバリデーション
         logger.info("ステップ3/4: 講座データを検証中...")
         _validate_courses(courses_data, valid_classroom_ids)
         logger.info(f"講座データの検証が完了しました。{len(courses_data)}件の講座データは有効です。")
 
-        # 4. 移動コストデータのバリデーション
         logger.info("ステップ4/4: 移動コストデータを検証中...")
         _validate_travel_costs(travel_costs_matrix, valid_classroom_ids)
         logger.info(f"移動コストデータの検証が完了しました。{len(travel_costs_matrix)}件のエントリは有効です。")
 
         logger.info("全ての入力データのバリデーションが正常に完了しました。")
 
-        # バリデーションが成功した場合、データをそのまま返す
         return {
             "lecturers_data": lecturers_data,
             "courses_data": courses_data,
@@ -256,24 +244,20 @@ def adapt_data_for_engine(
         }
     except InvalidInputError as e:
         logger.error(f"入力データのバリデーションに失敗しました: {e}", exc_info=True)
-        raise # エラーを呼び出し元に伝播させる
+        raise
 
-# --- 最適化実行ラッパー (監視・再試行付き) ---
-
+# --- 最適化実行ラッパー ---
+# (以下、変更なし)
 RETRY_LIMIT = 2
 PROCESS_TIMEOUT_SECONDS = 90
 
 def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
     """子プロセスで実行されるソルバー呼び出しラッパー"""
     try:
-        # 子プロセスでは、自身が担当する 'optimization_engine' のロガーのみを再設定する。
-        # これにより、親プロセスが書き込んでいる他のログファイル(app.log, optimization_gateway.log)が上書きされるのを防ぐ。
         setup_logging(target_loggers=['optimization_solver'])
-        # optimization_solver.solve_assignment を直接呼び出す
         result = optimization_solver.solve_assignment(**solver_args)
         conn.send(result)
     except Exception as e:
-        # プロセス内で発生した予期せぬエラーもログに記録し、親に送る
         child_logger = logging.getLogger('optimization_solver')
         child_logger.error(f"最適化子プロセスで致命的なエラーが発生: {e}", exc_info=True)
         conn.send(e)
@@ -292,7 +276,6 @@ def run_optimization_with_monitoring(
     """
     logger = logging.getLogger(__name__)
 
-    # solve_assignment に渡す引数を辞書にまとめる
     solver_args = {
         "lecturers_data": lecturers_data,
         "courses_data": courses_data,
@@ -303,7 +286,6 @@ def run_optimization_with_monitoring(
 
     for attempt in range(RETRY_LIMIT):
         logger.info(f"最適化プロセスを開始します。(試行 {attempt + 1}/{RETRY_LIMIT})")
-        # Pipeはtryブロックの外で定義し、finallyで確実に閉じられるようにする
         parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
 
         process = multiprocessing.Process(
@@ -314,40 +296,27 @@ def run_optimization_with_monitoring(
         solver_output = None
         try:
             process.start()
-            # 子プロセスからのデータ到着をタイムアウト付きで待つ
             if parent_conn.poll(PROCESS_TIMEOUT_SECONDS):
                 result = parent_conn.recv()
                 if isinstance(result, Exception):
-                    # 子プロセスで発生した例外を InvalidInputError としてラップし、親プロセスで再スローする。
                     raise InvalidInputError(f"最適化プロセスでエラーが発生しました: {result}") from result
-                
-                # 正常な結果を受信
                 solver_output = result
                 logger.info("最適化プロセスから結果を正常に受信しました。")
             else:
-                # pollがタイムアウトした場合
-                logger.error(f"最適化プロセスがタイムアウトしました ({PROCESS_TIMEOUT_SECONDS}秒)。子プロセスが結果を送信しませんでした。")
+                logger.error(f"最適化プロセスがタイムアウトしました ({PROCESS_TIMEOUT_SECONDS}秒)。")
 
         except (IOError, EOFError) as e:
-            # Pipeが予期せず閉じた場合など
             logger.error(f"プロセス間通信中にエラーが発生しました: {e}", exc_info=True)
         finally:
-            # 子プロセスの終了を待つ
-            # join()のタイムアウトは短めに設定。Pipeが閉じられていればすぐに終了するはず。
             process.join(timeout=5) 
-            
             if process.is_alive():
                 logger.error("最適化プロセスが応答しません。強制終了します。")
                 process.terminate()
-                process.join() # terminate後の終了を待つ
-
-            # Pipeの接続を閉じる
+                process.join()
             parent_conn.close()
 
-        # 結果を評価
         if solver_output is not None:
             logger.info("最適化プロセスが正常に完了しました。")
-            # --- ここから Output 層のロジック ---
             logger.info("最適化結果を整形します...")
 
             all_lecturers_dict = {l['id']: l for l in solver_output['all_lecturers']}
@@ -358,7 +327,6 @@ def run_optimization_with_monitoring(
             for assignment in solver_output['assignments']:
                 lecturer_id = assignment['講師ID']
                 course_id = assignment['講座ID']
-
                 lecturer = all_lecturers_dict.get(lecturer_id, {})
                 course = all_courses_dict.get(course_id, {})
                 classroom = all_classrooms_dict.get(course.get('classroom_id'), {})
@@ -376,7 +344,6 @@ def run_optimization_with_monitoring(
                     "講座ランク": course.get("rank"),
                 })
 
-            # 集計情報の算出
             lecturer_course_counts: Dict[str, int] = {}
             for assignment in processed_assignments:
                 lecturer_id = assignment['講師ID']
@@ -409,12 +376,10 @@ def run_optimization_with_monitoring(
             logger.info("最適化結果の整形が完了しました。")
             return final_result
 
-        # 失敗した場合、再試行するかどうか
         if attempt < RETRY_LIMIT - 1:
             logger.info("再試行します...")
-            continue # 次の試行へ
+            continue
 
-    # 全ての試行が失敗した場合
     raise InvalidInputError(
         "最適化処理が複数回の試行でも設定時間内に完了しませんでした。"
         "問題が解決しない場合は、入力データを簡素化するか、モデル設定を見直してください。"
