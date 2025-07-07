@@ -12,15 +12,18 @@ from dateutil.relativedelta import relativedelta
 import logging
 
 import optimization_gateway
-from optimization_gateway import OptimizationInput, SolverParameters, OptimizationWeights
-from utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
+from utils.logging_config import setup_logging
 from utils.error_definitions import InvalidInputError
+from utils.types import OptimizationInput, SolverParameters, OptimizationWeights
 
 # ... (データ生成関数などは変更なし) ...
 
 def run_optimization():
     logger = logging.getLogger('app')
-    # ... (セッションクリアのロジック) ...
+    # セッションキャッシュのクリア
+    for key in ["solver_result_cache", "optimization_error_message"]:
+        if key in st.session_state:
+            del st.session_state[key]
 
     try:
         with st.spinner("最適化計算を実行中..."):
@@ -57,8 +60,7 @@ def run_optimization():
             # 3. 新しいエントリーポイントを呼び出し
             solver_output = optimization_gateway.execute_optimization(engine_input)
             
-            end_time = time.time()
-            st.session_state.optimization_duration = end_time - start_time
+            st.session_state.optimization_duration = time.time() - start_time
             st.session_state.solver_result_cache = solver_output
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
@@ -68,14 +70,12 @@ def run_optimization():
         st.session_state.optimization_error_message = f"処理中にエラーが発生しました:\n\n{e}"
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
-        # st.rerun() をtry-except-finallyブロックの外で行うか、即時更新が不要なら削除を検討
     except Exception as e:
         logger.error(f"予期せぬシステムエラー: {e}", exc_info=True)
         st.session_state.optimization_error_message = f"予期せぬシステムエラーが発生しました:\n\n{e}"
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
-    finally:
-        # ... (ログ読み込みロジック) ...
-        pass
     
-    st.rerun() # 処理の最後に一度だけ実行してUIを更新
+    st.rerun()
+
+# ... (main関数や他のUI関数) ...
