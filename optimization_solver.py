@@ -62,7 +62,9 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
         consecutive_day_pairs: List[Dict[str, Any]] = []
         log_to_buffer("Starting search for consecutive general-special course pairs.")
         parsed_courses_for_pairing: List[Dict[str, Any]] = []
-        for course_id_loop, course_item_loop in courses_dict.items():
+        # 安定した順序で処理するためにキーでソート
+        for course_id_loop in sorted(courses_dict.keys()):
+            course_item_loop = courses_dict[course_id_loop]
             try:
                 schedule_date = datetime.datetime.strptime(course_item_loop['schedule'], "%Y-%m-%d").date()
                 parsed_courses_for_pairing.append({**course_item_loop, 'schedule_date_obj': schedule_date})
@@ -105,8 +107,11 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
         if forced_unassignments_set:
             log_to_buffer(f"  Forced unassignments specified: {forced_unassignments_set}")
 
-        for lecturer_id_loop, lecturer in lecturers_dict.items():
-            for course_id_loop, course in courses_dict.items():
+        # 安定した順序で処理するためにキーでソートし、ソルバーの挙動を安定させる
+        for lecturer_id_loop in sorted(lecturers_dict.keys()):
+            lecturer = lecturers_dict[lecturer_id_loop]
+            for course_id_loop in sorted(courses_dict.keys()):
+                course = courses_dict[course_id_loop]
                 lecturer_id = lecturer["id"]
                 course_id = course["id"]
 
@@ -260,7 +265,9 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
         
         shortage_penalty_terms: List[Any] = [] # LinearExpr terms
 
-        for course_item in courses_dict.values():
+        # 安定した順序で処理するためにキーでソート
+        for course_id_loop in sorted(courses_dict.keys()):
+            course_item = courses_dict[course_id_loop]
             course_id = course_item["id"]
             possible_assignments_for_course = assignments_by_course.get(course_id, [])
             if possible_assignments_for_course:
@@ -294,7 +301,9 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
             actual_penalty_concentration = int(weight_lecturer_concentration * BASE_PENALTY_CONCENTRATION_SCALED)
 
             if actual_penalty_concentration > 0:
-                for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
+                # 安定した順序で処理するためにキーでソート
+                for lecturer_id_loop in sorted(assignments_by_lecturer.keys()):
+                    lecturer_vars = assignments_by_lecturer[lecturer_id_loop]
                     if not lecturer_vars or len(lecturer_vars) <= 1:
                         continue
                     
@@ -315,7 +324,9 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
                 c1_id = pair_info["course1_id"]
                 c2_id = pair_info["course2_id"]
 
-                for lecturer_id_loop_pair, lecturer_pair in lecturers_dict.items():
+                # 安定した順序で処理するためにキーでソート
+                for lecturer_id_loop_pair in sorted(lecturers_dict.keys()):
+                    lecturer_pair = lecturers_dict[lecturer_id_loop_pair]
                     if lecturer_pair.get("qualification_special_rank") is None:
                         continue
 
