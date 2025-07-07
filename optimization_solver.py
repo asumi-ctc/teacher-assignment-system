@@ -225,28 +225,25 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
             cost_list = [d["raw_costs"][key] for d in possible_assignments_temp_data.values() if key in d["raw_costs"]]
             norm_factors[key] = get_norm_factor(cost_list, key)
 
-        cost_weights = {
-            "travel": weight_travel,
-            "age": weight_age,
-            "frequency": weight_frequency,
-            "qualification": weight_qualification,
-            "recency": weight_past_assignment_recency
-        }
-
         possible_assignments_dict: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for key, temp_data in possible_assignments_temp_data.items():
             raw = temp_data["raw_costs"]
             
-            total_weighted_cost_float = 0.0
-            log_parts = []
-            for cost_key, weight in cost_weights.items():
-                if weight > 0 and cost_key in raw and cost_key in norm_factors:
-                    norm_cost = raw[cost_key] / norm_factors[cost_key]
-                    total_weighted_cost_float += weight * norm_cost
-                    log_parts.append(f"norm_{cost_key}={norm_cost:.2f}")
+            norm_travel = raw["travel"] / norm_factors["travel"]
+            norm_age = raw["age"] / norm_factors["age"]
+            norm_frequency = raw["frequency"] / norm_factors["frequency"]
+            norm_qualification = raw["qualification"] / norm_factors["qualification"]
+            norm_recency = raw["recency"] / norm_factors["recency"]
 
+            total_weighted_cost_float = (
+                weight_travel * norm_travel +
+                weight_age * norm_age +
+                weight_frequency * norm_frequency +
+                weight_qualification * norm_qualification +
+                weight_past_assignment_recency * norm_recency
+            )
             total_weighted_cost_int = int(round(total_weighted_cost_float * 100))
-            log_to_buffer(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} ({', '.join(log_parts)})")
+            log_to_buffer(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} (norm_travel={norm_travel:.2f}, norm_age={norm_age:.2f}, norm_freq={norm_frequency:.2f}, norm_qual={norm_qualification:.2f}, norm_recency={norm_recency:.2f})")
             possible_assignments_dict[key] = {**temp_data, "cost": total_weighted_cost_int}
 
         # --- 中間フラッシュポイント 2: コスト計算完了後 ---
