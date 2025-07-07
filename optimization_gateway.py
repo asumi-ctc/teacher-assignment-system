@@ -80,6 +80,9 @@ def run_optimization_with_monitoring(
         lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
         courses_dict = {course['id']: course for course in courses_data}
         classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data}
+        # パフォーマンスを安定させるため、元のリストの順序をIDのリストとしてソルバーに渡す
+        lecturer_ids_in_order = [lecturer['id'] for lecturer in lecturers_data]
+        course_ids_in_order = [course['id'] for course in courses_data]
         logger.info("Input data validation and preprocessing successful.")
 
     except InvalidInputError:
@@ -93,6 +96,8 @@ def run_optimization_with_monitoring(
         "courses_dict": courses_dict,
         "classrooms_dict": classrooms_dict,
         "travel_costs_matrix": travel_costs_matrix,
+        "lecturer_ids_in_order": lecturer_ids_in_order,
+        "course_ids_in_order": course_ids_in_order,
         **kwargs
     }
 
