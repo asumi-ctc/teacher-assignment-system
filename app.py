@@ -298,7 +298,7 @@ def generate_travel_costs_matrix(all_classroom_ids_combined, classroom_id_to_pre
 
 def initialize_app_data(force_regenerate: bool = False):
     logger = logging.getLogger('app')
-    if force_regenerate or not st.session_state.get("app_data_initialized"):
+    if force_regenerate or "app_data_initialized" not in st.session_state:
         logger.info("Initializing application data...")
         st.session_state.TODAY = datetime.date.today()
         start = (st.session_state.TODAY + relativedelta(months=4)).replace(day=1)
@@ -562,6 +562,10 @@ def main():
             if st.button("最適化結果", use_container_width=True, type="primary" if st.session_state.view_mode == "optimization_result" else "secondary"):
                 st.session_state.view_mode = "optimization_result"; st.rerun()
 
+    st.sidebar.markdown(
+        "【制約】【許容条件】【最適化目標】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
+        "また最適化目標に重み付けすることで割り当て結果をチューニングすることができます。"
+    )
     st.sidebar.button("最適割り当てを実行", type="primary", on_click=run_optimization)
     st.sidebar.markdown("---")
     
