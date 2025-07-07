@@ -48,56 +48,13 @@ def run_optimization_with_monitoring(
     """
     最適化エンジンを監視付きの別プロセスで実行し、タイムアウトや再試行を管理する。
     """
-    # --- 1. 入力データの検証と前処理 ---
-    try:
-        logger.info("Starting input data validation and preprocessing.")
-        if not isinstance(lecturers_data, list): raise InvalidInputError("`lecturers_data` must be a list.")
-        if not isinstance(courses_data, list): raise InvalidInputError("`courses_data` must be a list.")
-        if not isinstance(classrooms_data, list): raise InvalidInputError("`classrooms_data` must be a list.")
-        if not isinstance(travel_costs_matrix, dict): raise InvalidInputError("`travel_costs_matrix` must be a dict.")
-
-        if lecturers_data:
-            required_keys = {'id', 'availability', 'home_classroom_id', 'qualification_general_rank'}
-            for i, lecturer in enumerate(lecturers_data):
-                if not isinstance(lecturer, dict):
-                    raise InvalidInputError(f"Item at index {i} in `lecturers_data` is not a dict.")
-                missing_keys = required_keys - lecturer.keys()
-                if missing_keys:
-                    lecturer_id = lecturer.get('id', 'N/A')
-                    raise InvalidInputError(f"Lecturer at index {i} (id: {lecturer_id}) is missing keys: {missing_keys}")
-
-        if courses_data:
-            required_keys = {'id', 'classroom_id', 'course_type', 'rank', 'schedule'}
-            for i, course in enumerate(courses_data):
-                if not isinstance(course, dict):
-                    raise InvalidInputError(f"Item at index {i} in `courses_data` is not a dict.")
-                missing_keys = required_keys - course.keys()
-                if missing_keys:
-                    course_id = course.get('id', 'N/A')
-                    raise InvalidInputError(f"Course at index {i} (id: {course_id}) is missing keys: {missing_keys}")
-
-        # データ前処理: リストをIDをキーとする辞書に変換
-        lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
-        courses_dict = {course['id']: course for course in courses_data}
-        classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data}
-        # パフォーマンスを安定させるため、元のリストの順序をIDのリストとしてソルバーに渡す
-        lecturer_ids_in_order = [lecturer['id'] for lecturer in lecturers_data]
-        course_ids_in_order = [course['id'] for course in courses_data]
-        logger.info("Input data validation and preprocessing successful.")
-
-    except InvalidInputError:
-        logger.error("Input data validation failed.", exc_info=True)
-        # この例外は呼び出し元 (app.py) で捕捉されるように再送出する
-        raise
+    logger = logging.getLogger(__name__)
 
     solver_args = {
-        # ソルバーには前処理済みの辞書形式のデータを渡す
-        "lecturers_dict": lecturers_dict,
-        "courses_dict": courses_dict,
-        "classrooms_dict": classrooms_dict,
+        "lecturers_data": lecturers_data,
+        "courses_data": courses_data,
+        "classrooms_data": classrooms_data,
         "travel_costs_matrix": travel_costs_matrix,
-        "lecturer_ids_in_order": lecturer_ids_in_order,
-        "course_ids_in_order": course_ids_in_order,
         **kwargs
     }
 
@@ -131,7 +88,7 @@ def run_optimization_with_monitoring(
             logger.info("最適化結果を整形します...")
             all_lecturers_dict = {l['id']: l for l in solver_output['all_lecturers']}
             all_courses_dict = {c['id']: c for c in solver_output['all_courses']}
-            all_classrooms_dict = solver_args['classrooms_dict'] # classrooms_dictを直接使用
+            all_classrooms_dict = {c['id']: c for c in solver_args['classrooms_data']}
             processed_assignments = []
             for assignment in solver_output['assignments']:
                 lecturer = all_lecturers_dict.get(assignment['講師ID'], {})

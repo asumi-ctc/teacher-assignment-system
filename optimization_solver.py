@@ -24,11 +24,9 @@ class SolverOutput(TypedDict):
     all_lecturers: List[dict]
     solver_raw_status_code: int # このフィールドは残す
 
-def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
-                     courses_dict: Dict[str, Dict[str, Any]],
-                     classrooms_dict: Dict[str, Dict[str, Any]],
-                     lecturer_ids_in_order: List[str],
-                     course_ids_in_order: List[str],
+def solve_assignment(lecturers_data: List[Dict[str, Any]],
+                     courses_data: List[Dict[str, Any]],
+                     classrooms_data: List[Dict[str, Any]], # classrooms_data は現在未使用だが、将来のために残す
                      travel_costs_matrix: Dict[Tuple[str, str], int],
                      weight_past_assignment_recency: float,
                      weight_qualification: float,
@@ -59,13 +57,16 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
     try:
         model = cp_model.CpModel()
 
+        # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
+        lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
+        courses_dict = {course['id']: course for course in courses_data}
+        classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
+
         # --- ステップ1: 連日講座ペアのリストアップ ---
         consecutive_day_pairs: List[Dict[str, Any]] = []
         log_to_buffer("Starting search for consecutive general-special course pairs.")
         parsed_courses_for_pairing: List[Dict[str, Any]] = []
-        # パフォーマンス安定化のため、元のリストの順序で処理
-        for course_id_loop in course_ids_in_order:
-            course_item_loop = courses_dict[course_id_loop]
+        for course_id_loop, course_item_loop in courses_dict.items():
             try:
                 schedule_date = datetime.datetime.strptime(course_item_loop['schedule'], "%Y-%m-%d").date()
                 parsed_courses_for_pairing.append({**course_item_loop, 'schedule_date_obj': schedule_date})
@@ -80,9 +81,7 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
                 courses_by_classroom_for_pairing[cid] = []
             courses_by_classroom_for_pairing[cid].append(course_in_list)
 
-        # 教室IDの順序を安定させるためソート (P1, P2, ... はアルファベットソートで問題ない)
-        for cid_loop in sorted(courses_by_classroom_for_pairing.keys()):
-            classroom_courses_list = courses_by_classroom_for_pairing[cid_loop]
+        for cid_loop, classroom_courses_list in courses_by_classroom_for_pairing.items():
             classroom_courses_list.sort(key=lambda c: c['schedule_date_obj'])
             for i in range(len(classroom_courses_list) - 1):
                 course1 = classroom_courses_list[i]
@@ -104,17 +103,14 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
         # --- Main logic for model building and solving ---
         possible_assignments_temp_data: Dict[Tuple[str, str], Dict[str, Any]] = {}
         potential_assignment_count = 0
-        log_to_buffer(f"Initial lecturers: {len(lecturers_dict)}, Initial courses: {len(courses_dict)}")
+        log_to_buffer(f"Initial lecturers: {len(lecturers_data)}, Initial courses: {len(courses_data)}")
 
         forced_unassignments_set = set(forced_unassignments) if forced_unassignments else set()
         if forced_unassignments_set:
             log_to_buffer(f"  Forced unassignments specified: {forced_unassignments_set}")
 
-        # パフォーマンス安定化のため、元のリストの順序で処理
-        for lecturer_id_loop in lecturer_ids_in_order:
-            lecturer = lecturers_dict[lecturer_id_loop]
-            for course_id_loop in course_ids_in_order:
-                course = courses_dict[course_id_loop]
+        for lecturer_id_loop, lecturer in lecturers_dict.items():
+            for course_id_loop, course in courses_dict.items():
                 lecturer_id = lecturer["id"]
                 course_id = course["id"]
 
@@ -230,9 +226,7 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
             norm_factors[key] = get_norm_factor(cost_list, key)
 
         possible_assignments_dict: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        # 安定した順序で処理するためにキーでソート
-        for key in sorted(possible_assignments_temp_data.keys()):
-            temp_data = possible_assignments_temp_data[key]
+        for key, temp_data in possible_assignments_temp_data.items():
             raw = temp_data["raw_costs"]
             
             norm_travel = raw["travel"] / norm_factors["travel"]
@@ -256,27 +250,21 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
         flush_log_buffer()
 
         assignments_by_course: Dict[str, List[Any]] = {} # Var type
-        # 安定した順序で処理するためにキーでソート
-        for (lecturer_id_group, course_id_group) in sorted(possible_assignments_dict.keys()):
-            data_group = possible_assignments_dict[(lecturer_id_group, course_id_group)]
+        for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
             variable_group = data_group["variable"]        
             if course_id_group not in assignments_by_course:
                 assignments_by_course[course_id_group] = []
             assignments_by_course[course_id_group].append(variable_group)
         
         assignments_by_lecturer: Dict[str, List[Any]] = {lect_id: [] for lect_id in lecturers_dict} # Var type
-        # 安定した順序で処理するためにキーでソート
-        for (lecturer_id_group, course_id_group) in sorted(possible_assignments_dict.keys()):
-            data_group = possible_assignments_dict[(lecturer_id_group, course_id_group)]
+        for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
             assignments_by_lecturer[lecturer_id_group].append(data_group["variable"])
 
         TARGET_PREFECTURES_FOR_TWO_LECTURERS = ["東京都", "愛知県", "大阪府"]
         
         shortage_penalty_terms: List[Any] = [] # LinearExpr terms
 
-        # パフォーマンス安定化のため、元のリストの順序で処理
-        for course_id_loop in course_ids_in_order:
-            course_item = courses_dict[course_id_loop]
+        for course_item in courses_dict.values():
             course_id = course_item["id"]
             possible_assignments_for_course = assignments_by_course.get(course_id, [])
             if possible_assignments_for_course:
@@ -310,9 +298,7 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
             actual_penalty_concentration = int(weight_lecturer_concentration * BASE_PENALTY_CONCENTRATION_SCALED)
 
             if actual_penalty_concentration > 0:
-                # パフォーマンス安定化のため、元のリストの順序で処理
-                for lecturer_id_loop in lecturer_ids_in_order:
-                    lecturer_vars = assignments_by_lecturer[lecturer_id_loop]
+                for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
                     if not lecturer_vars or len(lecturer_vars) <= 1:
                         continue
                     
@@ -333,9 +319,7 @@ def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
                 c1_id = pair_info["course1_id"]
                 c2_id = pair_info["course2_id"]
 
-                # パフォーマンス安定化のため、元のリストの順序で処理
-                for lecturer_id_loop_pair in lecturer_ids_in_order:
-                    lecturer_pair = lecturers_dict[lecturer_id_loop_pair]
+                for lecturer_id_loop_pair, lecturer_pair in lecturers_dict.items():
                     if lecturer_pair.get("qualification_special_rank") is None:
                         continue
 
