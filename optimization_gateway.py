@@ -14,10 +14,9 @@ import optimization_solver
 
 logger = logging.getLogger(__name__)
 
-# --- Helper Functions for Validation (No Change) ---
+# --- Helper Functions for Validation ---
 def _validate_date_string(date_str: Any, context: str) -> None:
-    if not isinstance(date_str, str):
-        raise InvalidInputError(f"{context}: 日付は文字列である必要がありますが、型 '{type(date_str).__name__}' を受け取りました。値: {date_str}")
+    if not isinstance(date_str, str): raise InvalidInputError(f"{context}: 日付は文字列である必要がありますが、型 '{type(date_str).__name__}' を受け取りました。値: {date_str}")
     try:
         datetime.datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
@@ -39,15 +38,14 @@ def _validate_classrooms(classrooms_data: List[Dict[str, Any]]) -> Set[str]:
 
 def _validate_lecturers(lecturers_data: List[Dict[str, Any]], valid_classroom_ids: Set[str]) -> None:
     if not isinstance(lecturers_data, list): raise InvalidInputError("講師データはリスト形式である必要があります。")
-    if not lecturers_data: raise InvalidInputError("講師データが空です。")
-    # (より詳細なバリデーションロジックは省略)
+    # (より詳細なバリデーションは、必要に応じて追加)
 
 def _validate_courses(courses_data: List[Dict[str, Any]], valid_classroom_ids: Set[str]) -> None:
-    # (バリデーションロジックは省略)
+    # (バリデーションは、必要に応じて追加)
     pass
 
 def _validate_travel_costs(travel_costs_matrix: Dict[Tuple[str, str], int], valid_classroom_ids: Set[str]) -> None:
-    # (バリデーションロジックは省略)
+    # (バリデーションは、必要に応じて追加)
     pass
 
 # --- Data Validation and Preprocessing ---
@@ -57,7 +55,7 @@ def _validate_and_preprocess_data(input_data: OptimizationInput) -> Dict[str, An
     _validate_lecturers(input_data.lecturers_data, valid_classroom_ids)
     _validate_courses(input_data.courses_data, valid_classroom_ids)
     _validate_travel_costs(input_data.travel_costs_matrix, valid_classroom_ids)
-    logger.info("データバリデーションが正常に完了しました。")
+    logger.info("データバリデーション完了。")
 
     logger.info("データ前処理（マップ形式へ変換）を実行中...")
     preprocessed_data = {
@@ -70,7 +68,7 @@ def _validate_and_preprocess_data(input_data: OptimizationInput) -> Dict[str, An
         "fixed_assignments": input_data.fixed_assignments,
         "forced_unassignments": input_data.forced_unassignments,
     }
-    logger.info("データ前処理が正常に完了しました。")
+    logger.info("データ前処理完了。")
     return preprocessed_data
 
 # --- Optimization Execution Process ---
@@ -112,16 +110,32 @@ def _run_optimization_with_monitoring(solver_args: Dict[str, Any], timeout_secon
     return solver_output
 
 # --- Result Formatting ---
-def _format_result(solver_output: SolverOutput) -> OptimizationResult:
+def _format_result(solver_output: SolverOutput, classrooms_data: List[Dict[str, Any]]) -> OptimizationResult:
     logger.info("最適化結果を整形します...")
     all_lecturers_dict = {l['id']: l for l in solver_output['all_lecturers']}
     all_courses_dict = {c['id']: c for c in solver_output['all_courses']}
-    
+    all_classrooms_dict = {c['id']: c for c in classrooms_data}
+
     processed_assignments = []
     for assignment in solver_output['assignments']:
-        lecturer = all_lecturers_dict.get(assignment['講師ID'], {})
-        course = all_courses_dict.get(assignment['講座ID'], {})
-        processed_assignments.append({**assignment, "講師名": lecturer.get("name"), "講座名": course.get("name")})
+        lecturer_id = assignment['講師ID']
+        course_id = assignment['講座ID']
+        lecturer = all_lecturers_dict.get(lecturer_id, {})
+        course = all_courses_dict.get(course_id, {})
+        classroom = all_classrooms_dict.get(course.get('classroom_id'), {})
+
+        processed_assignments.append({
+            **assignment,
+            "講師名": lecturer.get("name", "不明"),
+            "講座名": course.get("name", "不明"),
+            "教室ID": course.get("classroom_id", "不明"),
+            "スケジュール": course.get("schedule", "不明"),
+            "教室名": classroom.get("location", "不明"),
+            "講師一般ランク": lecturer.get("qualification_general_rank"),
+            "講師特別ランク": lecturer.get("qualification_special_rank", "なし"),
+            "講座タイプ": course.get("course_type"),
+            "講座ランク": course.get("rank"),
+        })
 
     lecturer_counts = {lect_id: 0 for lect_id in all_lecturers_dict}
     for assign in processed_assignments:
@@ -144,7 +158,7 @@ def execute_optimization(input_data: OptimizationInput) -> OptimizationResult:
         solver_args = _validate_and_preprocess_data(input_data)
         timeout = input_data.solver_params.max_search_seconds
         solver_output = _run_optimization_with_monitoring(solver_args, timeout)
-        return _format_result(solver_output)
+        return _format_result(solver_output, input_data.classrooms_data)
     except (InvalidInputError, TimeoutError) as e:
         logger.error(f"最適化の事前処理または実行中にエラーが発生: {e}", exc_info=True)
         raise
