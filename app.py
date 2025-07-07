@@ -1,45 +1,86 @@
 import streamlit as st
+# import streamlit.components.v1 as components # 削除
 import pandas as pd
-import datetime 
-import time
-import google.generativeai as genai
+import datetime # 日付処理用に追加
+import time # 処理時間測定用に追加
+import google.generativeai as genai # Gemini API 用
+# from streamlit_oauth import OAuth2Component # OIDC認証用 # 削除
+# from google.oauth2 import id_token # IDトークン検証用 # 削除
+# from google.auth.transport import requests as google_requests # IDトークン検証用 # 削除
 import multiprocessing
-import random
-import os
-import numpy as np
+import random # データ生成用
+import os # CPUコア数を取得するために追加
+import numpy as np # データ型変換のために追加
+# dateutil.relativedelta を使用するため、インストールが必要な場合があります。
+# pip install python-dateutil
 from dateutil.relativedelta import relativedelta
-import logging
-from typing import List, Optional, Any, Tuple
+import logging # logging モジュールをインポート
+from typing import List, Optional, Any, Tuple # TypedDict は optimization_engine に移動
 
-# --- 変更箇所 ---
+# --- [修正点1] 分離したモジュールをインポート ---
 import optimization_gateway
 import optimization_solver
-from ortools.sat.python import cp_model
+from ortools.sat.python import cp_model # solver_raw_status_code の比較等で使用
+# ---------------------------------------------
+
+# --- [修正点3] ログ設定を別ファイルに分離し、定数をインポート ---
 from utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
 from utils.error_definitions import InvalidInputError
-# ----------------
+# ---
 
+
+# --- 1. データ定義 (LOG_EXPLANATIONS と _get_log_explanation は削除) --- 
+# SolverOutput は optimization_engine.py に移動
+
+# --- Gemini API送信用ログのフィルタリング関数 (グローバルスコープに移動) ---
 def filter_log_for_gemini(log_content: str) -> str:
+    """
+    ログ全体から OR-Tools ソルバーに関連するログ行のみを抽出する。
+    [OR-Tools Solver] プレフィックスを持つ行をフィルタリングします。
+    """
     lines = log_content.splitlines()
     solver_log_prefix = "[OR-Tools Solver]"
+    
     solver_log_lines = [line for line in lines if solver_log_prefix in line]
+    
     if not solver_log_lines:
         return "ソルバーのログが見つかりませんでした。最適化が実行されなかったか、ログの形式が変更された可能性があります。"
+        
     return "\n".join(solver_log_lines)
 
-def get_gemini_explanation(log_text: str, api_key: str, solver_status: str, objective_value: Optional[float], assignments_summary: Optional[pd.DataFrame]) -> Tuple[str, Optional[str]]:
+# --- 大規模データ生成 ---
+# (変更なし)
+
+# --- Gemini API 連携 ---
+# (get_gemini_explanation 関数は変更なしのため省略)
+# ... (get_gemini_explanation の元のコード) ...
+
+# --- データ生成関数群 ---
+# これらの関数は initialize_app_data 内で呼び出され、結果を st.session_state に格納する
+def get_gemini_explanation(log_text: str,
+                           api_key: str,
+                           solver_status: str,
+                           objective_value: Optional[float],
+                           assignments_summary: Optional[pd.DataFrame]) -> Tuple[str, Optional[str]]:
+    """
+    指定されたログテキストと最適化結果を Gemini API に送信し、解説を取得します。
+    戻り値: (解説テキストまたはエラーメッセージ, 送信したプロンプト全体またはNone)
+    """
     if not api_key:
         return "エラー: Gemini API キーが設定されていません。", None
+
     readme_content = ""
-    readme_path = "README.md"
+    readme_path = "README.md" # app.py と同じ階層にあると仮定
     try:
         with open(readme_path, "r", encoding="utf-8") as f:
             readme_content = f.read()
     except FileNotFoundError:
         readme_content = "システム仕様書(README.md)が見つかりませんでした。\n"
     except Exception as e:
+        # READMEの読み込みエラーもプロンプトに含めてGeminiに送るため、ここではエラーを返さない
+        # ただし、ログには残す
         logging.error(f"Error reading README.md for Gemini prompt: {e}", exc_info=True)
-        readme_content = f"システム仕様書(README.md)の読み込み中にエラーが発生しました: {str(e)}\n"
+        readme_content = f"システム仕様書(README.md)の読み込み中にエラーが発生しました: {str(e)}\n" # このエラーメッセージがプロンプトに含まれる
 
     try:
         genai.configure(api_key=api_key)
@@ -47,16 +88,20 @@ def get_gemini_explanation(log_text: str, api_key: str, solver_status: str, obje
         prompt = f"""以下のシステム仕様とログについて、IT専門家でない人にも分かりやすく解説してください。
 ## システム仕様
 {readme_content}
+
 ## ログ解説のリクエスト
 上記のシステム仕様を踏まえ、以下のログの各部分が何を示しているのか、全体としてどのような処理が行われているのかを説明してください。
 特に重要な情報、警告、エラーがあれば指摘し、考えられる原因や対処法についても言及してください。
 最適化結果とログの内容を関連付けて解説してください。
+
 ## 最適化結果のサマリー
 - 求解ステータス: {solver_status}
 - 目的値: {objective_value if objective_value is not None else 'N/A'}
 """
         if assignments_summary is not None and not assignments_summary.empty:
             prompt += f"- 割り当て件数: {len(assignments_summary)} 件\n"
+            # 必要に応じて、assignments_summary からさらに情報を抜粋してプロンプトに追加できます。
+            # 例: prompt += f"- 主な割り当て講師（上位3名）: ... \n"
         else:
             prompt += "- 割り当て: なし\n"
 
@@ -65,12 +110,14 @@ def get_gemini_explanation(log_text: str, api_key: str, solver_status: str, obje
 ```text
 {log_text}
 ```
+
 解説:
 """
         response = model.generate_content(prompt)
         return response.text, prompt
     except Exception as e:
-        return f"Gemini APIエラー: {str(e)[:500]}...", prompt
+        # st.error を直接呼ばず、エラーメッセージ文字列を返す
+        return f"Gemini APIエラー: {str(e)[:500]}...", prompt # エラー時も構築されたプロンプトを返す
 
 def generate_prefectures_data():
     PREFECTURES = [
@@ -93,6 +140,7 @@ def generate_classrooms_data(prefectures, prefecture_classroom_ids):
 
 def generate_lecturers_data(prefecture_classroom_ids, today_date, assignment_target_month_start, assignment_target_month_end):
     lecturers_data = []
+    # 講師の空き日を生成する期間 (対象月の前後1ヶ月)
     availability_period_start = assignment_target_month_start - relativedelta(months=1)
     availability_period_end = assignment_target_month_end + relativedelta(months=1)
 
@@ -102,27 +150,28 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date, assignment_tar
         all_possible_dates_for_availability.append(current_date_iter.strftime("%Y-%m-%d"))
         current_date_iter += datetime.timedelta(days=1)
 
-    for i in range(1, 301):
-        num_available_days = random.randint(15, 45)
+    for i in range(1, 301): # 講師数を300人に変更
+        num_available_days = random.randint(15, 45) # 対象月±1ヶ月の期間内で15～45日空いている
         if len(all_possible_dates_for_availability) >= num_available_days:
             availability = random.sample(all_possible_dates_for_availability, num_available_days)
             availability.sort()
-        else:
+        else: # 万が一、候補日が少ない場合（通常ありえない）
             availability = all_possible_dates_for_availability[:]
-        
-        num_past_assignments = random.randint(8, 12)
+        # 過去の割り当て履歴を生成 (約10件)
+        num_past_assignments = random.randint(8, 12) # 8から12件の間でランダム
         past_assignments = []
 
-        has_special_qualification = random.choice([True, False, False])
+        # 新しい資格ランク生成ロジック
+        has_special_qualification = random.choice([True, False, False]) # 約1/3が特別資格持ち
         special_rank = None
         if has_special_qualification:
             special_rank = random.randint(1, 5)
-            general_rank = 1
+            general_rank = 1 # 特別資格持ちは一般資格ランク1
         else:
             general_rank = random.randint(1, 5)
 
         for _ in range(num_past_assignments):
-            days_ago = random.randint(1, 730)
+            days_ago = random.randint(1, 730) # 過去2年以内のランダムな日付
             assignment_date = today_date - datetime.timedelta(days=days_ago)
             past_assignments.append({
                 "classroom_id": random.choice(prefecture_classroom_ids),
@@ -130,34 +179,48 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date, assignment_tar
             })
         past_assignments.sort(key=lambda x: x["date"], reverse=True)
         lecturers_data.append({
-            "id": f"L{i}", "name": f"講師{i:03d}", "age": random.randint(22, 65),
+            "id": f"L{i}",
+            "name": f"講師{i:03d}",
+            "age": random.randint(22, 65),
             "home_classroom_id": random.choice(prefecture_classroom_ids),
             "qualification_general_rank": general_rank,
             "qualification_special_rank": special_rank,
-            "availability": availability, "past_assignments": past_assignments
+            "availability": availability,
+            "past_assignments": past_assignments
         })
     return lecturers_data
 
 def generate_courses_data(prefectures, prefecture_classroom_ids, assignment_target_month_start, assignment_target_month_end):
-    GENERAL_COURSE_LEVELS = [{"name_suffix": s, "rank": r} for s, r in zip(["初心", "初級", "中級", "上級", "プロ"], [5, 4, 3, 2, 1])]
-    SPECIAL_COURSE_LEVELS = GENERAL_COURSE_LEVELS
+    # 新しい講座定義
+    GENERAL_COURSE_LEVELS = [
+        {"name_suffix": "初心", "rank": 5}, {"name_suffix": "初級", "rank": 4},
+        {"name_suffix": "中級", "rank": 3}, {"name_suffix": "上級", "rank": 2},
+        {"name_suffix": "プロ", "rank": 1}
+    ]
+    SPECIAL_COURSE_LEVELS = [
+        {"name_suffix": "初心", "rank": 5}, {"name_suffix": "初級", "rank": 4},
+        {"name_suffix": "中級", "rank": 3}, {"name_suffix": "上級", "rank": 2},
+        {"name_suffix": "プロ", "rank": 1}
+    ]
 
+    # 対象月の日曜日リストを作成
     sundays_in_target_month = []
     current_date_iter = assignment_target_month_start
     while current_date_iter <= assignment_target_month_end:
-        if current_date_iter.weekday() == 6:
+        if current_date_iter.weekday() == 6: # 0:月曜日, 6:日曜日
             sundays_in_target_month.append(current_date_iter.strftime("%Y-%m-%d"))
         current_date_iter += datetime.timedelta(days=1)
 
+    # 対象月の土曜日と平日リストを作成 (特別講座用)
     saturdays_in_target_month_for_special = []
     weekdays_in_target_month_for_special = []
-    all_days_in_target_month_for_special_obj = []
+    all_days_in_target_month_for_special_obj = [] # 日付オブジェクトを保持
     current_date_iter = assignment_target_month_start
     while current_date_iter <= assignment_target_month_end:
         all_days_in_target_month_for_special_obj.append(current_date_iter)
-        if current_date_iter.weekday() == 5:
+        if current_date_iter.weekday() == 5: # 土曜日
             saturdays_in_target_month_for_special.append(current_date_iter.strftime("%Y-%m-%d"))
-        elif current_date_iter.weekday() < 5:
+        elif current_date_iter.weekday() < 5: # 平日
             weekdays_in_target_month_for_special.append(current_date_iter.strftime("%Y-%m-%d"))
         current_date_iter += datetime.timedelta(days=1)
 
@@ -165,17 +228,22 @@ def generate_courses_data(prefectures, prefecture_classroom_ids, assignment_targ
     course_counter = 1
     for i, pref_classroom_id in enumerate(prefecture_classroom_ids):
         pref_name = prefectures[i]
+
+        # 一般講座の生成 (対象月の各日曜日に、ランダムに2つのレベルで開催)
         for sunday_str in sundays_in_target_month:
             selected_levels_for_general = random.sample(GENERAL_COURSE_LEVELS, min(2, len(GENERAL_COURSE_LEVELS)))
             for level_info in selected_levels_for_general:
                 courses_data.append({
                     "id": f"{pref_classroom_id}-GC{course_counter}",
                     "name": f"{pref_name} 一般講座 {level_info['name_suffix']} ({sunday_str[-5:]})",
-                    "classroom_id": pref_classroom_id, "course_type": "general",
-                    "rank": level_info['rank'], "schedule": sunday_str
+                    "classroom_id": pref_classroom_id,
+                    "course_type": "general",
+                    "rank": level_info['rank'],
+                    "schedule": sunday_str
                 })
                 course_counter += 1
-        
+
+        # 特別講座の生成 (対象月内に1回、土曜優先)
         chosen_date_for_special_course = None
         if saturdays_in_target_month_for_special:
             chosen_date_for_special_course = random.choice(saturdays_in_target_month_for_special)
@@ -189,8 +257,10 @@ def generate_courses_data(prefectures, prefecture_classroom_ids, assignment_targ
             courses_data.append({
                 "id": f"{pref_classroom_id}-SC{course_counter}",
                 "name": f"{pref_name} 特別講座 {level_info_special['name_suffix']} ({chosen_date_for_special_course[-5:]})",
-                "classroom_id": pref_classroom_id, "course_type": "special",
-                "rank": level_info_special['rank'], "schedule": chosen_date_for_special_course
+                "classroom_id": pref_classroom_id,
+                "course_type": "special",
+                "rank": level_info_special['rank'],
+                "schedule": chosen_date_for_special_course
             })
             course_counter += 1
     return courses_data
@@ -418,8 +488,41 @@ def run_optimization():
         st.session_state.solver_log_for_download = "\n".join(solver_log_lines)
 
 def display_sample_data_view():
-    # (元のUI表示ロジックをここに完全実装)
-    pass
+    logger = logging.getLogger('app')
+    st.header("入力データ")
+    if st.session_state.get("show_regenerate_success_message"):
+        st.success("サンプルデータを再生成しました。")
+        del st.session_state.show_regenerate_success_message
+    if st.session_state.get("show_invalid_data_message"):
+        st.warning(f"テスト用の不正データを生成しました: {st.session_state.show_invalid_data_message}")
+        del st.session_state.show_invalid_data_message
+    col1, col2 = st.columns(2)
+    with col1:
+        st.button("サンプルデータ再生成", key="regenerate_sample_data_button", on_click=handle_regenerate_sample_data, type="primary")
+    with col2:
+        st.button("テスト用不正データ生成", key="generate_invalid_data_button", on_click=handle_generate_invalid_data)
+    st.markdown(f"**現在の割り当て対象月:** {st.session_state.ASSIGNMENT_TARGET_MONTH_START.strftime('%Y年%m月%d日')} ～ {st.session_state.ASSIGNMENT_TARGET_MONTH_END.strftime('%Y年%m月%d日')}")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("講師データ (サンプル)")
+        df = pd.DataFrame(st.session_state.DEFAULT_LECTURERS_DATA)
+        if 'qualification_special_rank' in df.columns:
+            df['qualification_special_rank'] = df['qualification_special_rank'].apply(lambda x: "なし" if x is None else x)
+        if 'past_assignments' in df.columns:
+            df['past_assignments_display'] = df['past_assignments'].apply(lambda a: ", ".join([f"{i['classroom_id']} ({i['date']})" for i in a]) if isinstance(a, list) and a else "履歴なし")
+        if 'availability' in df.columns:
+            df['availability_display'] = df['availability'].apply(lambda d: ", ".join(d) if isinstance(d, list) else "")
+        st.dataframe(df[["id", "name", "age", "home_classroom_id", "qualification_general_rank", "qualification_special_rank", "availability_display", "past_assignments_display"]], height=200)
+    with col2:
+        st.subheader("講座データ (サンプル)")
+        st.dataframe(pd.DataFrame(st.session_state.DEFAULT_COURSES_DATA)[["id", "name", "classroom_id", "course_type", "rank", "schedule"]], height=200)
+    st.subheader("教室データと移動コスト (サンプル)")
+    col3, col4 = st.columns(2)
+    with col3:
+        st.dataframe(pd.DataFrame(st.session_state.DEFAULT_CLASSROOMS_DATA))
+    with col4:
+        df_costs = pd.DataFrame([{"出発教室": k[0], "到着教室": k[1], "コスト": v} for k, v in st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX.items()])
+        st.dataframe(df_costs)
 
 def display_objective_function_view():
     # (元のUI表示ロジックをここに完全実装)
