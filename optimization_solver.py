@@ -5,6 +5,7 @@ import os # 並列探索用にインポート
 import numpy as np
 from ortools.sat.python import cp_model
 from typing import TypedDict, List, Optional, Tuple, Dict, Any
+from utils.error_definitions import InvalidInputError # このインポートは不要になる
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,9 @@ class SolverOutput(TypedDict):
     all_lecturers: List[dict]
     solver_raw_status_code: int # このフィールドは残す
 
-def solve_assignment(lecturers_data: List[Dict[str, Any]],
-                     courses_data: List[Dict[str, Any]],
-                     classrooms_data: List[Dict[str, Any]], # classrooms_data は現在未使用だが、将来のために残す
+def solve_assignment(lecturers_dict: Dict[str, Dict[str, Any]],
+                     courses_dict: Dict[str, Dict[str, Any]],
+                     classrooms_dict: Dict[str, Dict[str, Any]],
                      travel_costs_matrix: Dict[Tuple[str, str], int],
                      weight_past_assignment_recency: float,
                      weight_qualification: float,
@@ -56,11 +57,6 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
 
     try:
         model = cp_model.CpModel()
-
-        # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
-        lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
-        courses_dict = {course['id']: course for course in courses_data}
-        classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
 
         # --- ステップ1: 連日講座ペアのリストアップ ---
         consecutive_day_pairs: List[Dict[str, Any]] = []
@@ -103,7 +99,7 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
         # --- Main logic for model building and solving ---
         possible_assignments_temp_data: Dict[Tuple[str, str], Dict[str, Any]] = {}
         potential_assignment_count = 0
-        log_to_buffer(f"Initial lecturers: {len(lecturers_data)}, Initial courses: {len(courses_data)}")
+        log_to_buffer(f"Initial lecturers: {len(lecturers_dict)}, Initial courses: {len(courses_dict)}")
 
         forced_unassignments_set = set(forced_unassignments) if forced_unassignments else set()
         if forced_unassignments_set:
