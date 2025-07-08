@@ -20,6 +20,7 @@ from typing import List, Optional, Any, Tuple # TypedDict は optimization_engin
 # --- [修正点1] 分離したモジュールをインポート ---
 import optimization_gateway
 import optimization_solver
+from utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
 from ortools.sat.python import cp_model # solver_raw_status_code の比較等で使用
 # ---------------------------------------------
 
@@ -589,11 +590,20 @@ def run_optimization():
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
 
-    except optimization_gateway.InvalidInputError as e:
-        logger.error(f"データバリデーションエラーが発生しました: {e}", exc_info=True)
-        import traceback
-        error_trace = traceback.format_exc()
-        st.session_state.optimization_error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
+    except (InvalidInputError, ProcessExecutionError, ProcessTimeoutError) as e:
+        logger.error(f"最適化ゲートウェイでエラーが発生しました: {e}", exc_info=True)
+        # エラーの種類に応じてユーザーへのメッセージを調整
+        if isinstance(e, InvalidInputError):
+            error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
+        elif isinstance(e, ProcessTimeoutError):
+            error_message = f"最適化処理がタイムアウトしました:\n\n{e}"
+        elif isinstance(e, ProcessExecutionError):
+            error_message = f"最適化プロセスの実行中にエラーが発生しました:\n\n{e}"
+        else:
+            error_message = f"予期せぬ最適化エラーが発生しました:\n\n{e}"
+
+        st.session_state.optimization_error_message = error_message
+        # ログダウンロード用に空の文字列を設定
         st.session_state.solver_log_for_download = ""
         st.session_state.app_log_for_download = ""
         # UIにエラーを表示するための設定
@@ -602,7 +612,7 @@ def run_optimization():
         st.rerun() # UIを即時更新してエラーを表示
 
     except Exception as e:
-        logger.error(f"Unexpected error during optimization process: {e}", exc_info=True)
+        logger.error(f"予期せぬエラーが発生しました: {e}", exc_info=True)
         import traceback
         error_trace = traceback.format_exc()
         st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
