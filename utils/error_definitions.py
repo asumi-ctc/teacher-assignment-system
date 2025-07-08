@@ -15,9 +15,23 @@ class InvalidInputError(BaseOptimizationError):
     """
     pass
 
+class ProcessExecutionError(BaseOptimizationError):
+    """
+    最適化を実行する子プロセスで予期せぬエラーが発生した場合に送出される例外。
+    """
+    pass
+
+class ProcessTimeoutError(BaseOptimizationError):
+    """
+    最適化を実行する子プロセスがタイムアウトした場合に送出される例外。
+    """
+    pass
+
 class SolverError(BaseOptimizationError):
     """
     ソルバーが解を見つけられなかった、または予期せぬ状態で終了した場合に送出される例外。
     (例: INFEASIBLE, UNKNOWN)
+    この例外は通常、アプリケーション内でキャッチされ、ユーザーにステータスとして
+    表示されるため、必ずしも「エラー」として処理されるわけではありません。
     """
     pass

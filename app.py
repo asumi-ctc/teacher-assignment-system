@@ -25,6 +25,7 @@ from ortools.sat.python import cp_model # solver_raw_status_code の比較等で
 
 # --- [修正点3] ログ設定を別ファイルに分離し、定数をインポート ---
 from utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
+from utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
 # ---
 
 
@@ -589,32 +590,40 @@ def run_optimization():
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
 
-    except optimization_gateway.InvalidInputError as e:
-        logger.error(f"データバリデーションエラーが発生しました: {e}", exc_info=True)
-        import traceback
-        error_trace = traceback.format_exc()
-        st.session_state.optimization_error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
-        st.session_state.solver_log_for_download = ""
-        st.session_state.app_log_for_download = ""
-        # UIにエラーを表示するための設定
+    except InvalidInputError as e:
+        logger.error(f"入力データエラーが発生しました: {e}", exc_info=True)
+        st.session_state.optimization_error_message = f"入力データに問題があります:\n\n{e}"
+        st.session_state.solver_result_cache = None
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
-        st.rerun() # UIを即時更新してエラーを表示
+
+    except ProcessTimeoutError as e:
+        logger.error(f"最適化プロセスがタイムアウトしました: {e}", exc_info=True)
+        st.session_state.optimization_error_message = f"最適化処理がタイムアウトしました:\n\n{e}\n\nデータ量を減らすか、制約を単純にすることで解決する場合があります。"
+        st.session_state.solver_result_cache = None
+        st.session_state.solution_executed = True
+        st.session_state.view_mode = "optimization_result"
+
+    except ProcessExecutionError as e:
+        logger.error(f"最適化プロセスで予期せぬエラーが発生しました: {e}", exc_info=True)
+        st.session_state.optimization_error_message = f"最適化の計算プロセスで予期せぬエラーが発生しました:\n\n{e}\n\n詳細は最適化エンジン内部ログを確認してください。"
+        st.session_state.solver_result_cache = None
+        st.session_state.solution_executed = True
+        st.session_state.view_mode = "optimization_result"
 
     except Exception as e:
-        logger.error(f"Unexpected error during optimization process: {e}", exc_info=True)
+        logger.error(f"システム処理中に予期せぬエラーが発生しました: {e}", exc_info=True)
         import traceback
         error_trace = traceback.format_exc()
-        st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
-        st.session_state.solver_log_for_download = ""
-        st.session_state.app_log_for_download = ""
+        st.session_state.optimization_error_message = f"システム処理中に予期せぬエラーが発生しました:\n\n{error_trace}"
+        st.session_state.solver_result_cache = None
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
 
     finally:
         # 処理の最後にログファイルを読み込む
         logger.info("Reading log files to store in session state.")
-        st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE)
+        st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE) # ゲートウェイログ
         # optimization_engine のログは直接ファイルから読み込む
         engine_log_content = read_log_file(SOLVER_LOG_FILE)
         st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
