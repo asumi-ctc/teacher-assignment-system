@@ -6,7 +6,7 @@ from multiprocessing.connection import Connection
 from typing import List, Dict, Any, Tuple, Set, TypedDict, Optional, Union
 
 from utils.logging_config import setup_logging
-from utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
+from utils.error_definitions import InvalidInputError 
 import optimization_solver
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ def run_optimization_with_monitoring(
             if parent_conn.poll(PROCESS_TIMEOUT_SECONDS):
                 result = parent_conn.recv()
                 if isinstance(result, Exception):
-                    raise ProcessExecutionError(f"最適化プロセスでエラーが発生しました: {result}") from result
+                    raise InvalidInputError(f"最適化プロセスでエラーが発生しました: {result}") from result
                 solver_output = result
                 logger.info("最適化プロセスから結果を正常に受信しました。")
             else:
@@ -137,4 +137,4 @@ def run_optimization_with_monitoring(
             logger.info("再試行します...")
             continue
             
-    raise ProcessTimeoutError("最適化処理が複数回の試行でも設定時間内に完了しませんでした。")
+    raise InvalidInputError("最適化処理が複数回の試行でも設定時間内に完了しませんでした。")

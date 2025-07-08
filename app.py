@@ -25,17 +25,7 @@ from ortools.sat.python import cp_model # solver_raw_status_code の比較等で
 
 # --- [修正点3] ログ設定を別ファイルに分離し、定数をインポート ---
 from utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
-from utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
 # ---
-
-# Streamlit環境で安全にmultiprocessingを使用するため、'spawn'メソッドを強制的に設定
-# これはアプリケーションの起動時に一度だけ実行されるべき。
-try:
-    multiprocessing.set_start_method('spawn', force=True)
-except RuntimeError:
-    # Streamlitの内部的な再実行サイクルなどで既に設定されている場合があるので無視する
-    pass
-
 
 
 # --- 1. データ定義 (LOG_EXPLANATIONS と _get_log_explanation は削除) --- 
@@ -599,40 +589,32 @@ def run_optimization():
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
 
-    except InvalidInputError as e:
-        logger.error(f"入力データエラーが発生しました: {e}", exc_info=True)
-        st.session_state.optimization_error_message = f"入力データに問題があります:\n\n{e}"
-        st.session_state.solver_result_cache = None
-        st.session_state.solution_executed = True
-        st.session_state.view_mode = "optimization_result"
-
-    except ProcessTimeoutError as e:
-        logger.error(f"最適化プロセスがタイムアウトしました: {e}", exc_info=True)
-        st.session_state.optimization_error_message = f"最適化処理がタイムアウトしました:\n\n{e}\n\nデータ量を減らすか、制約を単純にすることで解決する場合があります。"
-        st.session_state.solver_result_cache = None
-        st.session_state.solution_executed = True
-        st.session_state.view_mode = "optimization_result"
-
-    except ProcessExecutionError as e:
-        logger.error(f"最適化プロセスで予期せぬエラーが発生しました: {e}", exc_info=True)
-        st.session_state.optimization_error_message = f"最適化の計算プロセスで予期せぬエラーが発生しました:\n\n{e}\n\n詳細は最適化エンジン内部ログを確認してください。"
-        st.session_state.solver_result_cache = None
-        st.session_state.solution_executed = True
-        st.session_state.view_mode = "optimization_result"
-
-    except Exception as e:
-        logger.error(f"システム処理中に予期せぬエラーが発生しました: {e}", exc_info=True)
+    except optimization_gateway.InvalidInputError as e:
+        logger.error(f"データバリデーションエラーが発生しました: {e}", exc_info=True)
         import traceback
         error_trace = traceback.format_exc()
-        st.session_state.optimization_error_message = f"システム処理中に予期せぬエラーが発生しました:\n\n{error_trace}"
-        st.session_state.solver_result_cache = None
+        st.session_state.optimization_error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
+        st.session_state.solver_log_for_download = ""
+        st.session_state.app_log_for_download = ""
+        # UIにエラーを表示するための設定
+        st.session_state.solution_executed = True
+        st.session_state.view_mode = "optimization_result"
+        st.rerun() # UIを即時更新してエラーを表示
+
+    except Exception as e:
+        logger.error(f"Unexpected error during optimization process: {e}", exc_info=True)
+        import traceback
+        error_trace = traceback.format_exc()
+        st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
+        st.session_state.solver_log_for_download = ""
+        st.session_state.app_log_for_download = ""
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
 
     finally:
         # 処理の最後にログファイルを読み込む
         logger.info("Reading log files to store in session state.")
-        st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE) # ゲートウェイログ
+        st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE)
         # optimization_engine のログは直接ファイルから読み込む
         engine_log_content = read_log_file(SOLVER_LOG_FILE)
         st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
@@ -1440,109 +1422,117 @@ def display_change_assignment_view():
                 pass # on_click で処理される
     logger.info("Change assignment view display complete.")
 
-# --- アプリケーションのメインロジック (トップレベルで実行) ---
+def main():
+    # --- ロガーやデータ初期化など ---
+    setup_logging()
+    logger = logging.getLogger('app')
+    st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
+    initialize_app_data() # 初回呼び出し (force_regenerate=False デフォルト)
+    GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 
-# --- ロガーやデータ初期化など ---
-setup_logging()
-logger = logging.getLogger('app')
-st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
-initialize_app_data() # 初回呼び出し (force_regenerate=False デフォルト)
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
-
-# --- セッション状態の初期化 ---
-if "view_mode" not in st.session_state:
-    st.session_state.view_mode = "sample_data"
-if "assignments_to_change_list" not in st.session_state: # 交代リストの初期化
-    st.session_state.assignments_to_change_list = []
-if "solution_executed" not in st.session_state:
-    st.session_state.solution_executed = False
-if "allow_under_assignment_cb" not in st.session_state: # 追加: チェックボックスの初期値をセッションステートに設定
-    st.session_state.allow_under_assignment_cb = True
-
-# --- UIの描画 ---
-st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
-
-# --- ナビゲーションボタン ---
-nav_cols = st.columns([2, 2, 2, 1])  # ボタン数を3つに合わせ、比率を調整
-with nav_cols[0]:
-    if st.button("サンプルデータ", use_container_width=True, type="primary" if st.session_state.view_mode == "sample_data" else "secondary"):
+    # --- セッション状態の初期化 ---
+    if "view_mode" not in st.session_state:
         st.session_state.view_mode = "sample_data"
-        st.rerun()
-with nav_cols[1]:
-    if st.button("ソルバーとmodelオブジェクト", use_container_width=True, type="primary" if st.session_state.view_mode == "objective_function" else "secondary"):
-        st.session_state.view_mode = "objective_function"
-        st.rerun()
-with nav_cols[2]:
-    if st.session_state.get("solution_executed", False):
-        if st.button("最適化結果", use_container_width=True, type="primary" if st.session_state.view_mode == "optimization_result" else "secondary"):
-            st.session_state.view_mode = "optimization_result"
+    if "assignments_to_change_list" not in st.session_state: # 交代リストの初期化
+        st.session_state.assignments_to_change_list = []
+    if "solution_executed" not in st.session_state:
+        st.session_state.solution_executed = False
+    if "allow_under_assignment_cb" not in st.session_state: # 追加: チェックボックスの初期値をセッションステートに設定
+        st.session_state.allow_under_assignment_cb = True
+
+    # --- UIの描画 ---
+    st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
+
+    # --- ナビゲーションボタン ---
+    nav_cols = st.columns([2, 2, 2, 1])  # ボタン数を3つに合わせ、比率を調整
+    with nav_cols[0]:
+        if st.button("サンプルデータ", use_container_width=True, type="primary" if st.session_state.view_mode == "sample_data" else "secondary"):
+            st.session_state.view_mode = "sample_data"
             st.rerun()
+    with nav_cols[1]:
+        if st.button("ソルバーとmodelオブジェクト", use_container_width=True, type="primary" if st.session_state.view_mode == "objective_function" else "secondary"):
+            st.session_state.view_mode = "objective_function"
+            st.rerun()
+    with nav_cols[2]:
+        if st.session_state.get("solution_executed", False):
+            if st.button("最適化結果", use_container_width=True, type="primary" if st.session_state.view_mode == "optimization_result" else "secondary"):
+                st.session_state.view_mode = "optimization_result"
+                st.rerun()
 
-# --- サイドバー ---
-st.sidebar.markdown(
-    "【制約】【許容条件】【最適化目標】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
-    "また最適化目標に重み付けすることで割り当て結果をチューニングすることができます。"
-)
-st.sidebar.button("最適割り当てを実行", type="primary", on_click=run_optimization)
-st.sidebar.markdown("---")
-
-# New "割り当て結果を変更" (Change Assignment Results) button in the sidebar
-# This button appears only if optimization has run and produced assignments.
-if st.session_state.get("solution_executed", False) and \
-   st.session_state.get("solver_result_cache") and \
-   st.session_state.solver_result_cache.get("assignments_df"):
-    if st.sidebar.button("割り当て結果を変更", key="change_assignment_view_button", type="secondary" if st.session_state.view_mode != "change_assignment_view" else "primary"):
-        st.session_state.view_mode = "change_assignment_view"
-        st.rerun()
-st.sidebar.markdown("---")
-
-
-with st.sidebar.expander("【制約】", expanded=False):
-    st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない") # 文言変更
-    st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。") # 追加
-    st.markdown("- 3.講師は、東京、名古屋、大阪の教室には2名を割り当て、それ以外には1名を割り当てる。") # 追加
-
-with st.sidebar.expander("【許容条件】", expanded=False): # 「ソフト制約」を「許容条件」に変更
-    st.checkbox(
-        "上記ハード制約3に対し、割り当て不足を許容する",
-        key="allow_under_assignment_cb",
-        help="チェックを入れると、東京・名古屋・大阪の教室は最大2名（0名または1名も可）、その他の教室は最大1名（0名も可）の割り当てとなります。チェックを外すと、必ず指定された人数（東京・名古屋・大阪は2名、他は1名）を割り当てようとします（担当可能な講師がいない場合は割り当てられません）。"
+    # --- サイドバー ---
+    st.sidebar.markdown(
+        "【制約】【許容条件】【最適化目標】を設定すれば、数理モデル最適化手法により自動的に最適な講師割り当てを実行します。"
+        "また最適化目標に重み付けすることで割り当て結果をチューニングすることができます。"
     )
+    st.sidebar.button("最適割り当てを実行", type="primary", on_click=run_optimization)
+    st.sidebar.markdown("---")
 
-with st.sidebar.expander("【最適化目標】", expanded=False): # 名称変更
-    st.caption(
-        "各最適化目標の相対的な重要度を重みで設定します。\n"
-        "不要な最適化目標は重みを0にしてください（最適化目標から除外されます）。"
-    )
-    st.markdown("**移動コストが低い人を優先**")
-    st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp")
-    st.markdown("**年齢の若い人を優先**")
-    st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
-    st.markdown("**割り当て頻度の少ない人を優先**")
-    st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
-    st.markdown("**講師資格が高い人を優先**")
-    st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
-    st.markdown("**同教室への割り当て実績が無い人を優先**")
-    st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
-    st.markdown("**割り当て不足を最小化**") # 新しい目的
-    st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、各講座の目標割り当て人数に対する不足を減らそうとします。「許容条件」で割り当て不足を許容している場合に有効です。", key="weight_assignment_shortage_exp")
-    st.markdown("**講師の割り当て集中度を低くする（今回の割り当て内）**") # 新しい目的
-    st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が今回の最適化で複数の講座を担当することへのペナルティが大きくなります。", key="weight_lecturer_concentration_exp")
+    # New "割り当て結果を変更" (Change Assignment Results) button in the sidebar
+    # This button appears only if optimization has run and produced assignments.
+    if st.session_state.get("solution_executed", False) and \
+       st.session_state.get("solver_result_cache") and \
+       st.session_state.solver_result_cache.get("assignments_df"):
+        if st.sidebar.button("割り当て結果を変更", key="change_assignment_view_button", type="secondary" if st.session_state.view_mode != "change_assignment_view" else "primary"):
+            st.session_state.view_mode = "change_assignment_view"
+            st.rerun()
+    st.sidebar.markdown("---")
 
-    st.markdown("**連日講座への連続割り当てを優先**")
-    st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、特別資格を持つ講師が一般講座と特別講座の連日ペアをまとめて担当することを重視します（報酬が増加）。", key="weight_consecutive_assignment_exp") # デフォルト値を0.5に変更
+    
+    with st.sidebar.expander("【制約】", expanded=False):
+        st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない") # 文言変更
+        st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。") # 追加
+        st.markdown("- 3.講師は、東京、名古屋、大阪の教室には2名を割り当て、それ以外には1名を割り当てる。") # 追加
 
-# --- メインエリアの表示制御 ---
-logger.info(f"Starting main area display. Current view_mode: {st.session_state.view_mode}")
-if st.session_state.view_mode == "sample_data":
-    display_sample_data_view()
-elif st.session_state.view_mode == "objective_function":
-    display_objective_function_view()
-elif st.session_state.view_mode == "optimization_result":
-    display_optimization_result_view(gemini_api_key=GEMINI_API_KEY)
-elif st.session_state.view_mode == "change_assignment_view":
-    display_change_assignment_view()
-else: # view_mode が予期せぬ値の場合 (フォールバック)
-    logger.warning(f"Unexpected view_mode: {st.session_state.view_mode}. Displaying fallback info.")
-    st.info("サイドバーから表示するデータを選択してください。")
-logger.info("Exiting main function.")
+    with st.sidebar.expander("【許容条件】", expanded=False): # 「ソフト制約」を「許容条件」に変更
+        st.checkbox(
+            "上記ハード制約3に対し、割り当て不足を許容する",
+            key="allow_under_assignment_cb",
+            help="チェックを入れると、東京・名古屋・大阪の教室は最大2名（0名または1名も可）、その他の教室は最大1名（0名も可）の割り当てとなります。チェックを外すと、必ず指定された人数（東京・名古屋・大阪は2名、他は1名）を割り当てようとします（担当可能な講師がいない場合は割り当てられません）。"
+        )
+
+    with st.sidebar.expander("【最適化目標】", expanded=False): # 名称変更
+        st.caption(
+            "各最適化目標の相対的な重要度を重みで設定します。\n"
+            "不要な最適化目標は重みを0にしてください（最適化目標から除外されます）。"
+        )
+        st.markdown("**移動コストが低い人を優先**")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp")
+        st.markdown("**年齢の若い人を優先**")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
+        st.markdown("**割り当て頻度の少ない人を優先**")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど全講座割当回数が少ない人を重視します。", key="weight_frequency_exp")
+        st.markdown("**講師資格が高い人を優先**")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
+        st.markdown("**同教室への割り当て実績が無い人を優先**")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
+        st.markdown("**割り当て不足を最小化**") # 新しい目的
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、各講座の目標割り当て人数に対する不足を減らそうとします。「許容条件」で割り当て不足を許容している場合に有効です。", key="weight_assignment_shortage_exp")
+        st.markdown("**講師の割り当て集中度を低くする（今回の割り当て内）**") # 新しい目的
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が今回の最適化で複数の講座を担当することへのペナルティが大きくなります。", key="weight_lecturer_concentration_exp")
+
+        st.markdown("**連日講座への連続割り当てを優先**")
+        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、特別資格を持つ講師が一般講座と特別講座の連日ペアをまとめて担当することを重視します（報酬が増加）。", key="weight_consecutive_assignment_exp") # デフォルト値を0.5に変更
+
+    # --- メインエリアの表示制御 ---
+    logger.info(f"Starting main area display. Current view_mode: {st.session_state.view_mode}")
+    if st.session_state.view_mode == "sample_data":
+        display_sample_data_view()
+    elif st.session_state.view_mode == "objective_function":
+        display_objective_function_view()
+    elif st.session_state.view_mode == "optimization_result":
+        display_optimization_result_view(gemini_api_key=GEMINI_API_KEY)
+    elif st.session_state.view_mode == "change_assignment_view":
+        display_change_assignment_view()
+    else: # view_mode が予期せぬ値の場合 (フォールバック)
+        logger.warning(f"Unexpected view_mode: {st.session_state.view_mode}. Displaying fallback info.")
+        st.info("サイドバーから表示するデータを選択してください。")
+    logger.info("Exiting main function.")
+if __name__ == "__main__":
+    try:
+        # Streamlit環境で安全にmultiprocessingを使用するため、'spawn'メソッドを強制的に設定
+        # これはアプリケーションの起動時に一度だけ実行されるべき。
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        # Streamlitの内部的な再実行サイクルなどで既に設定されている場合があるので無視する
+        pass
+    main()
