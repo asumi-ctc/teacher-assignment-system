@@ -66,6 +66,12 @@ def solve_assignment(lecturers_data: List[LecturerData],
                     latest_assignments[pa["classroom_id"]] = pa["date"]
             lecturer["_latest_assignment_by_classroom"] = latest_assignments
 
+        # --- パフォーマンス改善: 講師の対応可能日をセットに変換して検索を高速化 ---
+        log_to_buffer("Pre-converting lecturer availability to sets for faster lookups.")
+        for lecturer in lecturers_dict.values():
+            # O(N)のリスト内検索をO(1)のセット内検索に切り替えるための事前処理
+            lecturer["_availability_set"] = set(lecturer.get("availability", []))
+
         # --- ステップ1: 連日講座ペアのリストアップ ---
         consecutive_day_pairs: List[Dict[str, Any]] = []
         log_to_buffer("Starting search for consecutive general-special course pairs.")
@@ -140,9 +146,9 @@ def solve_assignment(lecturers_data: List[LecturerData],
                     log_to_buffer(f"  - Filtered out: {lecturer_id} for {course_id} (Qualification insufficient. Course: {course_type} Rank {course_rank}. Lecturer: GenRank {lecturer_general_rank}, SpecRank {lecturer_special_rank})")
                     continue
 
-                schedule_available = course["schedule"] in lecturer["availability"] # 'schedule'と'availability'の要素は両方datetime.dateオブジェクト
+                schedule_available = course["schedule"] in lecturer["_availability_set"] # 高速化: リストの代わりにセットで検索
                 if not schedule_available:
-                    log_to_buffer(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable: Course_schedule={course['schedule']}, Lecturer_avail_sample={lecturer['availability'][:3]}...)")
+                    log_to_buffer(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable: Course_schedule={course['schedule']}, Lecturer_avail_sample={list(lecturer['_availability_set'])[:3]}...)")
                     continue
 
                 potential_assignment_count += 1
