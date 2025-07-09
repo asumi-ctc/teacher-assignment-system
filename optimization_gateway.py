@@ -71,17 +71,11 @@ def run_optimization_with_monitoring(
     for assign in processed_assignments:
         lecturer_course_counts[assign['講師ID']] += 1
 
-    # パフォーマンス改善: 講座ごとの割り当て数を効率的に計算 (O(N*M) -> O(N+M))
-    assignments_per_course: Dict[str, int] = {}
-    for assign in processed_assignments:
-        course_id = assign['講座ID']
-        assignments_per_course[course_id] = assignments_per_course.get(course_id, 0) + 1
-
     course_assignment_counts, course_remaining_capacity = {}, {}
     TARGET_PREFECTURES = ["東京都", "愛知県", "大阪府"]
     for course in solver_output['all_courses']:
         cid = course['id']
-        assigned_count = assignments_per_course.get(cid, 0)
+        assigned_count = sum(1 for a in processed_assignments if a['講座ID'] == cid)
         course_assignment_counts[cid] = assigned_count
         location = all_classrooms_dict.get(course.get('classroom_id'), {}).get('location')
         capacity = 2 if location in TARGET_PREFECTURES else 1
