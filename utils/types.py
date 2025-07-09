@@ -4,6 +4,39 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, TypedDict, Optional
 import datetime
 
+# --- 0. データ構造の型定義 ---
+# データソース（DBやCSVなど）から読み込まれるデータの型を定義します。
+# これにより、前処理や最適化エンジンへの入力の型安全性が向上します。
+# 注: 日付は前処理段階でdatetime.dateオブジェクトに変換されることを想定しています。
+
+class PastAssignment(TypedDict):
+    """過去の担当履歴"""
+    classroom_id: str
+    date: datetime.date
+
+class LecturerData(TypedDict):
+    """講師1人分のデータ構造"""
+    id: str
+    age: int
+    home_classroom_id: str
+    qualification_general_rank: int
+    qualification_special_rank: Optional[int]
+    availability: List[datetime.date]
+    past_assignments: List[PastAssignment]
+
+class CourseData(TypedDict):
+    """コース1つ分のデータ構造"""
+    id: str
+    classroom_id: str
+    course_type: str
+    rank: int
+    schedule: datetime.date
+
+class ClassroomData(TypedDict):
+    """教室1つ分のデータ構造"""
+    id: str
+    location: str
+
 # --- 1. 設定オブジェクト関連の型定義 ---
 
 @dataclass
@@ -28,9 +61,9 @@ class SolverParameters:
 @dataclass
 class OptimizationInput:
     """最適化エンジンへの全入力データ"""
-    lecturers_data: List[Dict[str, Any]]
-    courses_data: List[Dict[str, Any]]
-    classrooms_data: List[Dict[str, Any]]
+    lecturers_data: List[LecturerData]
+    courses_data: List[CourseData]
+    classrooms_data: List[ClassroomData]
     travel_costs_matrix: Dict[Tuple[str, str], int]
     solver_params: SolverParameters
     today_date: datetime.date
@@ -39,14 +72,43 @@ class OptimizationInput:
 
 # --- 2. 出力関連の型定義 ---
 
+class SolverAssignment(TypedDict):
+    """ソルバーからの割り当て結果1件分のデータ"""
+    講師ID: str
+    講座ID: str
+    "移動コスト(元)": int
+    "年齢コスト(元)": int
+    "頻度コスト(元)": int
+    "資格コスト(元)": int
+    "近接性コスト(元)": int
+    "当該教室最終割当日からの日数": int
+
 class SolverOutput(TypedDict):
     """ソルバーからの直接の出力"""
     solution_status_str: str
     objective_value: Optional[float]
-    assignments: List[dict]
-    all_courses: List[dict]
-    all_lecturers: List[dict]
+    assignments: List[SolverAssignment]
+    # all_coursesとall_lecturersはソルバー内で加工される可能性があるため、
+    # 現時点では具体的な型付けを保留し、汎用的な型を使用します。
+    all_courses: List[Dict[str, Any]]
+    all_lecturers: List[Dict[str, Any]]
     solver_raw_status_code: int
+
+class AssignmentResultRow(SolverAssignment):
+    """
+    最終的な割り当て結果の1行（DataFrame化される前のデータ）。
+    SolverAssignmentを継承し、ゲートウェイで追加される情報を加える。
+    """
+    # gatewayで追加されるキー
+    講師名: str
+    講座名: str
+    教室ID: str
+    スケジュール: str
+    教室名: str
+    "講師一般ランク": Optional[int]
+    "講師特別ランク": Optional[Union[int, str]]
+    "講座タイプ": Optional[str]
+    "講座ランク": Optional[int]
 
 class OptimizationResult(TypedDict):
     """ゲートウェイからの最終的な実行結果"""
@@ -54,7 +116,7 @@ class OptimizationResult(TypedDict):
     message: str
     solution_status: str
     objective_value: Optional[float]
-    assignments_df: List[Dict[str, Any]]
+    assignments_df: List[AssignmentResultRow]
     lecturer_course_counts: Dict[str, int]
     course_assignment_counts: Dict[str, int]
     course_remaining_capacity: Dict[str, int]

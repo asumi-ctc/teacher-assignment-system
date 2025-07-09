@@ -4,7 +4,8 @@ import datetime # 日付処理用
 import os # 並列探索用にインポート
 import numpy as np
 from ortools.sat.python import cp_model
-from typing import TypedDict, List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict, Any
+from utils.types import LecturerData, CourseData, ClassroomData, SolverOutput
 
 logger = logging.getLogger(__name__)
 
@@ -16,27 +17,20 @@ BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
 # ---
 
 # --- [ここから app.py より移動] ---
-class SolverOutput(TypedDict):
-    solution_status_str: str
-    objective_value: Optional[float]
-    assignments: List[dict]
-    all_courses: List[dict]
-    all_lecturers: List[dict]
-    solver_raw_status_code: int # このフィールドは残す
 
-def solve_assignment(lecturers_data: List[Dict[str, Any]],
-                     courses_data: List[Dict[str, Any]],
-                     classrooms_data: List[Dict[str, Any]], # classrooms_data は現在未使用だが、将来のために残す
+def solve_assignment(lecturers_data: List[LecturerData],
+                     courses_data: List[CourseData],
+                     classrooms_data: List[ClassroomData],
                      travel_costs_matrix: Dict[Tuple[str, str], int],
                      weight_past_assignment_recency: float,
                      weight_qualification: float,
                      weight_travel: float,
                      weight_age: float,
                      weight_frequency: float,
-                     weight_assignment_shortage: float,
+                     weight_assignment_shortage: float, # noqa: E501
                      weight_lecturer_concentration: float,
                      weight_consecutive_assignment: float,
-                     allow_under_assignment: bool,
+                     allow_under_assignment: bool, # noqa: E501
                      today_date: datetime.date,
                      fixed_assignments: Optional[List[Tuple[str, str]]] = None,
                      forced_unassignments: Optional[List[Tuple[str, str]]] = None) -> SolverOutput:
@@ -65,14 +59,8 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
         # --- ステップ1: 連日講座ペアのリストアップ ---
         consecutive_day_pairs: List[Dict[str, Any]] = []
         log_to_buffer("Starting search for consecutive general-special course pairs.")
-        parsed_courses_for_pairing: List[Dict[str, Any]] = []
-        for course_id_loop, course_item_loop in courses_dict.items():
-            try:
-                schedule_date = datetime.datetime.strptime(course_item_loop['schedule'], "%Y-%m-%d").date()
-                parsed_courses_for_pairing.append({**course_item_loop, 'schedule_date_obj': schedule_date})
-            except ValueError:
-                log_to_buffer(f"  Warning: Could not parse schedule date {course_item_loop['schedule']} for course {course_item_loop['id']} during pair finding. Skipping.")
-                continue
+        # 型定義により、'schedule'は既にdatetime.dateオブジェクトであると想定
+        parsed_courses_for_pairing = [{**c, 'schedule_date_obj': c['schedule']} for c in courses_dict.values()]
 
         courses_by_classroom_for_pairing: Dict[str, List[Dict[str, Any]]] = {}
         for course_in_list in parsed_courses_for_pairing:
@@ -142,7 +130,7 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
                     log_to_buffer(f"  - Filtered out: {lecturer_id} for {course_id} (Qualification insufficient. Course: {course_type} Rank {course_rank}. Lecturer: GenRank {lecturer_general_rank}, SpecRank {lecturer_special_rank})")
                     continue
 
-                schedule_available = course["schedule"] in lecturer["availability"]
+                schedule_available = course["schedule"] in lecturer["availability"] # 'schedule'と'availability'の要素は両方datetime.dateオブジェクト
                 if not schedule_available:
                     log_to_buffer(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable: Course_schedule={course['schedule']}, Lecturer_avail_sample={lecturer['availability'][:3]}...)")
                     continue
@@ -165,19 +153,14 @@ def solve_assignment(lecturers_data: List[Dict[str, Any]],
                         if pa["classroom_id"] == course["classroom_id"]
                     ]
                     if relevant_past_assignments_to_this_classroom:
-                        latest_assignment_date_str = relevant_past_assignments_to_this_classroom[0]["date"]
-                        try:
-                            latest_assignment_date = datetime.datetime.strptime(latest_assignment_date_str, "%Y-%m-%d").date()
-                            days_since_last_assignment_to_classroom = (today_date - latest_assignment_date).days
-                            if days_since_last_assignment_to_classroom >= 0:
-                                past_assignment_recency_cost = RECENCY_COST_CONSTANT / (days_since_last_assignment_to_classroom + 1.0)
-                            else:
-                                past_assignment_recency_cost = 0.0
-                                days_since_last_assignment_to_classroom = -2
-                        except ValueError:
-                            log_to_buffer(f"    Warning: Could not parse date '{latest_assignment_date_str}' for {lecturer_id} and classroom {course['classroom_id']}")
+                        # 型定義により、'date'は既にdatetime.dateオブジェクトであると想定
+                        latest_assignment_date = relevant_past_assignments_to_this_classroom[0]["date"]
+                        days_since_last_assignment_to_classroom = (today_date - latest_assignment_date).days
+                        if days_since_last_assignment_to_classroom >= 0:
+                            past_assignment_recency_cost = RECENCY_COST_CONSTANT / (days_since_last_assignment_to_classroom + 1.0)
+                        else:
                             past_assignment_recency_cost = 0.0
-                            days_since_last_assignment_to_classroom = -3
+                            days_since_last_assignment_to_classroom = -2 # 過去の日付が未来になっているなど、不正な場合
                 else:
                     past_assignment_recency_cost = 0.0
                     days_since_last_assignment_to_classroom = -1

@@ -3,24 +3,14 @@ import datetime
 import os
 import multiprocessing
 from multiprocessing.connection import Connection
-from typing import List, Dict, Any, Tuple, Set, TypedDict, Optional, Union
+from typing import List, Dict, Any, Tuple, Set, Optional, Union
 
 from utils.logging_config import setup_logging
 from utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
+from utils.types import OptimizationResult, AssignmentResultRow, LecturerData, CourseData, ClassroomData, SolverOutput
 import optimization_solver
 
 logger = logging.getLogger(__name__)
-
-class OptimizationResult(TypedDict):
-    status: str
-    message: str
-    solution_status: str
-    objective_value: Optional[float]
-    assignments_df: List[Dict[str, Union[str, int, float, None]]]
-    lecturer_course_counts: Dict[str, int]
-    course_assignment_counts: Dict[str, int]
-    course_remaining_capacity: Dict[str, int]
-    raw_solver_status_code: int
 
 RETRY_LIMIT = 2
 PROCESS_TIMEOUT_SECONDS = 90
