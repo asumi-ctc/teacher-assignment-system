@@ -373,12 +373,13 @@ def solve_assignment(lecturers_data: List[LecturerData],
 
         # CPUコア数に応じて並列探索数を動的に設定
         available_cores = os.cpu_count() or 1 # os.cpu_count() が None を返す場合を考慮
-        # Streamlit Cloudのようなリソース制約のある環境では、os.cpu_count()がホストのコア数を返し、
-        # パフォーマンスが著しく低下する可能性がある。
-        # 以前の安定した動作実績に基づき、ワーカー数を1に固定する。
-        num_workers_to_set = 8 # パフォーマンス検証のため8に設定
+        # os.cpu_count()がホストのコア数を返し、多すぎると逆に性能が劣化する問題への対策。
+        # 実験結果から8コアが最適であったため、利用可能コア数の半分を基本としつつ、
+        # 最小でも8コアを確保するロジックに変更する。
+        calculated_workers = available_cores // 2
+        num_workers_to_set = max(8, calculated_workers)
         solver.parameters.num_search_workers = num_workers_to_set
-        log_to_buffer(f"Solver configured to use {num_workers_to_set} workers (available cores: {available_cores}).")
+        log_to_buffer(f"Solver configured to use {num_workers_to_set} workers (available: {available_cores}, calculated: available/2, min: 8).")
 
         # OR-Tools ソルバーのログ出力を直接 optimization_engine ロガーに流す
         solver.log_callback = lambda msg: logger.info(f"[OR-Tools Solver] {msg.strip()}")
