@@ -224,7 +224,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
         for key in cost_keys_for_norm:
             norm_factors[key] = get_norm_factor(raw_cost_lists[key], key)
 
-        possible_assignments_dict: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        # パフォーマンス改善: 新しい辞書を生成せず、既存の辞書を更新する
         for key, temp_data in possible_assignments_temp_data.items():
             raw = temp_data["raw_costs"]
             
@@ -243,8 +243,11 @@ def solve_assignment(lecturers_data: List[LecturerData],
             )
             total_weighted_cost_int = int(round(total_weighted_cost_float * 100))
             log_to_buffer(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} (norm_travel={norm_travel:.2f}, norm_age={norm_age:.2f}, norm_freq={norm_frequency:.2f}, norm_qual={norm_qualification:.2f}, norm_recency={norm_recency:.2f})")
-            possible_assignments_dict[key] = {**temp_data, "cost": total_weighted_cost_int}
+            temp_data["cost"] = total_weighted_cost_int
 
+        # 後続の処理で使われる変数名に合わせる
+        possible_assignments_dict = possible_assignments_temp_data
+        
         # --- 中間フラッシュポイント 2: コスト計算完了後 ---
         flush_log_buffer()
 
