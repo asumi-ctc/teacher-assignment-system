@@ -56,6 +56,16 @@ def solve_assignment(lecturers_data: List[LecturerData],
         courses_dict = {course['id']: course for course in courses_data}
         classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
 
+        # --- パフォーマンス改善: 講師ごとの教室別最終割り当て日を事前に計算 ---
+        log_to_buffer("Pre-calculating latest assignment dates per classroom for each lecturer.")
+        for lecturer in lecturers_dict.values():
+            latest_assignments = {}
+            # データ生成時に過去の割り当ては日付で降順ソートされていると仮定
+            for pa in lecturer.get("past_assignments", []):
+                if pa["classroom_id"] not in latest_assignments:
+                    latest_assignments[pa["classroom_id"]] = pa["date"]
+            lecturer["_latest_assignment_by_classroom"] = latest_assignments
+
         # --- ステップ1: 連日講座ペアのリストアップ ---
         consecutive_day_pairs: List[Dict[str, Any]] = []
         log_to_buffer("Starting search for consecutive general-special course pairs.")
@@ -143,24 +153,19 @@ def solve_assignment(lecturers_data: List[LecturerData],
                 age_cost = float(lecturer.get("age", 99))
                 frequency_cost = float(len(lecturer.get("past_assignments", [])))
                 qualification_cost_val = float(qualification_cost_for_this_assignment)
-
+                
                 past_assignment_recency_cost = 0.0
                 days_since_last_assignment_to_classroom = -1
-
-                if lecturer.get("past_assignments"):
-                    relevant_past_assignments_to_this_classroom = [
-                        pa for pa in lecturer["past_assignments"]
-                        if pa["classroom_id"] == course["classroom_id"]
-                    ]
-                    if relevant_past_assignments_to_this_classroom:
-                        # 型定義により、'date'は既にdatetime.dateオブジェクトであると想定
-                        latest_assignment_date = relevant_past_assignments_to_this_classroom[0]["date"]
-                        days_since_last_assignment_to_classroom = (today_date - latest_assignment_date).days
-                        if days_since_last_assignment_to_classroom >= 0:
-                            past_assignment_recency_cost = RECENCY_COST_CONSTANT / (days_since_last_assignment_to_classroom + 1.0)
-                        else:
-                            past_assignment_recency_cost = 0.0
-                            days_since_last_assignment_to_classroom = -2 # 過去の日付が未来になっているなど、不正な場合
+                
+                # 事前に計算した辞書を使ってO(1)で最終割り当て日を取得
+                latest_assignment_date = lecturer["_latest_assignment_by_classroom"].get(course["classroom_id"])
+                if latest_assignment_date:
+                    days_since_last_assignment_to_classroom = (today_date - latest_assignment_date).days
+                    if days_since_last_assignment_to_classroom >= 0:
+                        past_assignment_recency_cost = RECENCY_COST_CONSTANT / (days_since_last_assignment_to_classroom + 1.0)
+                    else:
+                        past_assignment_recency_cost = 0.0
+                        days_since_last_assignment_to_classroom = -2 # 過去の日付が未来になっているなど、不正な場合
                 else:
                     past_assignment_recency_cost = 0.0
                     days_since_last_assignment_to_classroom = -1
