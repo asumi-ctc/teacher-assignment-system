@@ -376,7 +376,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
         # Streamlit Cloudのようなリソース制約のある環境では、os.cpu_count()がホストのコア数を返し、
         # パフォーマンスが著しく低下する可能性がある。
         # 以前の安定した動作実績に基づき、ワーカー数を1に固定する。
-        num_workers_to_set = 32 # パフォーマンス検証のため32に設定
+        num_workers_to_set = 8 # パフォーマンス検証のため8に設定
         solver.parameters.num_search_workers = num_workers_to_set
         log_to_buffer(f"Solver configured to use {num_workers_to_set} workers (available cores: {available_cores}).")
 
