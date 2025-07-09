@@ -156,7 +156,7 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date, assignment_tar
 
         num_available_days = random.randint(15, 45) # 対象月±1ヶ月の期間内で15～45日空いている
         if len(all_possible_dates_for_availability) >= num_available_days:
-            availability = random.sample(all_possible_dates_for_availability, num_available_days)
+            availability = random.sample(all_possible_dates_for_availability, num_available_days) # datetime.date オブジェクトのリスト
             availability.sort()
         else: # 万が一、候補日が少ない場合（通常ありえない）
             availability = all_possible_dates_for_availability[:]
@@ -178,7 +178,7 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date, assignment_tar
             assignment_date = today_date - datetime.timedelta(days=days_ago)
             past_assignments.append({
                 "classroom_id": random.choice(prefecture_classroom_ids),
-                "date": assignment_date.strftime("%Y-%m-%d")
+                "date": assignment_date # datetime.date オブジェクトを直接格納
             })
         past_assignments.sort(key=lambda x: x["date"], reverse=True)
         lecturers_data.append({
@@ -211,7 +211,7 @@ def generate_courses_data(prefectures, prefecture_classroom_ids, assignment_targ
     current_date_iter = assignment_target_month_start
     while current_date_iter <= assignment_target_month_end:
         if current_date_iter.weekday() == 6: # 0:月曜日, 6:日曜日
-            sundays_in_target_month.append(current_date_iter.strftime("%Y-%m-%d"))
+            sundays_in_target_month.append(current_date_iter) # datetime.date オブジェクトを直接格納
         current_date_iter += datetime.timedelta(days=1)
 
     # 対象月の土曜日と平日リストを作成 (特別講座用)
@@ -221,10 +221,10 @@ def generate_courses_data(prefectures, prefecture_classroom_ids, assignment_targ
     current_date_iter = assignment_target_month_start
     while current_date_iter <= assignment_target_month_end:
         all_days_in_target_month_for_special_obj.append(current_date_iter)
-        if current_date_iter.weekday() == 5: # 土曜日
-            saturdays_in_target_month_for_special.append(current_date_iter.strftime("%Y-%m-%d"))
-        elif current_date_iter.weekday() < 5: # 平日
-            weekdays_in_target_month_for_special.append(current_date_iter.strftime("%Y-%m-%d"))
+        if current_date_iter.weekday() == 5: # 土曜日 (datetime.date オブジェクト)
+            saturdays_in_target_month_for_special.append(current_date_iter)
+        elif current_date_iter.weekday() < 5: # 平日 (datetime.date オブジェクト)
+            weekdays_in_target_month_for_special.append(current_date_iter)
         current_date_iter += datetime.timedelta(days=1)
 
     courses_data = []
@@ -233,17 +233,17 @@ def generate_courses_data(prefectures, prefecture_classroom_ids, assignment_targ
         pref_name = prefectures[i]
 
         # 一般講座の生成 (対象月の各日曜日に、ランダムに2つのレベルで開催)
-        for sunday_str in sundays_in_target_month:
+        for sunday_date in sundays_in_target_month:
             # 各日曜日に異なるレベルの一般講座を例えば2つ生成
             selected_levels_for_general = random.sample(GENERAL_COURSE_LEVELS, min(2, len(GENERAL_COURSE_LEVELS)))
             for level_info in selected_levels_for_general:
                 courses_data.append({
                     "id": f"{pref_classroom_id}-GC{course_counter}",
-                    "name": f"{pref_name} 一般講座 {level_info['name_suffix']} ({sunday_str[-5:]})", # 日付の月日部分を名前に含める
+                    "name": f"{pref_name} 一般講座 {level_info['name_suffix']} ({sunday_date.strftime('%m-%d')})", # 日付の月日部分を名前に含める
                     "classroom_id": pref_classroom_id,
                     "course_type": "general",
                     "rank": level_info['rank'],
-                    "schedule": sunday_str
+                    "schedule": sunday_date # datetime.date オブジェクトを直接格納
                 })
                 course_counter += 1
 
@@ -254,13 +254,13 @@ def generate_courses_data(prefectures, prefecture_classroom_ids, assignment_targ
         elif weekdays_in_target_month_for_special:
             chosen_date_for_special_course = random.choice(weekdays_in_target_month_for_special)
         elif all_days_in_target_month_for_special_obj: # 万が一の場合
-            chosen_date_for_special_course = random.choice(all_days_in_target_month_for_special_obj).strftime("%Y-%m-%d")
+            chosen_date_for_special_course = random.choice(all_days_in_target_month_for_special_obj)
         
         if chosen_date_for_special_course:
             level_info_special = random.choice(SPECIAL_COURSE_LEVELS)
             courses_data.append({
                 "id": f"{pref_classroom_id}-SC{course_counter}",
-                "name": f"{pref_name} 特別講座 {level_info_special['name_suffix']} ({chosen_date_for_special_course[-5:]})",
+                "name": f"{pref_name} 特別講座 {level_info_special['name_suffix']} ({chosen_date_for_special_course.strftime('%m-%d')})",
                 "classroom_id": pref_classroom_id,
                 "course_type": "special",
                 "rank": level_info_special['rank'],
@@ -745,7 +745,7 @@ def display_sample_data_view():
                 lambda assignments: ", ".join([f"{a['classroom_id']} ({a['date']})" for a in assignments]) if isinstance(assignments, list) and assignments else "履歴なし"
             )
         if 'availability' in df_lecturers_display.columns:
-            df_lecturers_display['availability_display'] = df_lecturers_display['availability'].apply(lambda dates: ", ".join(dates) if isinstance(dates, list) else "") # 新しい列名
+            df_lecturers_display['availability_display'] = df_lecturers_display['availability'].apply(lambda dates: ", ".join([d.strftime('%Y-%m-%d') for d in dates]) if isinstance(dates, list) else "") # 新しい列名
         # 表示するカラムを調整
         lecturer_display_columns = ["id", "name", "age", "home_classroom_id", "qualification_general_rank", "qualification_special_rank", "availability_display", "past_assignments_display"]
         st.dataframe(df_lecturers_display[lecturer_display_columns], height=200)

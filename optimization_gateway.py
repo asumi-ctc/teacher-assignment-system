@@ -9,45 +9,11 @@ import optimization_solver
 
 logger = logging.getLogger(__name__)
 
-def _preprocess_input_data(
-    lecturers_data: List[Dict[str, Any]],
-    courses_data: List[Dict[str, Any]]
-) -> Tuple[List[LecturerData], List[CourseData]]:
-    """
-    入力データの型を検証・変換する。特に日付文字列をdatetime.dateオブジェクトに変換する。
-    変換に失敗した場合は ValueError を送出する。
-    """
-    processed_lecturers: List[LecturerData] = []
-    for i, lect in enumerate(lecturers_data):
-        new_lect = lect.copy()
-        if 'availability' in new_lect and isinstance(new_lect['availability'], list):
-            new_lect['availability'] = [
-                datetime.datetime.strptime(d, "%Y-%m-%d").date() if isinstance(d, str) else d
-                for d in new_lect['availability']
-            ]
-        if 'past_assignments' in new_lect and isinstance(new_lect['past_assignments'], list):
-            new_past_assignments = []
-            for pa in new_lect['past_assignments']:
-                new_pa = pa.copy()
-                if 'date' in new_pa and isinstance(new_pa['date'], str):
-                    new_pa['date'] = datetime.datetime.strptime(new_pa['date'], "%Y-%m-%d").date()
-                new_past_assignments.append(new_pa)
-            new_lect['past_assignments'] = new_past_assignments
-        processed_lecturers.append(new_lect)  # type: ignore
-
-    processed_courses: List[CourseData] = []
-    for i, course in enumerate(courses_data):
-        new_course = course.copy()
-        if 'schedule' in new_course and isinstance(new_course['schedule'], str):
-            new_course['schedule'] = datetime.datetime.strptime(new_course['schedule'], "%Y-%m-%d").date()
-        processed_courses.append(new_course)  # type: ignore
-
-    return processed_lecturers, processed_courses
-
 def run_optimization_with_monitoring(
-    lecturers_data: List[Dict[str, Any]],
-    courses_data: List[Dict[str, Any]],
-    classrooms_data: List[Dict[str, Any]],
+    # データ生成元(app.py)で型が保証されているため、より厳密な型ヒントを使用
+    lecturers_data: List[LecturerData],
+    courses_data: List[CourseData],
+    classrooms_data: List[ClassroomData],
     travel_costs_matrix: Dict[Tuple[str, str], int],
     **kwargs: Any
 ) -> OptimizationResult:
@@ -66,15 +32,6 @@ def run_optimization_with_monitoring(
     }
 
     try:
-        # 1. 入力データの前処理 (レベル1: 検証と整形)
-        processed_lecturers, processed_courses = _preprocess_input_data(
-            solver_args["lecturers_data"], solver_args["courses_data"]
-        )
-        solver_args["lecturers_data"] = processed_lecturers
-        solver_args["courses_data"] = processed_courses
-        logger.info("入力データの前処理（日付変換）が完了しました。")
-
-        # 2. ソルバーの直接呼び出し
         logger.info("最適化ソルバーを直接呼び出します...")
         solver_output = optimization_solver.solve_assignment(**solver_args)
         logger.info("最適化ソルバーが完了しました。")
@@ -87,7 +44,7 @@ def run_optimization_with_monitoring(
         # ProcessExecutionErrorはもはや適切ではないが、既存のUIエラーハンドリングのために利用
         raise ProcessExecutionError(f"最適化処理中に予期せぬエラーが発生しました: {e}") from e
 
-    # 3. 結果の整形
+    # 結果の整形
     logger.info("最適化結果を整形します...")
     all_lecturers_dict = {l['id']: l for l in solver_output['all_lecturers']}
     all_courses_dict = {c['id']: c for c in solver_output['all_courses']}
