@@ -15,58 +15,6 @@ logger = logging.getLogger(__name__)
 RETRY_LIMIT = 2
 PROCESS_TIMEOUT_SECONDS = 90
 
-def _preprocess_input_data(
-    lecturers_data: List[Dict[str, Any]],
-    courses_data: List[Dict[str, Any]]
-) -> Tuple[List[LecturerData], List[CourseData]]:
-    """
-    入力データの型を検証・変換する。特に日付文字列をdatetime.dateオブジェクトに変換する。
-    変換に失敗した場合は ValueError を送出する。
-    """
-    processed_lecturers: List[LecturerData] = []
-    for i, lect in enumerate(lecturers_data):
-        new_lect = lect.copy()
-
-        # availability
-        if 'availability' in new_lect and isinstance(new_lect['availability'], list):
-            try:
-                new_availability = []
-                for d in new_lect['availability']:
-                    if isinstance(d, str):
-                        new_availability.append(datetime.datetime.strptime(d, "%Y-%m-%d").date())
-                    elif isinstance(d, datetime.date):
-                        new_availability.append(d)
-                new_lect['availability'] = new_availability
-            except ValueError as e:
-                raise ValueError(f"講師データ[{i}] (ID: {lect.get('id', 'N/A')}) の 'availability' に不正な日付形式があります: {e}")
-
-        # past_assignments
-        if 'past_assignments' in new_lect and isinstance(new_lect['past_assignments'], list):
-            new_past_assignments = []
-            for j, pa in enumerate(new_lect['past_assignments']):
-                new_pa = pa.copy()
-                if 'date' in new_pa and isinstance(new_pa['date'], str):
-                    try:
-                        new_pa['date'] = datetime.datetime.strptime(new_pa['date'], "%Y-%m-%d").date()
-                    except ValueError as e:
-                        raise ValueError(f"講師データ[{i}] (ID: {lect.get('id', 'N/A')}) の 'past_assignments'[{j}] に不正な日付形式があります: {e}")
-                new_past_assignments.append(new_pa)
-            new_lect['past_assignments'] = new_past_assignments
-
-        processed_lecturers.append(new_lect)  # type: ignore
-
-    processed_courses: List[CourseData] = []
-    for i, course in enumerate(courses_data):
-        new_course = course.copy()
-        if 'schedule' in new_course and isinstance(new_course['schedule'], str):
-            try:
-                new_course['schedule'] = datetime.datetime.strptime(new_course['schedule'], "%Y-%m-%d").date()
-            except ValueError as e:
-                raise ValueError(f"講座データ[{i}] (ID: {course.get('id', 'N/A')}) の 'schedule' に不正な日付形式があります: {e}")
-        processed_courses.append(new_course)  # type: ignore
-
-    return processed_lecturers, processed_courses
-
 def _run_solver_process(conn: Connection, solver_args: Dict[str, Any]):
     """子プロセスで実行されるソルバー呼び出しラッパー"""
     try:
@@ -92,16 +40,9 @@ def run_optimization_with_monitoring(
     """
     logger = logging.getLogger(__name__)
 
-    try:
-        processed_lecturers, processed_courses = _preprocess_input_data(lecturers_data, courses_data)
-        logger.info("入力データの前処理（日付変換）が完了しました。")
-    except ValueError as e:
-        logger.error(f"入力データの日付形式に誤りがあります: {e}", exc_info=True)
-        raise InvalidInputError(f"入力データの日付形式に誤りがあります。YYYY-MM-DD形式である必要があります。\n詳細: {e}")
-
     solver_args = {
-        "lecturers_data": processed_lecturers,
-        "courses_data": processed_courses,
+        "lecturers_data": lecturers_data,
+        "courses_data": courses_data,
         "classrooms_data": classrooms_data,
         "travel_costs_matrix": travel_costs_matrix,
         **kwargs
