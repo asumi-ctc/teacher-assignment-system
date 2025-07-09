@@ -248,15 +248,17 @@ def solve_assignment(lecturers_data: List[LecturerData],
         # --- 中間フラッシュポイント 2: コスト計算完了後 ---
         flush_log_buffer()
 
-        assignments_by_course: Dict[str, List[Any]] = {} # Var type
+        # パフォーマンス改善: 割り当て候補のループを1回にまとめる
+        assignments_by_course: Dict[str, List[Any]] = {}
+        assignments_by_lecturer: Dict[str, List[Any]] = {lect_id: [] for lect_id in lecturers_dict}
+        log_to_buffer("Grouping possible assignments by course and lecturer in a single loop.")
         for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
-            variable_group = data_group["variable"]        
+            variable_group = data_group["variable"]
+            # 講座ごとの割り当てリストを作成
             if course_id_group not in assignments_by_course:
                 assignments_by_course[course_id_group] = []
             assignments_by_course[course_id_group].append(variable_group)
-        
-        assignments_by_lecturer: Dict[str, List[Any]] = {lect_id: [] for lect_id in lecturers_dict} # Var type
-        for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
+            # 講師ごとの割り当てリストを作成
             assignments_by_lecturer[lecturer_id_group].append(data_group["variable"])
 
         TARGET_PREFECTURES_FOR_TWO_LECTURERS = ["東京都", "愛知県", "大阪府"]
