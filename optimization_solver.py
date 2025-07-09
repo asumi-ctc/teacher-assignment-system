@@ -203,10 +203,21 @@ def solve_assignment(lecturers_data: List[LecturerData],
             return factor
 
         cost_keys_for_norm = ["travel", "age", "frequency", "qualification", "recency"]
+        # パフォーマンス改善: 巨大な辞書に対するループを1回にまとめる
+        # 1. 各コスト値を格納するためのリストを初期化
+        raw_cost_lists = {key: [] for key in cost_keys_for_norm}
+
+        # 2. 割り当て候補データを一度だけループし、各コスト値をそれぞれのリストに追加
+        for temp_data in possible_assignments_temp_data.values():
+            raw_costs = temp_data.get("raw_costs", {})
+            for key in cost_keys_for_norm:
+                if key in raw_costs:
+                    raw_cost_lists[key].append(raw_costs[key])
+
+        # 3. 収集したリストから正規化係数を計算
         norm_factors = {}
         for key in cost_keys_for_norm:
-            cost_list = [d["raw_costs"][key] for d in possible_assignments_temp_data.values() if key in d["raw_costs"]]
-            norm_factors[key] = get_norm_factor(cost_list, key)
+            norm_factors[key] = get_norm_factor(raw_cost_lists[key], key)
 
         possible_assignments_dict: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for key, temp_data in possible_assignments_temp_data.items():
