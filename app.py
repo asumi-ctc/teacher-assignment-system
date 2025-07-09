@@ -147,7 +147,7 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date, assignment_tar
     all_possible_dates_for_availability = []
     current_date_iter = availability_period_start
     while current_date_iter <= availability_period_end:
-        all_possible_dates_for_availability.append(current_date_iter.strftime("%Y-%m-%d"))
+        all_possible_dates_for_availability.append(current_date_iter)
         current_date_iter += datetime.timedelta(days=1)
 
     for i in range(1, 301): # 講師数を300人に変更
