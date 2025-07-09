@@ -18,57 +18,7 @@ BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
 
 # --- [ここから app.py より移動] ---
 
-def _preprocess_solver_input_data(
-    lecturers_data: List[Dict[str, Any]],
-    courses_data: List[Dict[str, Any]]
-) -> Tuple[List[LecturerData], List[CourseData]]:
-    """
-    ソルバー内部で入力データを前処理する。特に日付文字列をdatetime.dateオブジェクトに変換する。
-    変換に失敗した場合は ValueError を送出する。
-    """
-    processed_lecturers: List[LecturerData] = []
-    for i, lect in enumerate(lecturers_data):
-        new_lect = lect.copy()
-        # availability
-        if 'availability' in new_lect and isinstance(new_lect['availability'], list):
-            try:
-                new_availability = [
-                    datetime.datetime.strptime(d, "%Y-%m-%d").date() if isinstance(d, str) else d
-                    for d in new_lect['availability']
-                ]
-                new_lect['availability'] = new_availability
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"講師データ[{i}] (ID: {lect.get('id', 'N/A')}) の 'availability' に不正な日付形式があります: {e}")
-
-        # past_assignments
-        if 'past_assignments' in new_lect and isinstance(new_lect['past_assignments'], list):
-            try:
-                new_past_assignments = []
-                for pa in new_lect['past_assignments']:
-                    new_pa = pa.copy()
-                    if 'date' in new_pa and isinstance(new_pa['date'], str):
-                        new_pa['date'] = datetime.datetime.strptime(new_pa['date'], "%Y-%m-%d").date()
-                    new_past_assignments.append(new_pa)
-                new_lect['past_assignments'] = new_past_assignments
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"講師データ[{i}] (ID: {lect.get('id', 'N/A')}) の 'past_assignments' に不正な日付形式があります: {e}")
-
-        processed_lecturers.append(new_lect)  # type: ignore
-
-    processed_courses: List[CourseData] = []
-    for i, course in enumerate(courses_data):
-        new_course = course.copy()
-        if 'schedule' in new_course and isinstance(new_course['schedule'], str):
-            try:
-                new_course['schedule'] = datetime.datetime.strptime(new_course['schedule'], "%Y-%m-%d").date()
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"講座データ[{i}] (ID: {course.get('id', 'N/A')}) の 'schedule' に不正な日付形式があります: {e}")
-        processed_courses.append(new_course)  # type: ignore
-
-    return processed_lecturers, processed_courses
-
-
-def solve_assignment(lecturers_data: List[LecturerData], # Note: Receives List[Dict] at runtime
+def solve_assignment(lecturers_data: List[LecturerData],
                      courses_data: List[CourseData],
                      classrooms_data: List[ClassroomData],
                      travel_costs_matrix: Dict[Tuple[str, str], int],
@@ -98,17 +48,7 @@ def solve_assignment(lecturers_data: List[LecturerData], # Note: Receives List[D
             logger.info("\n".join(log_buffer))
             log_buffer = [] # バッファをクリア
 
-    try:
-        # --- 0. ソルバー内部でのデータ前処理 ---
-        # パフォーマンス向上のため、子プロセス内で日付文字列をdatetimeオブジェクトに変換
-        try:
-            lecturers_data, courses_data = _preprocess_solver_input_data(lecturers_data, courses_data) # type: ignore
-            log_to_buffer("Solver-internal data preprocessing (date conversion) completed.")
-        except ValueError as e:
-            log_to_buffer(f"ERROR: Data preprocessing failed inside solver: {e}")
-            flush_log_buffer() # エラーを記録して終了
-            raise # エラーをゲートウェイに伝播させる
-
+    try: # メインのtryブロック
         model = cp_model.CpModel()
 
         # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
