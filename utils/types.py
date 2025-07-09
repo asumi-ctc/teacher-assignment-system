@@ -1,7 +1,7 @@
 # utils/types.py
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Tuple, TypedDict, Optional
+from typing import List, Dict, Any, Tuple, TypedDict, Optional, Union
 import datetime
 
 # --- 0. データ構造の型定義 ---
@@ -72,43 +72,61 @@ class OptimizationInput:
 
 # --- 2. 出力関連の型定義 ---
 
-class SolverAssignment(TypedDict):
-    """ソルバーからの割り当て結果1件分のデータ"""
-    講師ID: str
-    講座ID: str
-    "移動コスト(元)": int
-    "年齢コスト(元)": int
-    "頻度コスト(元)": int
-    "資格コスト(元)": int
-    "近接性コスト(元)": int
-    "当該教室最終割当日からの日数": int
+# ソルバーからの割り当て結果1件分のデータ
+SolverAssignment = TypedDict(
+    "SolverAssignment",
+    {
+        "講師ID": str,
+        "講座ID": str,
+        "算出コスト(x100)": int,
+        "移動コスト(元)": int,
+        "年齢コスト(元)": float,
+        "頻度コスト(元)": float,
+        "資格コスト(元)": float,
+        "当該教室最終割当日からの日数": int,
+        "今回の割り当て回数": int,
+        "連続ペア割当": str,
+    },
+)
 
 class SolverOutput(TypedDict):
     """ソルバーからの直接の出力"""
     solution_status_str: str
     objective_value: Optional[float]
     assignments: List[SolverAssignment]
-    # all_coursesとall_lecturersはソルバー内で加工される可能性があるため、
-    # 現時点では具体的な型付けを保留し、汎用的な型を使用します。
+    # all_coursesとall_lecturersはソルバー内で加工される可能性があるため、汎用的な型を使用します。
     all_courses: List[Dict[str, Any]]
     all_lecturers: List[Dict[str, Any]]
     solver_raw_status_code: int
 
-class AssignmentResultRow(SolverAssignment):
-    """
-    最終的な割り当て結果の1行（DataFrame化される前のデータ）。
-    SolverAssignmentを継承し、ゲートウェイで追加される情報を加える。
-    """
-    # gatewayで追加されるキー
-    講師名: str
-    講座名: str
-    教室ID: str
-    スケジュール: str
-    教室名: str
-    "講師一般ランク": Optional[int]
-    "講師特別ランク": Optional[Union[int, str]]
-    "講座タイプ": Optional[str]
-    "講座ランク": Optional[int]
+# 最終的な割り当て結果の1行（DataFrame化される前のデータ）。
+# ソルバーからの情報とゲートウェイで追加される情報をすべて含む。
+AssignmentResultRow = TypedDict(
+    "AssignmentResultRow",
+    {
+        # --- From SolverAssignment ---
+        "講師ID": str,
+        "講座ID": str,
+        "算出コスト(x100)": int,
+        "移動コスト(元)": int,
+        "年齢コスト(元)": float,
+        "頻度コスト(元)": float,
+        "資格コスト(元)": float,
+        "当該教室最終割当日からの日数": int,
+        "今回の割り当て回数": int,
+        "連続ペア割当": str,
+        # --- Added in Gateway ---
+        "講師名": str,
+        "講座名": str,
+        "教室ID": str,
+        "スケジュール": datetime.date,
+        "教室名": str,
+        "講師一般ランク": Optional[int],
+        "講師特別ランク": Optional[Union[int, str]],
+        "講座タイプ": Optional[str],
+        "講座ランク": Optional[int],
+    },
+)
 
 class OptimizationResult(TypedDict):
     """ゲートウェイからの最終的な実行結果"""
