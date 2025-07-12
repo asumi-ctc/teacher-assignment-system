@@ -558,10 +558,8 @@ def run_optimization():
                 weight_travel=st.session_state.get("weight_travel_exp", 0.5),
                 weight_age=st.session_state.get("weight_age_exp", 0.5),
                 weight_frequency=st.session_state.get("weight_frequency_exp", 0.5),
-                weight_assignment_shortage=st.session_state.get("weight_assignment_shortage_exp", 0.5),
                 weight_lecturer_concentration=st.session_state.get("weight_lecturer_concentration_exp", 0.5),
                 weight_consecutive_assignment=st.session_state.get("weight_consecutive_assignment_exp", 0.5),
-                allow_under_assignment=st.session_state.allow_under_assignment_cb,
                 today_date=st.session_state.TODAY,
                 fixed_assignments=st.session_state.get("fixed_assignments_for_solver"),
                 forced_unassignments=st.session_state.get("forced_unassignments_for_solver")
@@ -853,7 +851,6 @@ pair_var = model.NewBoolVar(f'y_{lecturer_id_loop_pair}_{pair_id}') # 連日ペ�
 num_total_assignments_l = model.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}')
 extra_assignments_l = model.NewIntVar(0, len(courses_data), f'extra_assign_{lecturer_id}')
 shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{course_id}') # 割り当て不足数
-
         """, language="python"
     )
     with st.expander("コード解説", expanded=False):
@@ -876,20 +873,10 @@ shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{cours
         これにより、実行可能な解（許容される割り当てパターン）の範囲が定まります。
 
         **主な制約:**
-        - **各講座への割り当て制約:** 各講座 $c$ には、担当可能な講師候補が存在する場合、その講座の場所（特定地域か否か）とUIの「許容条件」設定に応じて、目標人数が割り当てられます。
-            - 講座 $c$ の目標割り当て人数を $\text{TargetCount}_c$ とします。
-                - 東京、愛知、大阪の教室の場合: $\text{TargetCount}_c = 2$
-                - その他の教室の場合: $\text{TargetCount}_c = 1$
-            - **割り当て不足を許容しない場合:**
-              $$ \sum_{l \in L_c} x_{l,c} = \text{TargetCount}_c \quad (\forall c \in C \text{ s.t. } L_c \neq \emptyset \text{ and not allow\_under\_assignment}) $$
-            - **割り当て不足を許容する場合 (`allow_under_assignment` が True):**
-              $$ \sum_{l \in L_c} x_{l,c} \le \text{TargetCount}_c \quad (\forall c \in C \text{ s.t. } L_c \neq \emptyset) $$
-              この場合、割り当て不足数 $\text{shortage\_var}_c$ が定義され、目的関数でペナルティが科されます。
-              $$ \text{shortage\_var}_c \ge \text{TargetCount}_c - \sum_{l \in L_c} x_{l,c} \quad (\text{if allow\_under\_assignment and } w_{\text{shortage}} > 0) $$
-              $$ \text{shortage\_var}_c \ge 0 \quad (\text{IntVarの定義による}) $$
+        - **各講座への割り当て制約:** 担当可能な講師候補が存在する各講座 $c$ には、必ず1名の講師が割り当てられます。
+          $$ \sum_{l \in L_c} x_{l,c} = 1 \quad (\forall c \in C \text{ s.t. } L_c \neq \emptyset) $$
           ここで、
             - $L_c$ は講座 $c$ を担当可能な講師の集合。
-            - $w_{\text{shortage}}$ は割り当て不足ペナルティの重み。
 
         - **講師の割り当て集中度に関するペナルティのための変数定義:**
           UIで講師の割り当て集中度ペナルティの重み $w_{\text{concentration}}$ が0より大きい場合、以下の変数が定義されます。
@@ -919,19 +906,9 @@ shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{cours
     st.markdown("**対応するPythonコード (抜粋):**")
     st.code(
         """
-# 各講座への割り当て制約 (UIの許容条件に応じて変動)
-course_id = course_item["id"]
-possible_assignments_for_course = assignments_by_course.get(course_id, [])
+# 各講座への割り当て制約
 if possible_assignments_for_course:
-    # ... target_assignment_count の決定ロジック (東京、愛知、大阪なら2、他は1) ...
-    if allow_under_assignment:
-        model.Add(sum(possible_assignments_for_course) <= target_assignment_count)
-        if weight_assignment_shortage > 0:
-            shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{course_id}')
-            model.Add(shortage_var >= target_assignment_count - sum(possible_assignments_for_course))
-            # shortage_penalty_terms リストに shortage_var * actual_penalty_for_shortage を追加
-    else:
-        model.Add(sum(possible_assignments_for_course) == target_assignment_count)
+    model.Add(sum(possible_assignments_for_course) == 1)
 
 # 講師の割り当て集中ペナルティのための変数定義 (講師ごとのループ内)
 if weight_lecturer_concentration > 0 and actual_penalty_concentration > 0:
@@ -958,12 +935,7 @@ if weight_consecutive_assignment > 0 and consecutive_day_pairs:
     with st.expander("コード解説", expanded=False):
         st.markdown(
             r"""
-            **各講座への割り当て制約:**
-            - `allow_under_assignment` が `False` の場合: `model.Add(sum(...) == target_assignment_count)` で、目標人数ちょうどの割り当てを強制します。
-                - `target_assignment_count` は、講座の開催地（東京・愛知・大阪なら2、他は1）によって決まります。
-            - `allow_under_assignment` が `True` の場合: `model.Add(sum(...) <= target_assignment_count)` で、目標人数以下の割り当てを許容します。
-            - さらに `weight_assignment_shortage > 0` の場合、不足数を表す `shortage_var` を定義し、`shortage_var >= target_assignment_count - sum(...)` で不足数を計算します。この `shortage_var` が目的関数でペナルティコストと乗算されます。
-
+            **各講座への割り当て制約:** `model.Add(sum(...) == 1)` で、担当可能な講師がいる講座には必ず1名を割り当てるという厳格な制約を課します。
             **講師の割り当て集中ペナルティのための変数定義:**
             - `weight_lecturer_concentration > 0` かつ計算されたペナルティ `actual_penalty_concentration > 0` の場合に実行されます。
             - `num_total_assignments_l = model.NewIntVar(...)`: 講師ごとの総割り当て数を格納する整数変数を定義します。
@@ -983,7 +955,6 @@ if weight_consecutive_assignment > 0 and consecutive_day_pairs:
 
         $$
         \text{Minimize} \quad Z = \sum_{l,c} (x_{l,c} \cdot \text{Cost}_{l,c}) \\
-        \quad + \sum_{c \text{ s.t. allow\_under\_assignment and } w_{\text{shortage}}>0} (\text{shortage\_var}_c \cdot \text{PenaltyShortage}_c) \\
         \quad + \sum_{l \text{ s.t. } w_{\text{concentration}}>0} (\text{extra\_assignments}_l \cdot \text{PenaltyConcentration}_l) \\
         \quad - \sum_{l,p \text{ s.t. } w_{\text{consecutive}}>0} (y_{l,p} \cdot \text{RewardConsecutive}_{l,p})
         $$
@@ -1001,8 +972,6 @@ if weight_consecutive_assignment > 0 and consecutive_day_pairs:
             - $\text{FrequencyCost}_l$: 講師 $l$ の過去の総割り当て回数。
             - $\text{QualificationCost}_{l,c}$: 講師 $l$ の資格ランクに基づくコスト（講座タイプとランクによる）。
             - $\text{RecencyCost}_{l,c}$: 講師 $l$ が講座 $c$ と同じ教室に最後に割り当てられてからの経過日数に基づくコスト（日数が少ないほど高コスト）。
-        - $\text{shortage\_var}_c$: 講座 $c$ の割り当て不足数。
-        - $\text{PenaltyShortage}_c$: 講座 $c$ の割り当て不足1件あたりのペナルティ（$w_{\text{shortage}}$ と基本ペナルティ値から計算）。
         - $\text{extra\_assignments}_l$: 講師 $l$ のペナルティ対象となる追加割り当て数。
         - $\text{PenaltyConcentration}_l$: 講師 $l$ の追加割り当て1回あたりのペナルティ（$w_{\text{concentration}}$ と基本ペナルティ値から計算）。
         - $y_{l,p}$: 講師 $l$ が連日ペア $p$ をまとめて担当するかを示す変数 (0 or 1)。
@@ -1015,10 +984,6 @@ if weight_consecutive_assignment > 0 and consecutive_day_pairs:
         """
 # 1. 基本コスト項 (各割り当て候補 x_{l,c} * Cost_{l,c})
 objective_terms = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()]
-
-# 2. 割り当て不足ペナルティ項 (shortage_var_c * PenaltyShortage_c)
-if shortage_penalty_terms: # shortage_penalty_terms は事前に (shortage_var * actual_penalty_for_shortage) でリスト化されている
-    objective_terms.extend(shortage_penalty_terms)
 
 # 3. 講師の割り当て集中ペナルティ項 (extra_assignments_l * PenaltyConcentration_l)
 if weight_lecturer_concentration > 0 and actual_penalty_concentration > 0:
@@ -1049,7 +1014,6 @@ else:
             - **目的関数の設定**:
                 - `objective_terms` リストに、上記の目的関数の各項（基本コスト、割り当て不足ペナルティ、講師集中ペナルティ、連日割り当て報酬（負のコスト））を順次追加していきます。
                     - 基本コスト項: `data["variable"] * data["cost"]`
-                    - 割り当て不足ペナルティ項: `shortage_var * actual_penalty_for_shortage` (事前に `shortage_penalty_terms` リストに格納)
                     - 講師集中ペナルティ項: `extra_assignments_l * actual_penalty_concentration`
                     - 連日割り当て報酬項: `pair_var * -actual_reward_for_pair`
                 - `model.Minimize(sum(objective_terms))`: 全てのコスト項、ペナルティ項、報酬項（負のコスト）の合計を最小化するようにソルバーに指示します。
@@ -1223,7 +1187,20 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                     st.subheader("全ての講座が割り当てられませんでした")
                     st.dataframe(pd.DataFrame(st.session_state.DEFAULT_COURSES_DATA))
                 elif solver_result['raw_solver_status_code'] == cp_model.INFEASIBLE:
-                    st.warning("指定された条件では、実行可能な割り当てが見つかりませんでした。制約やデータを見直してください。")
+                    st.error("実行不可能な割り当てです。")
+                    st.warning(
+                        """
+                        指定された条件では、制約を満たす割り当てパターンが見つかりませんでした。
+
+                        **考えられる主な原因:**
+                        - **制約の競合:** 「全ての講座に必ず1名割り当てる」というルールが厳格化されたため、一人の講師が担当できる唯一の講座が複数存在する場合などに、制約が満たせなくなります。
+
+                        **対処法の例:**
+                        - 講師の対応可能日を増やす。
+                        - 割り当て対象の講座を減らす。
+                        - 「割り当ての変更」機能で、競合していそうな講師の割り当てを強制的に交代させてみる。
+                        """
+                    )
                 else:
                     st.error(solver_result['solution_status_str'])
             # --- [リファクタリングここまで] ---
@@ -1447,8 +1424,6 @@ def main():
         st.session_state.assignments_to_change_list = []
     if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
-    if "allow_under_assignment_cb" not in st.session_state: # 追加: チェックボックスの初期値をセッションステートに設定
-        st.session_state.allow_under_assignment_cb = True
 
     # --- UIの描画 ---
     st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
@@ -1491,14 +1466,7 @@ def main():
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない") # 文言変更
         st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。") # 追加
-        st.markdown("- 3.講師は、東京、名古屋、大阪の教室には2名を割り当て、それ以外には1名を割り当てる。") # 追加
-
-    with st.sidebar.expander("【許容条件】", expanded=False): # 「ソフト制約」を「許容条件」に変更
-        st.checkbox(
-            "上記ハード制約3に対し、割り当て不足を許容する",
-            key="allow_under_assignment_cb",
-            help="チェックを入れると、東京・名古屋・大阪の教室は最大2名（0名または1名も可）、その他の教室は最大1名（0名も可）の割り当てとなります。チェックを外すと、必ず指定された人数（東京・名古屋・大阪は2名、他は1名）を割り当てようとします（担当可能な講師がいない場合は割り当てられません）。"
-        )
+        st.markdown("- 3.担当可能な講師がいる全ての講座には、必ず1名を割り当てる。") # 変更
 
     with st.sidebar.expander("【最適化目標】", expanded=False): # 名称変更
         st.caption(
@@ -1515,8 +1483,6 @@ def main():
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
         st.markdown("**同教室への割り当て実績が無い人を優先**")
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
-        st.markdown("**割り当て不足を最小化**") # 新しい目的
-        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、各講座の目標割り当て人数に対する不足を減らそうとします。「許容条件」で割り当て不足を許容している場合に有効です。", key="weight_assignment_shortage_exp")
         st.markdown("**講師の割り当て集中度を低くする（今回の割り当て内）**") # 新しい目的
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が今回の最適化で複数の講座を担当することへのペナルティが大きくなります。", key="weight_lecturer_concentration_exp")
 

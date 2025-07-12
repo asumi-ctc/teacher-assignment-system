@@ -47,7 +47,6 @@ class OptimizationWeights:
     travel: float = 0.5
     age: float = 0.5
     frequency: float = 0.5
-    assignment_shortage: float = 0.5
     lecturer_concentration: float = 0.5
     consecutive_assignment: float = 0.5
 
@@ -55,7 +54,6 @@ class OptimizationWeights:
 class SolverParameters:
     """ソルバーの振る舞いを制御する全パラメータ"""
     weights: OptimizationWeights = field(default_factory=OptimizationWeights)
-    allow_under_assignment: bool = True
     max_search_seconds: int = 90
 
 @dataclass

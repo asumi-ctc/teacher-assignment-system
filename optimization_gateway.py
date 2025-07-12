@@ -23,6 +23,10 @@ def run_optimization_with_monitoring(
     """
     logger = logging.getLogger(__name__)
 
+    # 廃止されたキーをkwargsから削除し、ソルバー呼び出し時のエラーを防ぐ
+    kwargs.pop("allow_under_assignment", None)
+    kwargs.pop("weight_assignment_shortage", None)
+
     solver_args = {
         "lecturers_data": lecturers_data,
         "courses_data": courses_data,
@@ -72,13 +76,11 @@ def run_optimization_with_monitoring(
         lecturer_course_counts[assign['講師ID']] += 1
 
     course_assignment_counts, course_remaining_capacity = {}, {}
-    TARGET_PREFECTURES = ["東京都", "愛知県", "大阪府"]
     for course in solver_output['all_courses']:
         cid = course['id']
         assigned_count = sum(1 for a in processed_assignments if a['講座ID'] == cid)
         course_assignment_counts[cid] = assigned_count
-        location = all_classrooms_dict.get(course.get('classroom_id'), {}).get('location')
-        capacity = 2 if location in TARGET_PREFECTURES else 1
+        capacity = 1
         course_remaining_capacity[cid] = capacity - assigned_count
 
     final_result: OptimizationResult = {

@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 # --- 定数定義 ---
 RECENCY_COST_CONSTANT = 100000.0
-BASE_PENALTY_SHORTAGE_SCALED = 50000 * 100
 BASE_PENALTY_CONCENTRATION_SCALED = 20000 * 100
 BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
 # ---
@@ -27,10 +26,8 @@ def solve_assignment(lecturers_data: List[LecturerData],
                      weight_travel: float,
                      weight_age: float,
                      weight_frequency: float,
-                     weight_assignment_shortage: float, # noqa: E501
                      weight_lecturer_concentration: float,
                      weight_consecutive_assignment: float,
-                     allow_under_assignment: bool, # noqa: E501
                      today_date: datetime.date,
                      fixed_assignments: Optional[List[Tuple[str, str]]] = None,
                      forced_unassignments: Optional[List[Tuple[str, str]]] = None) -> SolverOutput:
@@ -270,39 +267,14 @@ def solve_assignment(lecturers_data: List[LecturerData],
             # 講師ごとの割り当てリストを作成
             assignments_by_lecturer[lecturer_id_group].append(data_group["variable"])
 
-        TARGET_PREFECTURES_FOR_TWO_LECTURERS = ["東京都", "愛知県", "大阪府"]
-        
-        shortage_penalty_terms: List[Any] = [] # LinearExpr terms
-
         for course_item in courses_dict.values():
             course_id = course_item["id"]
             possible_assignments_for_course = assignments_by_course.get(course_id, [])
+            # 担当可能な講師がいる全ての講座には、必ず1名を割り当てる
             if possible_assignments_for_course:
-                course_classroom_id = course_item["classroom_id"]
-                course_location = classrooms_dict[course_classroom_id]["location"]
-
-                target_assignment_count = 1
-                if course_location in TARGET_PREFECTURES_FOR_TWO_LECTURERS:
-                    target_assignment_count = 2
-                
-                if allow_under_assignment:
-                    model.Add(sum(possible_assignments_for_course) <= target_assignment_count)
-                    if weight_assignment_shortage > 0:
-                        shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{course_id}')
-                        model.Add(shortage_var >= target_assignment_count - sum(possible_assignments_for_course))
-
-                        actual_penalty_for_shortage = int(weight_assignment_shortage * BASE_PENALTY_SHORTAGE_SCALED)
-                        if actual_penalty_for_shortage > 0:
-                            shortage_penalty_terms.append(shortage_var * actual_penalty_for_shortage)
-                            log_to_buffer(f"  + Course {course_id}: Added shortage penalty term (shortage_var * {actual_penalty_for_shortage}) for target {target_assignment_count}.")
-                else:
-                    model.Add(sum(possible_assignments_for_course) == target_assignment_count)
+                model.Add(sum(possible_assignments_for_course) == 1)
 
         objective_terms: List[Any] = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()] # LinearExpr terms
-
-        if shortage_penalty_terms:
-            objective_terms.extend(shortage_penalty_terms)
-            log_to_buffer(f"  + Added {len(shortage_penalty_terms)} shortage penalty terms to objective.")
 
         if weight_lecturer_concentration > 0:
             actual_penalty_concentration = int(weight_lecturer_concentration * BASE_PENALTY_CONCENTRATION_SCALED)
