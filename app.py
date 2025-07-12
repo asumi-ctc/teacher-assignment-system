@@ -132,10 +132,14 @@ def generate_prefectures_data():
     PREFECTURE_CLASSROOM_IDS = [f"P{i+1}" for i in range(len(PREFECTURES))]
     return PREFECTURES, PREFECTURE_CLASSROOM_IDS
 
-def generate_classrooms_data(prefectures, prefecture_classroom_ids):
+def generate_classrooms_data(prefectures, prefecture_classroom_ids, prefecture_to_region):
     classrooms_data = []
     for i, pref_name in enumerate(prefectures):
-        classrooms_data.append({"id": prefecture_classroom_ids[i], "location": pref_name})
+        classrooms_data.append({
+            "id": prefecture_classroom_ids[i],
+            "location": pref_name,
+            "region": prefecture_to_region.get(pref_name, "不明")
+        })
     return classrooms_data
 
 def generate_lecturers_data(prefecture_classroom_ids, today_date, assignment_target_month_start, assignment_target_month_end):
@@ -319,8 +323,29 @@ def initialize_app_data(force_regenerate: bool = False):
         st.session_state.PREFECTURE_CLASSROOM_IDS = PREFECTURE_CLASSROOM_IDS_val
         logger.info(f"  generate_prefectures_data() completed. {len(PREFECTURES_val)} prefectures.")
 
+        # --- [追加] 地域データの定義と生成 ---
+        REGIONS_val = {
+            "北海道": ["北海道"],
+            "東北": ["青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県"],
+            "関東": ["茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県"],
+            "中部": ["新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県"],
+            "関西": ["三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県"],
+            "中国": ["鳥取県", "島根県", "岡山県", "広島県", "山口県"],
+            "四国": ["徳島県", "香川県", "愛媛県", "高知県"],
+            "九州沖縄": ["福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"]
+        }
+        st.session_state.REGIONS = REGIONS_val
+        PREFECTURE_TO_REGION_val = {
+            pref: region for region, prefs in REGIONS_val.items() for pref in prefs
+        }
+        st.session_state.PREFECTURE_TO_REGION = PREFECTURE_TO_REGION_val
+        logger.info("  Region data generated and stored in session_state.")
+        # --- [追加ここまで] ---
+
         st.session_state.DEFAULT_CLASSROOMS_DATA = generate_classrooms_data(
-            st.session_state.PREFECTURES, st.session_state.PREFECTURE_CLASSROOM_IDS
+            st.session_state.PREFECTURES,
+            st.session_state.PREFECTURE_CLASSROOM_IDS,
+            st.session_state.PREFECTURE_TO_REGION # 地域マップを渡す
         )
         logger.info(f"  generate_classrooms_data() completed. {len(st.session_state.DEFAULT_CLASSROOMS_DATA)} classrooms.")
         st.session_state.ALL_CLASSROOM_IDS_COMBINED = st.session_state.PREFECTURE_CLASSROOM_IDS
@@ -662,7 +687,9 @@ def display_sample_data_view():
         st.dataframe(df_courses_display[course_display_columns], height=200)
 
     st.subheader("教室データ (サンプル)")
-    st.dataframe(pd.DataFrame(st.session_state.DEFAULT_CLASSROOMS_DATA)) # st.session_state から取得
+    df_classrooms = pd.DataFrame(st.session_state.DEFAULT_CLASSROOMS_DATA)
+    # 表示する列を明示的に指定し、'region'列を追加
+    st.dataframe(df_classrooms[['id', 'location', 'region']])
 
     logger.info("Sample data display complete.")
 
