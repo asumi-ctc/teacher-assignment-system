@@ -62,8 +62,6 @@
          # パラメータに基づき、DB等から最新のデータを取得・変換
          lecturers = prepare_lecturers_data()
          courses = prepare_courses_data(target_month=optimization_params.get("target_month"))
-         classrooms = prepare_classrooms_data()
-         travel_costs = prepare_travel_costs()
  
          # --- 2. エンジンの呼び出し ---
          self.update_state(state='PROGRESS', meta={'status': '最適化エンジンを実行中...'})
@@ -72,8 +70,6 @@
          solver_input_args = {
              "lecturers_data": lecturers,
              "courses_data": courses,
-             "classrooms_data": classrooms,
-             "travel_costs_matrix": travel_costs,
              "today_date": datetime.date.today(),
              **optimization_params  # 重みやオプションなどを展開して渡す
          }
@@ -228,19 +224,11 @@ Djangoアプリケーション側で、最適化目標の重み調整UI（スラ
    | `id` | `str` | ✔ | 教室の一意なID。例: `"P1"` |
    | `location` | `str` | ✔ | 教室の場所（都道府県名）。例: `"北海道"` |
  
- ### 4.4. `travel_costs_matrix`
- 
- - **型**: `Dict[Tuple[str, str], int]`
- - **説明**: 教室間の移動コストを定義する辞書。
- - **キー**: `(出発教室ID, 到着教室ID)` のタプル。
- - **値**: 移動コストを表す整数。
- 
  ### 4.5. 最適化目標の重みパラメータ
  
  - **型**: `float`
  - **説明**: 各最適化目標の重要度を調整する重み。通常 `0.0` から `1.0` の範囲で指定します。`0.0` を指定すると、その最適化目標は考慮されません。
  - **パラメータ一覧**:
-   - `weight_travel`
    - `weight_age`
    - `weight_frequency`
    - `weight_qualification`
@@ -291,7 +279,6 @@ Djangoアプリケーション側で、最適化目標の重み調整UI（スラ
    | `教室ID` | `str` | 講座が開催される教室のID。 |
    | `教室名` | `str` | 講座が開催される教室の場所。 |
    | `スケジュール` | `str` | 講座の開催日 (`YYYY-MM-DD`形式)。 |
-   | `移動コスト(元)` | `int` | この割り当てで発生した移動コストの元の値。 |
    | `今回の割り当て回数` | `int` | この最適化で当該講師が割り当てられた総回数。 |
    | `当該教室最終割当日からの日数` | `int` | 当該教室への最終割り当て日からの経過日数。新規の場合は負の値。 |
    | ... | ... | その他、最適化の評価に使用されたコスト関連の列。 |

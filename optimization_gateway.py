@@ -14,7 +14,6 @@ def run_optimization_with_monitoring(
     lecturers_data: List[LecturerData],
     courses_data: List[CourseData],
     classrooms_data: List[ClassroomData],
-    travel_costs_matrix: Dict[Tuple[str, str], int],
     **kwargs: Any
 ) -> OptimizationResult:
     """
@@ -26,12 +25,12 @@ def run_optimization_with_monitoring(
     # 廃止されたキーをkwargsから削除し、ソルバー呼び出し時のエラーを防ぐ
     kwargs.pop("allow_under_assignment", None)
     kwargs.pop("weight_assignment_shortage", None)
+    kwargs.pop("weight_travel", None)
 
     solver_args = {
         "lecturers_data": lecturers_data,
         "courses_data": courses_data,
         "classrooms_data": classrooms_data,
-        "travel_costs_matrix": travel_costs_matrix,
         **kwargs
     }
 

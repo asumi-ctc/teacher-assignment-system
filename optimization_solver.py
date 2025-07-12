@@ -20,10 +20,8 @@ BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
 def solve_assignment(lecturers_data: List[LecturerData],
                      courses_data: List[CourseData],
                      classrooms_data: List[ClassroomData],
-                     travel_costs_matrix: Dict[Tuple[str, str], int],
                      weight_past_assignment_recency: float,
                      weight_qualification: float,
-                     weight_travel: float,
                      weight_age: float,
                      weight_frequency: float,
                      weight_lecturer_concentration: float,
@@ -152,7 +150,6 @@ def solve_assignment(lecturers_data: List[LecturerData],
                 log_to_buffer(f"  + Potential assignment: {lecturer_id} to {course_id} on {course['schedule']}")
                 var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
                 
-                travel_cost = travel_costs_matrix.get((lecturer["home_classroom_id"], course["classroom_id"]), 999999) # 大きなデフォルトコスト
                 age_cost = float(lecturer.get("age", 99))
                 frequency_cost = float(len(lecturer.get("past_assignments", [])))
                 qualification_cost_val = float(qualification_cost_for_this_assignment)
@@ -173,14 +170,14 @@ def solve_assignment(lecturers_data: List[LecturerData],
                     past_assignment_recency_cost = 0.0
                     days_since_last_assignment_to_classroom = -1
 
-                log_to_buffer(f"    Raw costs for {lecturer_id} to {course_id}: travel={travel_cost}, age={age_cost}, freq={frequency_cost}, qual={qualification_cost_val}, recency={past_assignment_recency_cost:.2f} (days_since_last={days_since_last_assignment_to_classroom})")
+                log_to_buffer(f"    Raw costs for {lecturer_id} to {course_id}: age={age_cost}, freq={frequency_cost}, qual={qualification_cost_val}, recency={past_assignment_recency_cost:.2f} (days_since_last={days_since_last_assignment_to_classroom})")
 
                 assignment_key = (lecturer_id, course_id)
                 possible_assignments_temp_data[assignment_key] = {
                     "lecturer_id": lecturer_id, "course_id": course_id,
                     "variable": var,
                     "raw_costs": {
-                        "travel": travel_cost, "age": age_cost, "frequency": frequency_cost,
+                        "age": age_cost, "frequency": frequency_cost,
                         "qualification": qualification_cost_val, "recency": past_assignment_recency_cost
                     },
                     "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
@@ -210,7 +207,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
             log_to_buffer(f"  Normalization factor for {name}: {factor:.4f} (avg: {avg:.4f}, count: {len(cost_list)})")
             return factor
 
-        cost_keys_for_norm = ["travel", "age", "frequency", "qualification", "recency"]
+        cost_keys_for_norm = ["age", "frequency", "qualification", "recency"]
         # パフォーマンス改善: 巨大な辞書に対するループを1回にまとめる
         # 1. 各コスト値を格納するためのリストを初期化
         raw_cost_lists = {key: [] for key in cost_keys_for_norm}
@@ -231,21 +228,19 @@ def solve_assignment(lecturers_data: List[LecturerData],
         for key, temp_data in possible_assignments_temp_data.items():
             raw = temp_data["raw_costs"]
             
-            norm_travel = raw["travel"] / norm_factors["travel"]
             norm_age = raw["age"] / norm_factors["age"]
             norm_frequency = raw["frequency"] / norm_factors["frequency"]
             norm_qualification = raw["qualification"] / norm_factors["qualification"]
             norm_recency = raw["recency"] / norm_factors["recency"]
 
             total_weighted_cost_float = (
-                weight_travel * norm_travel +
                 weight_age * norm_age +
                 weight_frequency * norm_frequency +
                 weight_qualification * norm_qualification +
                 weight_past_assignment_recency * norm_recency
             )
             total_weighted_cost_int = int(round(total_weighted_cost_float * 100))
-            log_to_buffer(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} (norm_travel={norm_travel:.2f}, norm_age={norm_age:.2f}, norm_freq={norm_frequency:.2f}, norm_qual={norm_qualification:.2f}, norm_recency={norm_recency:.2f})")
+            log_to_buffer(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} (norm_age={norm_age:.2f}, norm_freq={norm_frequency:.2f}, norm_qual={norm_qualification:.2f}, norm_recency={norm_recency:.2f})")
             temp_data["cost"] = total_weighted_cost_int
 
         # 後続の処理で使われる変数名に合わせる
@@ -414,7 +409,6 @@ def solve_assignment(lecturers_data: List[LecturerData],
                         "講師ID": lecturer_id_res,
                         "講座ID": course_id_res,
                         "算出コスト(x100)": pa_data["cost"],
-                        "移動コスト(元)": pa_data["raw_costs"]["travel"],
                         "年齢コスト(元)": pa_data["raw_costs"]["age"],
                         "頻度コスト(元)": pa_data["raw_costs"]["frequency"],
                         "資格コスト(元)": pa_data["raw_costs"]["qualification"],

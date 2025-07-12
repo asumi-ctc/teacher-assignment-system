@@ -44,7 +44,6 @@ class OptimizationWeights:
     """目的関数の重み"""
     past_assignment_recency: float = 0.5
     qualification: float = 0.5
-    travel: float = 0.5
     age: float = 0.5
     frequency: float = 0.5
     lecturer_concentration: float = 0.5
@@ -62,7 +61,6 @@ class OptimizationInput:
     lecturers_data: List[LecturerData]
     courses_data: List[CourseData]
     classrooms_data: List[ClassroomData]
-    travel_costs_matrix: Dict[Tuple[str, str], int]
     solver_params: SolverParameters
     today_date: datetime.date
     fixed_assignments: Optional[List[Tuple[str, str]]] = None
@@ -77,7 +75,6 @@ SolverAssignment = TypedDict(
         "講師ID": str,
         "講座ID": str,
         "算出コスト(x100)": int,
-        "移動コスト(元)": int,
         "年齢コスト(元)": float,
         "頻度コスト(元)": float,
         "資格コスト(元)": float,
@@ -106,7 +103,6 @@ AssignmentResultRow = TypedDict(
         "講師ID": str,
         "講座ID": str,
         "算出コスト(x100)": int,
-        "移動コスト(元)": int,
         "年齢コスト(元)": float,
         "頻度コスト(元)": float,
         "資格コスト(元)": float,

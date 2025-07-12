@@ -269,55 +269,6 @@ def generate_courses_data(prefectures, prefecture_classroom_ids, assignment_targ
             course_counter += 1
     return courses_data
 
-def generate_travel_costs_matrix(all_classroom_ids_combined, classroom_id_to_pref_name, prefecture_to_region, region_graph):
-    travel_costs_matrix = {}
-    for c_from in all_classroom_ids_combined:
-        for c_to in all_classroom_ids_combined:
-            if c_from == c_to:
-                base_cost = 0
-            else:
-                pref_from = classroom_id_to_pref_name[c_from]
-                pref_to = classroom_id_to_pref_name[c_to]
-                region_from = prefecture_to_region[pref_from]
-                region_to = prefecture_to_region[pref_to]
-                is_okinawa_involved = (pref_from == "沖縄県" and pref_to != "沖縄県") or \
-                                      (pref_to == "沖縄県" and pref_from != "沖縄県")
-                if is_okinawa_involved:
-                    base_cost = random.randint(80000, 120000)
-                elif region_from == region_to:
-                    base_cost = random.randint(5000, 15000)
-                else:
-                    hops = get_region_hops(region_from, region_to, region_graph)
-                    if hops == 1:
-                        base_cost = random.randint(15000, 30000)
-                    elif hops == 2:
-                        base_cost = random.randint(35000, 60000)
-                    else:
-                        base_cost = random.randint(70000, 100000)
-            travel_costs_matrix[(c_from, c_to)] = base_cost
-    return travel_costs_matrix
-
-# get_region_hops 関数は変更なしのため省略
-# ... (get_region_hops の元のコード) ...
-def get_region_hops(region1, region2, graph):
-    """地域間のホップ数（隣接度）を計算する"""
-    if region1 == region2:
-        return 0
-    
-    queue = [(region1, 0)]
-    visited = {region1}
-    
-    while queue:
-        current_region, dist = queue.pop(0)
-        if current_region == region2:
-            return dist
-        
-        for neighbor in graph.get(current_region, set()):
-            if neighbor not in visited:
-                visited.add(neighbor)
-                queue.append((neighbor, dist + 1))
-    return float('inf') # 到達不能 (通常は発生しない)
-
 # --- グローバル定数 (データ生成後に設定されるもの) ---
 # これらは initialize_app_data 内で設定され、st.session_state に格納される
 # PREFECTURES, PREFECTURE_CLASSROOM_IDS, DEFAULT_CLASSROOMS_DATA, ALL_CLASSROOM_IDS_COMBINED,
@@ -386,35 +337,6 @@ def initialize_app_data(force_regenerate: bool = False):
             st.session_state.ASSIGNMENT_TARGET_MONTH_END    # 追加
         )
         logger.info(f"  generate_courses_data() completed. {len(st.session_state.DEFAULT_COURSES_DATA)} courses.")
-
-        REGIONS = {
-            "Hokkaido": ["北海道"], "Tohoku": ["青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県"],
-            "Kanto": ["茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県"],
-            "Chubu": ["新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県"],
-            "Kinki": ["三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県"],
-            "Chugoku": ["鳥取県", "島根県", "岡山県", "広島県", "山口県"],
-            "Shikoku": ["徳島県", "香川県", "愛媛県", "高知県"],
-            "Kyushu_Okinawa": ["福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"]
-        }
-        # logger.info("REGIONS defined.") # ログレベル調整
-        st.session_state.PREFECTURE_TO_REGION = {pref: region for region, prefs in REGIONS.items() for pref in prefs}
-        st.session_state.REGION_GRAPH = {
-            "Hokkaido": {"Tohoku"}, "Tohoku": {"Hokkaido", "Kanto", "Chubu"},
-            "Kanto": {"Tohoku", "Chubu"}, "Chubu": {"Tohoku", "Kanto", "Kinki"},
-            "Kinki": {"Chubu", "Chugoku", "Shikoku"}, "Chugoku": {"Kinki", "Shikoku", "Kyushu_Okinawa"},
-            "Shikoku": {"Kinki", "Chugoku", "Kyushu_Okinawa"}, "Kyushu_Okinawa": {"Chugoku", "Shikoku"}
-        }
-        # logger.info("PREFECTURE_TO_REGION and REGION_GRAPH defined.") # ログレベル調整
-        st.session_state.CLASSROOM_ID_TO_PREF_NAME = {
-            item["id"]: item["location"] for item in st.session_state.DEFAULT_CLASSROOMS_DATA
-        }
-        st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX = generate_travel_costs_matrix(
-            st.session_state.ALL_CLASSROOM_IDS_COMBINED,
-            st.session_state.CLASSROOM_ID_TO_PREF_NAME,
-            st.session_state.PREFECTURE_TO_REGION,
-            st.session_state.REGION_GRAPH
-        )
-        logger.info(f"  generate_travel_costs_matrix() completed. {len(st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX)} entries.")
         # --- データ生成処理終了 ---
         st.session_state.app_data_initialized = True
         logger.info("  Data generation logic executed. 'app_data_initialized' set to True.")
@@ -478,27 +400,15 @@ def _corrupt_course_with_nonexistent_classroom():
         return "講座データの 'classroom_id' を存在しないIDにしました。"
     return "講座データが空で、不正化できませんでした。"
 
-def _corrupt_travel_costs_negative_value():
-    """移動コストに負の値を含める"""
-    costs = st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX
-    if costs:
-        first_key = next(iter(costs))
-        costs[first_key] = -100
-        st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX = costs
-        return "移動コスト行列に負の値を含めました。"
-    return "移動コスト行列が空で、不正化できませんでした。"
-
 def generate_invalid_sample_data():
     """意図的に不正なデータを生成し、st.session_state を上書きする。"""
     initialize_app_data(force_regenerate=True)
     logger = logging.getLogger('app')
     logger.info("Generated a fresh set of valid data to be corrupted for testing.")
-
     corruption_functions = [
         _corrupt_duplicate_classroom_id, _corrupt_missing_classroom_location,
         _corrupt_lecturer_bad_age, _corrupt_lecturer_bad_availability_date,
         _corrupt_course_bad_rank, _corrupt_course_with_nonexistent_classroom,
-        _corrupt_travel_costs_negative_value,
     ]
     chosen_corruption = random.choice(corruption_functions)
     description = chosen_corruption()
@@ -552,10 +462,8 @@ def run_optimization():
                 lecturers_data=st.session_state.DEFAULT_LECTURERS_DATA,
                 courses_data=st.session_state.DEFAULT_COURSES_DATA,
                 classrooms_data=st.session_state.DEFAULT_CLASSROOMS_DATA,
-                travel_costs_matrix=st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX,
                 weight_past_assignment_recency=st.session_state.get("weight_past_assignment_exp", 0.5),
                 weight_qualification=st.session_state.get("weight_qualification_exp", 0.5),
-                weight_travel=st.session_state.get("weight_travel_exp", 0.5),
                 weight_age=st.session_state.get("weight_age_exp", 0.5),
                 weight_frequency=st.session_state.get("weight_frequency_exp", 0.5),
                 weight_lecturer_concentration=st.session_state.get("weight_lecturer_concentration_exp", 0.5),
@@ -753,17 +661,9 @@ def display_sample_data_view():
         course_display_columns = ["id", "name", "classroom_id", "course_type", "rank", "schedule"]
         st.dataframe(df_courses_display[course_display_columns], height=200)
 
-    st.subheader("教室データと移動コスト (サンプル)")
-    col3, col4 = st.columns(2)
-    with col3:
-        st.dataframe(pd.DataFrame(st.session_state.DEFAULT_CLASSROOMS_DATA)) # st.session_state から取得
-    with col4:
-        # travel_costs_matrix を表示用に整形
-        df_travel_costs = pd.DataFrame([
-            {"出発教室": k[0], "到着教室": k[1], "コスト": v}
-            for k, v in st.session_state.DEFAULT_TRAVEL_COSTS_MATRIX.items() # st.session_state から取得
-        ])
-        st.dataframe(df_travel_costs)
+    st.subheader("教室データ (サンプル)")
+    st.dataframe(pd.DataFrame(st.session_state.DEFAULT_CLASSROOMS_DATA)) # st.session_state から取得
+
     logger.info("Sample data display complete.")
 
 def display_objective_function_view():
@@ -1082,9 +982,6 @@ def display_optimization_result_view(gemini_api_key: Optional[str]):
                 st.subheader("割り当て結果サマリー")
                 summary_data = []
                 summary_data.append(("**総割り当て件数**", f"{len(results_df)}件"))
-
-                total_travel_cost = results_df["移動コスト(元)"].sum()
-                summary_data.append(("**移動コストの合計値**", f"{total_travel_cost} 円"))
 
                 assigned_lecturer_ids = results_df["講師ID"].unique()
                 temp_assigned_lecturers = [l for l in st.session_state.DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
@@ -1473,8 +1370,6 @@ def main():
             "各最適化目標の相対的な重要度を重みで設定します。\n"
             "不要な最適化目標は重みを0にしてください（最適化目標から除外されます）。"
         )
-        st.markdown("**移動コストが低い人を優先**")
-        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど移動コストが低い人を重視します。", key="weight_travel_exp")
         st.markdown("**年齢の若い人を優先**")
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど年齢が若い人を重視します。", key="weight_age_exp")
         st.markdown("**割り当て頻度の少ない人を優先**")
