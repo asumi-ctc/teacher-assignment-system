@@ -276,14 +276,16 @@ def solve_assignment(lecturers_data: List[LecturerData],
 
             if actual_penalty_concentration > 0:
                 for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
-                    if not lecturer_vars or len(lecturer_vars) <= 1:
+                    # 割り当て候補が2つ以下の講師は、3回以上割り当てられる可能性がないため、ペナルティ計算をスキップ
+                    if not lecturer_vars or len(lecturer_vars) <= 2:
                         continue
                     
                     num_total_assignments_l = model.NewIntVar(0, len(courses_dict), f'num_total_assignments_{lecturer_id_loop}')
                     model.Add(num_total_assignments_l == sum(lecturer_vars))
                     
                     extra_assignments_l = model.NewIntVar(0, len(courses_dict), f'extra_assign_{lecturer_id_loop}')
-                    model.Add(extra_assignments_l >= num_total_assignments_l - 1)
+                    # 3回目以降の割り当てをペナルティ対象とするため、閾値を -2 に変更
+                    model.Add(extra_assignments_l >= num_total_assignments_l - 2)
                     
                     objective_terms.append(extra_assignments_l * actual_penalty_concentration)
                     log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added concentration penalty term (extra_assign * {actual_penalty_concentration}).")
