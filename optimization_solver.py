@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 # --- 定数定義 ---
 RECENCY_COST_CONSTANT = 100000.0
 # 講師の割り当て集中ペナルティの基本値。
-# ペナルティ値を極端に大きく設定し、「事実上の禁止ルール」として機能させることで、探索空間を意図的に狭め、計算の安定化を図る。
-BASE_PENALTY_CONCENTRATION_SCALED = 200000 * 100 # 20,000 から 20,000,000 に変更
+# 他のコスト（数千〜数万）と比較可能な範囲に値を調整することで、ソルバーが柔軟に解を探索できるようにする。
+BASE_PENALTY_CONCENTRATION_SCALED = 200 * 100 # 20,000,000 から 20,000 に変更
 BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
 # ---
 
