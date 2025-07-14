@@ -36,7 +36,6 @@ class ClassroomData(TypedDict):
     """教室1つ分のデータ構造"""
     id: str
     location: str
-    region: str
 
 # --- 1. 設定オブジェクト関連の型定義 ---
 

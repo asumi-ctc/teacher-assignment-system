@@ -117,26 +117,6 @@ def solve_assignment(lecturers_data: List[LecturerData],
                     log_to_buffer(f"  - Filtered out (forced unassignment): {lecturer_id} for {course_id}")
                     continue
 
-                # --- [追加] パフォーマンス改善のための地域フィルター ---
-                # 講師の自宅と講座の開催地が異なる地域の割り当て候補を事前に除外する
-                lecturer_home_classroom_id = lecturer['home_classroom_id']
-                course_classroom_id = course['classroom_id']
-
-                # 念のため、データ不整合で教室IDが存在しないケースを考慮
-                lecturer_home_classroom = classrooms_dict.get(lecturer_home_classroom_id)
-                course_classroom = classrooms_dict.get(course_classroom_id)
-
-                if not lecturer_home_classroom or not course_classroom:
-                    log_to_buffer(f"  - Filtered out: {lecturer_id} for {course_id} (Classroom data missing for L:{lecturer_home_classroom_id} or C:{course_classroom_id})")
-                    continue
-
-                lecturer_region = lecturer_home_classroom.get('region')
-                course_region = course_classroom.get('region')
-
-                if lecturer_region != course_region:
-                    log_to_buffer(f"  - Filtered out: {lecturer_id} for {course_id} (Region mismatch: Lecturer region '{lecturer_region}' vs Course region '{course_region}')")
-                    continue
-
                 course_type = course["course_type"]
                 course_rank = course["rank"]
                 lecturer_general_rank = lecturer["qualification_general_rank"]
