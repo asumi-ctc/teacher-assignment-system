@@ -14,7 +14,7 @@ RECENCY_COST_CONSTANT = 100000.0
 # 講師の割り当て集中ペナルティの基本値。
 # 以前の値(2,000,000)は「事実上の禁止」として機能し、探索空間を硬直化させていた。
 # 他のコスト（数万〜数十万）と比較可能な範囲に値を調整することで、ソルバーが柔軟に解を探索できるようにする。
-BASE_PENALTY_CONCENTRATION_SCALED = 2000 * 100 # 2,000,000 から 200,000 に変更
+BASE_PENALTY_CONCENTRATION_SCALED = 200 * 100 # 200,000 から 20,000 に変更
 BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
 # ---
 
