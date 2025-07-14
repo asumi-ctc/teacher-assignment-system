@@ -188,7 +188,7 @@ def generate_lecturers_data(prefecture_classroom_ids, today_date, assignment_tar
             "id": f"L{i}",
             "name": f"講師{i:03d}",
             "age": random.randint(22, 65),
-            "home_classroom_id": random.choice(prefecture_classroom_ids),
+            "home_classroom_id": "P13", # 全講師のホーム教室を東京に固定
             "qualification_general_rank": general_rank,
             "qualification_special_rank": special_rank,
             "availability": availability,
