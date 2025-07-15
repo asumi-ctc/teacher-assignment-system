@@ -11,19 +11,8 @@ logger = logging.getLogger(__name__)
 
 # --- 定数定義 ---
 RECENCY_COST_CONSTANT = 100000.0
-# --- [変更] 講師の割り当て集中ペナルティの定義 ---
-# 割り当て回数に応じた「総」ペナルティコストを定義する。
-# インデックスが割り当て回数に対応する (index 0 は 0回、index 1 は 1回...)
-# 値は他のコストに合わせてスケール済み (x100)
-# このリストは、ソルバーが割り当て回数に応じてペナルティを効率的に参照するために使用される。
-PROGRESSIVE_PENALTY_COSTS_SCALED = [
-    0,          # 0回割り当て: ペナルティ 0
-    0,          # 1回割り当て: ペナルティ 0
-    200 * 100,  # 2回割り当て: ペナルティ 20,000
-    700 * 100,  # 3回割り当て: ペナルティ 70,000 (追加分 50,000)
-    2200 * 100, # 4回割り当て: ペナルティ 220,000 (追加分 150,000)
-    # 5回目以降は、4回目のペナルティが適用され続けるようにコード側でハンドリングする。
-]
+# 講師の割り当てが1回を超えるごとに課される基本ペナルティ (x100 スケール済み)
+BASE_PENALTY_CONCENTRATION_SCALED = 200 * 100
 
 BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
 # 講座が割り当てられない場合のペナルティ。他のコストより十分に大きく設定する。
@@ -296,34 +285,26 @@ def solve_assignment(lecturers_data: List[LecturerData],
             log_to_buffer(f"  + Course {course_id}: Added unassignment penalty term ((1 - is_assigned) * {BASE_PENALTY_UNASSIGNED_SCALED}).")
 
         if weight_lecturer_concentration > 0:
-            # --- [変更] 累進ペナルティロジック ---
-            # AddAllowedAssignments を使用して、割り当て回数に応じたペナルティを課す
-            # (割り当て回数, ペナルティコスト) のタプルリストを作成
-            max_possible_assignments = len(courses_dict)
-            penalty_tuples = []
-            weighted_costs = [int(p * weight_lecturer_concentration) for p in PROGRESSIVE_PENALTY_COSTS_SCALED]
-            max_penalty_value = 0
-            for i in range(max_possible_assignments + 1):
-                if i < len(weighted_costs):
-                    penalty = weighted_costs[i]
-                else:
-                    penalty = weighted_costs[-1] # 定義された範囲外は最後のペナルティを適用
-                penalty_tuples.append((i, penalty))
-                if penalty > max_penalty_value:
-                    max_penalty_value = penalty
-
-            log_to_buffer(f"Applying progressive concentration penalty using AddAllowedAssignments. Max penalty: {max_penalty_value}")
-
+            # --- [ロールバック] 線形ペナルティロジック ---
+            actual_penalty_concentration = int(weight_lecturer_concentration * BASE_PENALTY_CONCENTRATION_SCALED)
+            log_to_buffer(f"Applying linear concentration penalty. Actual penalty per extra assignment: {actual_penalty_concentration}")
+            
             for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
-                if not lecturer_vars:
+                if not lecturer_vars or len(lecturer_vars) <= 1:
                     continue
 
                 num_total_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'num_total_assignments_{lecturer_id_loop}')
                 model.Add(num_total_assignments_l == sum(lecturer_vars))
-                penalty_for_lecturer = model.NewIntVar(0, max_penalty_value, f'penalty_conc_{lecturer_id_loop}')
-                model.AddAllowedAssignments([num_total_assignments_l, penalty_for_lecturer], penalty_tuples)
-                objective_terms.append(penalty_for_lecturer)
-                log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added progressive concentration penalty term using AddAllowedAssignments.")
+                
+                # ペナルティ対象となる「追加の」割り当て数を計算
+                # extra_assignments_l = max(0, num_total_assignments_l - 1)
+                extra_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'extra_assign_{lecturer_id_loop}')
+                assignments_minus_one = model.NewIntVar(-1, len(lecturer_vars) - 1, f'assign_minus_one_{lecturer_id_loop}')
+                model.Add(assignments_minus_one == num_total_assignments_l - 1)
+                model.AddMaxEquality(extra_assignments_l, [assignments_minus_one, model.NewConstant(0)])
+
+                objective_terms.append(extra_assignments_l * actual_penalty_concentration)
+                log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added linear concentration penalty term (extra_assignments * {actual_penalty_concentration}).")
             # --- ここまで ---
         
         consecutive_assignment_pair_vars_details: List[Dict[str, Any]] = []
