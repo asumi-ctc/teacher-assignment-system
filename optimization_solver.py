@@ -15,6 +15,8 @@ RECENCY_COST_CONSTANT = 100000.0
 # 他のコスト（数千〜数万）と比較可能な範囲に値を調整することで、ソルバーが柔軟に解を探索できるようにする。
 BASE_PENALTY_CONCENTRATION_SCALED = 200 * 100 # 20,000,000 から 20,000 に変更
 BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
+# 講座が割り当てられない場合のペナルティ。他のコストより十分に大きく設定する。
+BASE_PENALTY_UNASSIGNED_SCALED = 50000 * 100
 # ---
 
 # --- [ここから app.py より移動] ---
@@ -264,14 +266,23 @@ def solve_assignment(lecturers_data: List[LecturerData],
             # 講師ごとの割り当てリストを作成
             assignments_by_lecturer[lecturer_id_group].append(data_group["variable"])
 
-        for course_item in courses_dict.values():
-            course_id = course_item["id"]
-            possible_assignments_for_course = assignments_by_course.get(course_id, [])
-            # 担当可能な講師がいる全ての講座には、必ず1名を割り当てる
-            if possible_assignments_for_course:
-                model.Add(sum(possible_assignments_for_course) == 1)
-
         objective_terms: List[Any] = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()] # LinearExpr terms
+
+        # --- 講座への割り当てをソフト制約化 ---
+        # 以前のハード制約 `sum(...) == 1` を削除し、ペナルティ方式に変更
+        log_to_buffer("Applying soft constraints for course assignments with penalties.")
+        for course_id, possible_vars in assignments_by_course.items():
+            # 各講座には最大1名しか割り当てられない (これはハード制約として維持)
+            model.Add(sum(possible_vars) <= 1)
+
+            # 講座が割り当てられない場合にペナルティを課す
+            # is_assigned = 1 if sum(possible_vars) == 1, 0 otherwise
+            is_assigned = model.NewBoolVar(f'is_assigned_{course_id}')
+            model.Add(is_assigned == sum(possible_vars))
+
+            # (1 - is_assigned) が 1 のとき (つまり未割り当てのとき) ペナルティを課す
+            objective_terms.append((1 - is_assigned) * BASE_PENALTY_UNASSIGNED_SCALED)
+            log_to_buffer(f"  + Course {course_id}: Added unassignment penalty term ((1 - is_assigned) * {BASE_PENALTY_UNASSIGNED_SCALED}).")
 
         if weight_lecturer_concentration > 0:
             actual_penalty_concentration = int(weight_lecturer_concentration * BASE_PENALTY_CONCENTRATION_SCALED)

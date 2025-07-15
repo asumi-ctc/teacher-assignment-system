@@ -1369,7 +1369,7 @@ def main():
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない") # 文言変更
         st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。") # 追加
-        st.markdown("- 3.担当可能な講師がいる全ての講座には、必ず1名を割り当てる。") # 変更
+        st.markdown("- 3.講座には、出来るだけ1名を割り当てる。（ソフト制約）")
 
     with st.sidebar.expander("【最適化目標】", expanded=False): # 名称変更
         st.caption(
