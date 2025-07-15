@@ -11,9 +11,20 @@ logger = logging.getLogger(__name__)
 
 # --- 定数定義 ---
 RECENCY_COST_CONSTANT = 100000.0
-# 講師の割り当て集中ペナルティの基本値。
-# 他のコスト（数千〜数万）と比較可能な範囲に値を調整することで、ソルバーが柔軟に解を探索できるようにする。
-BASE_PENALTY_CONCENTRATION_SCALED = 200 * 100 # 20,000,000 から 20,000 に変更
+# --- [変更] 講師の割り当て集中ペナルティの定義 ---
+# 割り当て回数に応じた「総」ペナルティコストを定義する。
+# インデックスが割り当て回数に対応する (index 0 は 0回、index 1 は 1回...)
+# 値は他のコストに合わせてスケール済み (x100)
+# このリストは、ソルバーが割り当て回数に応じてペナルティを効率的に参照するために使用される。
+PROGRESSIVE_PENALTY_COSTS_SCALED = [
+    0,          # 0回割り当て: ペナルティ 0
+    0,          # 1回割り当て: ペナルティ 0
+    200 * 100,  # 2回割り当て: ペナルティ 20,000
+    700 * 100,  # 3回割り当て: ペナルティ 70,000 (追加分 50,000)
+    2200 * 100, # 4回割り当て: ペナルティ 220,000 (追加分 150,000)
+    # 5回目以降は、4回目のペナルティが適用され続けるようにコード側でハンドリングする。
+]
+
 BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
 # 講座が割り当てられない場合のペナルティ。他のコストより十分に大きく設定する。
 BASE_PENALTY_UNASSIGNED_SCALED = 50000 * 100
@@ -285,28 +296,40 @@ def solve_assignment(lecturers_data: List[LecturerData],
             log_to_buffer(f"  + Course {course_id}: Added unassignment penalty term ((1 - is_assigned) * {BASE_PENALTY_UNASSIGNED_SCALED}).")
 
         if weight_lecturer_concentration > 0:
-            actual_penalty_concentration = int(weight_lecturer_concentration * BASE_PENALTY_CONCENTRATION_SCALED)
+            # --- [変更] 累進ペナルティロジック ---
+            # 割り当て回数に応じたペナルティコストのリストを作成
+            max_assignments = len(courses_dict)
+            base_penalty_costs = PROGRESSIVE_PENALTY_COSTS_SCALED[:]
+            # 講師が取りうる最大の割り当て回数までリストを拡張する
+            if len(base_penalty_costs) <= max_assignments:
+                last_penalty = base_penalty_costs[-1] if base_penalty_costs else 0
+                base_penalty_costs.extend([last_penalty] * (max_assignments - len(base_penalty_costs) + 1))
 
-            if actual_penalty_concentration > 0:
-                for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
-                    # 割り当て候補が1つ以下の講師は、2回以上割り当てられる可能性がないため、ペナルティ計算をスキップ
-                    if not lecturer_vars or len(lecturer_vars) <= 1:
-                        continue
-                    
-                    num_total_assignments_l = model.NewIntVar(0, len(courses_dict), f'num_total_assignments_{lecturer_id_loop}')
-                    model.Add(num_total_assignments_l == sum(lecturer_vars))
-                    
-                    extra_assignments_l = model.NewIntVar(0, len(courses_dict), f'extra_assign_{lecturer_id_loop}')
+            # UIの重みを各ステップのペナルティに乗算する
+            weighted_penalty_costs = [int(p * weight_lecturer_concentration) for p in base_penalty_costs]
+            max_penalty_value = weighted_penalty_costs[-1] if weighted_penalty_costs else 0
 
-                    # --- パフォーマンス改善: AddMaxEquality を使用 ---
-                    # extra_assignments_l = max(0, num_total_assignments_l - 1) を効率的に表現
-                    assignments_minus_one = model.NewIntVar(-1, len(courses_dict) - 1, f'assign_minus_one_{lecturer_id_loop}')
-                    model.Add(assignments_minus_one == num_total_assignments_l - 1)
-                    model.AddMaxEquality(extra_assignments_l, [assignments_minus_one, model.NewConstant(0)])
-                    # --- ここまで ---
-                    
-                    objective_terms.append(extra_assignments_l * actual_penalty_concentration)
-                    log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added concentration penalty term (extra_assign * {actual_penalty_concentration}) using AddMaxEquality.")
+            log_to_buffer(f"Applying progressive concentration penalty. Weighted costs table (sample): {weighted_penalty_costs[:6]}...")
+
+            for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
+                # 割り当て候補がない講師はスキップ
+                if not lecturer_vars:
+                    continue
+                
+                # 講師ごとの総割り当て数を計算する変数は引き続き使用
+                num_total_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'num_total_assignments_{lecturer_id_loop}')
+                model.Add(num_total_assignments_l == sum(lecturer_vars))
+                
+                # 割り当て回数に応じたペナルティコストを格納する変数
+                penalty_for_lecturer = model.NewIntVar(0, max_penalty_value, f'penalty_conc_{lecturer_id_loop}')
+
+                # AddElement制約: penalty_for_lecturer = weighted_penalty_costs[num_total_assignments_l]
+                # この制約により、num_total_assignments_l の値に応じて、リストから適切なペナルティが自動的に選択される
+                model.AddElement(num_total_assignments_l, weighted_penalty_costs, penalty_for_lecturer)
+                
+                objective_terms.append(penalty_for_lecturer)
+                log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added progressive concentration penalty term using AddElement.")
+            # --- ここまで ---
         
         consecutive_assignment_pair_vars_details: List[Dict[str, Any]] = []
         if weight_consecutive_assignment > 0 and consecutive_day_pairs:
