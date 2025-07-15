@@ -399,7 +399,12 @@ def solve_assignment(lecturers_data: List[LecturerData],
         solver.parameters.num_search_workers = num_workers_to_set
         log_to_buffer(f"Solver configured to use {num_workers_to_set} workers (available: {available_cores}, calculated: available/2, min: 8).")
 
-        # OR-Tools ソルバーのログ出力を直接 optimization_engine ロガーに流す
+        # OR-Tools ソルバーのログ出力を、子プロセス専用ロガーにリダイレクト
+        from utils.logging_config import setup_logging  # ここでインポート
+        setup_logging(target_loggers=["ortools_solver_worker"])  # 子プロセス用設定
+        solver_logger = logging.getLogger("ortools_solver_worker")  # 子プロセス用ロガー
+        solver.log_callback = lambda msg: solver_logger.info(f"[OR-Tools Solver] {msg.strip()}")
+
         solver.log_callback = lambda msg: logger.info(f"[OR-Tools Solver] {msg.strip()}")
         
         status_code = cp_model.UNKNOWN 
