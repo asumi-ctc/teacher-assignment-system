@@ -293,37 +293,38 @@ def solve_assignment(lecturers_data: List[LecturerData],
             log_to_buffer(f"  + Course {course_id}: Added unassignment penalty term ((1 - is_assigned) * {BASE_PENALTY_UNASSIGNED_SCALED}).")
 
         if weight_lecturer_concentration > 0:
-            # --- [新実装] 中間変数アプローチによる累進ペナルティ ---
-            log_to_buffer("Applying progressive concentration penalty using intermediate boolean variables.")
+            # --- [修正] 区分線形関数(AddTable)による累進ペナルティ ---
+            log_to_buffer("Applying progressive concentration penalty using AddTable.")
             for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
                 if not lecturer_vars or len(lecturer_vars) <= 1:
                     continue
 
                 num_total_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'num_total_assignments_{lecturer_id_loop}')
                 model.Add(num_total_assignments_l == sum(lecturer_vars))
-
-                # 累進ペナルティを区分線形関数で表現
-                # 区分線形関数の各点を定義
-                points = [(0, 0), (1, 0)]  # 0回と1回目の割り当てはペナルティなし
-                for i, penalty_addition in enumerate(PROGRESSIVE_PENALTY_ADDITIONS_SCALED):
-                    num_assignments = i + 2  # 2回目、3回目... の割り当て
-                    total_penalty = sum(PROGRESSIVE_PENALTY_ADDITIONS_SCALED[:i+1])
-                    points.append((num_assignments, total_penalty))
                 
-                # 定義された範囲外 (5回目以降) の処理
-                max_defined_assignments = len(PROGRESSIVE_PENALTY_ADDITIONS_SCALED) + 1
-                if num_total_assignments_l.Proto().domain[1] > max_defined_assignments:
-                    # 最大割り当て数を超える範囲は、最後のペナルティを適用
-                    last_penalty = points[-1][1]
-                    points.append((num_total_assignments_l.Proto().domain[1], last_penalty))
+                # 問題点1の修正: ペナルティの重みを事前に乗算し、整数化する
+                weighted_cumulative_penalties = [0, 0] # 0回, 1回はペナルティ0
+                cumulative_penalty = 0
+                for additional_penalty in PROGRESSIVE_PENALTY_ADDITIONS_SCALED:
+                    cumulative_penalty += additional_penalty
+                    weighted_cumulative_penalties.append(int(round(cumulative_penalty * weight_lecturer_concentration)))
 
-                # 区分線形関数を適用
-                concentration_penalty_var = model.NewIntVar(0, points[-1][1], f"concentration_penalty_{lecturer_id_loop}")
-                model.AddComprehension(
-                    [num_total_assignments_l], concentration_penalty_var, points
-                )
-                objective_terms.append(concentration_penalty_var * weight_lecturer_concentration)
-                log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added piecewise linear penalty for concentration.")
+                # 区分線形関数の点(タプル)のリストを作成
+                points = [(i, p) for i, p in enumerate(weighted_cumulative_penalties)]
+
+                # 問題点2の修正: 5回目以降のペナルティを正しく累進させる
+                max_possible_assignments = len(lecturer_vars)
+                if max_possible_assignments >= len(points):
+                    last_incremental_penalty = weighted_cumulative_penalties[-1] - weighted_cumulative_penalties[-2]
+                    for i in range(len(points), max_possible_assignments + 1):
+                        new_penalty = points[-1][1] + last_incremental_penalty
+                        points.append((i, new_penalty))
+
+                # 区分線形関数を適用 (AddComprehension の代わりに AddTable を使用)
+                penalty_var = model.NewIntVar(0, points[-1][1], f"penalty_conc_{lecturer_id_loop}")
+                model.AddTable([num_total_assignments_l, penalty_var], points)
+                objective_terms.append(penalty_var)
+                log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added table-based concentration penalty. Max penalty: {points[-1][1]}")
             # --- ここまで ---
         
         consecutive_assignment_pair_vars_details: List[Dict[str, Any]] = []
