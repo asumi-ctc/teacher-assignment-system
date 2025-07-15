@@ -11,8 +11,16 @@ logger = logging.getLogger(__name__)
 
 # --- 定数定義 ---
 RECENCY_COST_CONSTANT = 100000.0
-# 講師の割り当てが1回を超えるごとに課される基本ペナルティ (x100 スケール済み)
-BASE_PENALTY_CONCENTRATION_SCALED = 200 * 100
+# --- [変更] 累進ペナルティの定義 ---
+# 各割り当て回数で「追加」されるペナルティコストを定義する。
+# インデックス0: 2回目の割り当てでの追加ペナルティ
+# インデックス1: 3回目の割り当てでの追加ペナルティ...
+PROGRESSIVE_PENALTY_ADDITIONS_SCALED = [
+    200 * 100,  # 2回目: +20,000
+    500 * 100,  # 3回目: +50,000 (総額 70,000)
+    1500 * 100, # 4回目: +150,000 (総額 220,000)
+    # 5回目以降は、4回目の追加ペナルティ(150,000)が適用され続けるようにコード側でハンドリングする。
+]
 
 BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
 # 講座が割り当てられない場合のペナルティ。他のコストより十分に大きく設定する。
@@ -285,26 +293,31 @@ def solve_assignment(lecturers_data: List[LecturerData],
             log_to_buffer(f"  + Course {course_id}: Added unassignment penalty term ((1 - is_assigned) * {BASE_PENALTY_UNASSIGNED_SCALED}).")
 
         if weight_lecturer_concentration > 0:
-            # --- [ロールバック] 線形ペナルティロジック ---
-            actual_penalty_concentration = int(weight_lecturer_concentration * BASE_PENALTY_CONCENTRATION_SCALED)
-            log_to_buffer(f"Applying linear concentration penalty. Actual penalty per extra assignment: {actual_penalty_concentration}")
-            
+            # --- [新実装] 中間変数アプローチによる累進ペナルティ ---
+            log_to_buffer("Applying progressive concentration penalty using intermediate boolean variables.")
             for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
                 if not lecturer_vars or len(lecturer_vars) <= 1:
                     continue
 
                 num_total_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'num_total_assignments_{lecturer_id_loop}')
                 model.Add(num_total_assignments_l == sum(lecturer_vars))
-                
-                # ペナルティ対象となる「追加の」割り当て数を計算
-                # extra_assignments_l = max(0, num_total_assignments_l - 1)
-                extra_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'extra_assign_{lecturer_id_loop}')
-                assignments_minus_one = model.NewIntVar(-1, len(lecturer_vars) - 1, f'assign_minus_one_{lecturer_id_loop}')
-                model.Add(assignments_minus_one == num_total_assignments_l - 1)
-                model.AddMaxEquality(extra_assignments_l, [assignments_minus_one, model.NewConstant(0)])
 
-                objective_terms.append(extra_assignments_l * actual_penalty_concentration)
-                log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added linear concentration penalty term (extra_assignments * {actual_penalty_concentration}).")
+                # ペナルティ段階ごとに中間変数と制約を追加
+                # 例: 2回以上、3回以上...
+                max_penalty_level = len(PROGRESSIVE_PENALTY_ADDITIONS_SCALED) + 1
+                for n in range(2, max_penalty_level + 2): # 2回目から、定義されたレベル+1まで考慮
+                    # is_assigned_at_least_n = 1 if num_total_assignments_l >= n else 0
+                    is_assigned_at_least_n = model.NewBoolVar(f'is_assigned_at_least_{n}_{lecturer_id_loop}')
+                    model.Add(is_assigned_at_least_n == (num_total_assignments_l >= n))
+
+                    if n - 2 < len(PROGRESSIVE_PENALTY_ADDITIONS_SCALED):
+                        additional_penalty = PROGRESSIVE_PENALTY_ADDITIONS_SCALED[n - 2]
+                    else: # 定義された範囲外は、最後の追加ペナルティを適用
+                        additional_penalty = PROGRESSIVE_PENALTY_ADDITIONS_SCALED[-1]
+
+                    weighted_penalty = int(additional_penalty * weight_lecturer_concentration)
+                    objective_terms.append(is_assigned_at_least_n * weighted_penalty)
+                    log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added penalty term for >= {n} assignments: var * {weighted_penalty}")
             # --- ここまで ---
         
         consecutive_assignment_pair_vars_details: List[Dict[str, Any]] = []
