@@ -302,7 +302,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
                 model.Add(num_total_assignments_l == sum(lecturer_vars))
                 # ペナルティを計算し、目的関数に追加
                 # 係数100は、他のコストとのスケールを合わせるためのもの
-                concentration_penalty = int(round(weight_lecturer_concentration * 100))
+                concentration_penalty = int(round(weight_lecturer_concentration * 100)) + BASE_PENALTY_UNASSIGNED_SCALED
                 objective_terms.append(num_total_assignments_l * concentration_penalty)
                 log_to_buffer(
                     f"  + Lecturer {lecturer_id_loop}: Added simple concentration penalty term "
