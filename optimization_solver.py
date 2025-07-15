@@ -322,7 +322,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
 
                 # 区分線形関数を適用 (AddComprehension の代わりに AddTable を使用)
                 penalty_var = model.NewIntVar(0, points[-1][1], f"penalty_conc_{lecturer_id_loop}")
-                model.AddTable([num_total_assignments_l, penalty_var], points)
+                model.AddAllowedAssignments([num_total_assignments_l, penalty_var], points)
                 objective_terms.append(penalty_var)
                 log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added table-based concentration penalty. Max penalty: {points[-1][1]}")
             # --- ここまで ---
