@@ -297,11 +297,16 @@ def solve_assignment(lecturers_data: List[LecturerData],
                     model.Add(num_total_assignments_l == sum(lecturer_vars))
                     
                     extra_assignments_l = model.NewIntVar(0, len(courses_dict), f'extra_assign_{lecturer_id_loop}')
-                    # 2回目以降の割り当てをペナルティ対象とするため、閾値を当初の -1 に戻す
-                    model.Add(extra_assignments_l >= num_total_assignments_l - 1)
+
+                    # --- パフォーマンス改善: AddMaxEquality を使用 ---
+                    # extra_assignments_l = max(0, num_total_assignments_l - 1) を効率的に表現
+                    assignments_minus_one = model.NewIntVar(-1, len(courses_dict) - 1, f'assign_minus_one_{lecturer_id_loop}')
+                    model.Add(assignments_minus_one == num_total_assignments_l - 1)
+                    model.AddMaxEquality(extra_assignments_l, [assignments_minus_one, model.NewConstant(0)])
+                    # --- ここまで ---
                     
                     objective_terms.append(extra_assignments_l * actual_penalty_concentration)
-                    log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added concentration penalty term (extra_assign * {actual_penalty_concentration}).")
+                    log_to_buffer(f"  + Lecturer {lecturer_id_loop}: Added concentration penalty term (extra_assign * {actual_penalty_concentration}) using AddMaxEquality.")
         
         consecutive_assignment_pair_vars_details: List[Dict[str, Any]] = []
         if weight_consecutive_assignment > 0 and consecutive_day_pairs:

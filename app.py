@@ -789,9 +789,8 @@ shortage_var = model.NewIntVar(0, target_assignment_count, f'shortage_var_{cours
           - **講師ごとの総割り当て数:**
             $$ \text{num\_total\_assignments}_l = \sum_{c \in C} x_{l,c} \quad (\forall l \in L) $$
           - **ペナルティ対象の「追加の」割り当て数:** (総割り当て数が1回を超える分)
-            $$ \text{extra\_assignments}_l \ge \text{num\_total\_assignments}_l - 1 $$
-            $$ \text{extra\_assignments}_l \ge 0 $$
-          この $\text{extra\_assignments}_l$ が目的関数でペナルティコストと乗算されます。
+            $$ \text{extra\_assignments}_l = \max(0, \text{num\_total\_assignments}_l - 1) $$
+          この $\text{extra\_assignments}_l$ が目的関数でペナルティコストと乗算されます。この計算は、パフォーマンス向上のため、ソルバーの `AddMaxEquality` 制約を使用して効率的に実装されます。
 
         - **連日ペア割り当ての関連付け制約 (ステップ3で追加):**
           UIで連日割り当て報酬の重み $w_{\text{consecutive}}$ が0より大きく、かつ該当する連日講座ペアが存在する場合、以下の制約が追加されます。
@@ -824,8 +823,12 @@ if weight_lecturer_concentration > 0 and actual_penalty_concentration > 0:
         num_total_assignments_l = model.NewIntVar(0, len(courses_dict), f'num_total_assignments_{lecturer_id_loop}')
         model.Add(num_total_assignments_l == sum(lecturer_vars))
         extra_assignments_l = model.NewIntVar(0, len(courses_dict), f'extra_assign_{lecturer_id_loop}')
-        model.Add(extra_assignments_l >= num_total_assignments_l - 1)
-        # objective_terms リストに extra_assignments_l * actual_penalty_concentration を追加
+        
+        # パフォーマンス改善: extra_assignments_l = max(0, num_total_assignments_l - 1) を効率的に表現
+        assignments_minus_one = model.NewIntVar(-1, len(courses_dict) - 1, f'assign_minus_one_{lecturer_id_loop}')
+        model.Add(assignments_minus_one == num_total_assignments_l - 1)
+        model.AddMaxEquality(extra_assignments_l, [assignments_minus_one, model.NewConstant(0)])
+        # この後、objective_terms リストに extra_assignments_l * actual_penalty_concentration を追加
 
 # 連日ペア割り当ての関連付け制約
 if weight_consecutive_assignment > 0 and consecutive_day_pairs:
