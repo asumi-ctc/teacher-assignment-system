@@ -308,7 +308,10 @@ def solve_assignment(lecturers_data: List[LecturerData],
                 for n in range(2, max_penalty_level + 2): # 2回目から、定義されたレベル+1まで考慮
                     # is_assigned_at_least_n = 1 if num_total_assignments_l >= n else 0
                     is_assigned_at_least_n = model.NewBoolVar(f'is_assigned_at_least_{n}_{lecturer_id_loop}')
-                    model.Add(is_assigned_at_least_n == (num_total_assignments_l >= n))
+                    #  num_total_assignments_l >= n なら is_assigned_at_least_n == 1 とする制約
+                    model.Add(num_total_assignments_l >= n).OnlyEnforceIf(is_assigned_at_least_n)
+                    #  num_total_assignments_l < n なら is_assigned_at_least_n == 0 とする制約
+                    model.Add(num_total_assignments_l < n).OnlyEnforceIf(is_assigned_at_least_n.Not())
 
                     if n - 2 < len(PROGRESSIVE_PENALTY_ADDITIONS_SCALED):
                         additional_penalty = PROGRESSIVE_PENALTY_ADDITIONS_SCALED[n - 2]
