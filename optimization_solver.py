@@ -292,34 +292,22 @@ def solve_assignment(lecturers_data: List[LecturerData],
             objective_terms.append((1 - is_assigned) * BASE_PENALTY_UNASSIGNED_SCALED)
             log_to_buffer(f"  + Course {course_id}: Added unassignment penalty term ((1 - is_assigned) * {BASE_PENALTY_UNASSIGNED_SCALED}).")
 
-        # --- 講師の割り当て集中度ペナルティを計算する ---
-        if weight_lecturer_concentration > 0: # パラメータが0より大きい場合のみペナルティを計算
-            actual_penalty_concentration = int(round(weight_lecturer_concentration * 100)) # 係数100は、他のコストとのスケールを合わせるためのもの
-            log_to_buffer(
-                f"Applying concentration penalty logic (actual_penalty_concentration={actual_penalty_concentration})."
-            )
-            # 全講師をループ
+        if weight_lecturer_concentration > 0:
+            log_to_buffer("Applying simple concentration penalty (proportional to number of assignments).")
             for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
-                if not lecturer_vars:
-                    continue # 割り当て候補がない講師はスキップ
+                if not lecturer_vars or len(lecturer_vars) <= 1:
+                    continue
 
-                # 講師ごとの総割り当て数を表す整数変数
                 num_total_assignments_l = model.NewIntVar(0, len(courses_dict), f'num_total_assignments_{lecturer_id_loop}')
-                model.Add(num_total_assignments_l == sum(lecturer_vars))  # 総割り当て数の制約
-
-                # パフォーマンス改善: extra_assignments_l = max(0, num_total_assignments_l - 1) を効率的に表現
-                extra_assignments_l = model.NewIntVar(0, len(courses_dict) - 1, f'extra_assign_{lecturer_id_loop}')
-                assignments_minus_one = model.NewIntVar(-1, len(courses_dict) - 1, f'assign_minus_one_{lecturer_id_loop}')
-                model.Add(assignments_minus_one == num_total_assignments_l - 1)
-                model.AddMaxEquality(extra_assignments_l, [assignments_minus_one, model.NewConstant(0)])
-
-                if extra_assignments_l: # extra_assignments_l 変数が実際に作成された場合
-                    # 目的関数にペナルティ項を追加 (ペナルティ対象の割り当て数 * ペナルティコスト)
-                    objective_terms.append(extra_assignments_l * actual_penalty_concentration)
-                    log_to_buffer(
-                        f"  + Lecturer {lecturer_id_loop}: Added concentration penalty term "
-                        f"(extra_assignments * {actual_penalty_concentration})."
-                    )
+                model.Add(num_total_assignments_l == sum(lecturer_vars))
+                # ペナルティを計算し、目的関数に追加
+                # 係数100は、他のコストとのスケールを合わせるためのもの
+                concentration_penalty = int(round(weight_lecturer_concentration * 100)) + BASE_PENALTY_UNASSIGNED_SCALED
+                objective_terms.append(num_total_assignments_l * concentration_penalty)
+                log_to_buffer(
+                    f"  + Lecturer {lecturer_id_loop}: Added simple concentration penalty term "
+                    f"(num_assignments * {concentration_penalty})."
+                )
 
         consecutive_assignment_pair_vars_details: List[Dict[str, Any]] = []
         if weight_consecutive_assignment > 0 and consecutive_day_pairs:
