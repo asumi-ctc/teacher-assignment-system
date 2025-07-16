@@ -313,7 +313,11 @@ def solve_assignment(lecturers_data: List[LecturerData],
                     # i: 0 (2回目の割り当て), 1 (3回目の割り当て), 2 (4回目の割り当て)
                     num_assignments_at_level = model.NewBoolVar(f'num_assign_at_level_{lecturer_id_loop}_{i+2}')
                     # 「割り当て数が i + 2 以上である」という条件をブール変数で表現
-                    model.Add(num_assignments_at_level == (num_total_assignments_l >= i + 2))
+                    # CP-SATの制約として同値性を表現するために、OnlyEnforceIfを使用
+                    at_least_i_plus_2 = model.NewBoolVar(f'at_least_{i+2}_assignments_{lecturer_id_loop}')
+                    model.Add(num_total_assignments_l >= i + 2).OnlyEnforceIf(at_least_i_plus_2)
+                    model.Add(num_total_assignments_l < i + 2).OnlyEnforceIf(at_least_i_plus_2.Not())
+                    model.Add(num_assignments_at_level == at_least_i_plus_2)
                     penalty_terms.append(num_assignments_at_level * PROGRESSIVE_PENALTY_ADDITIONS_SCALED[i])
 
                 # 5回目以降の追加ペナルティを、4回目の増分と同一にする
@@ -321,7 +325,10 @@ def solve_assignment(lecturers_data: List[LecturerData],
                     last_penalty_addition = PROGRESSIVE_PENALTY_ADDITIONS_SCALED[-1]
                     num_assignments_5_plus = model.NewBoolVar(f'num_assign_5_plus_{lecturer_id_loop}')
                     model.Add(num_assignments_5_plus == (num_total_assignments_l >= 5))
-                    penalty_terms.append(num_assignments_5_plus * last_penalty_addition)
+                    at_least_5 = model.NewBoolVar(f'at_least_5_assignments_{lecturer_id_loop}')
+                    model.Add(num_total_assignments_l >= 5).OnlyEnforceIf(at_least_5)
+                    model.Add(num_total_assignments_l < 5).OnlyEnforceIf(at_least_5.Not())
+                    model.Add(num_assignments_5_plus == at_least_5)                    penalty_terms.append(num_assignments_5_plus * last_penalty_addition)
 
                 # 計算したペナルティ項の合計が、実際のペナルティとなる
                 model.Add(progressive_penalty == sum(penalty_terms))
