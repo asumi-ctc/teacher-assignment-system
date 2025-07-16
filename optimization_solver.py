@@ -313,7 +313,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
                 model.Add(assignments_minus_one == num_total_assignments_l - 1)
                 model.AddMaxEquality(extra_assignments_l, [assignments_minus_one, model.NewConstant(0)])
 
-                if extra_assignments_l > 0: # extra_assignments_l 変数が実際に作成された場合
+                if extra_assignments_l: # extra_assignments_l 変数が実際に作成された場合
                     # 目的関数にペナルティ項を追加 (ペナルティ対象の割り当て数 * ペナルティコスト)
                     objective_terms.append(extra_assignments_l * actual_penalty_concentration)
                     log_to_buffer(
