@@ -298,7 +298,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
                 if not lecturer_vars or len(lecturer_vars) <= 1:
                     continue
 
-                num_total_assignments_l = model.NewIntVar(0, len(courses_dict), f'num_total_assignments_{lecturer_id_loop}')
+                num_total_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'num_total_assignments_{lecturer_id_loop}')
                 model.Add(num_total_assignments_l == sum(lecturer_vars))
                 # ペナルティを計算し、目的関数に追加
                 # 係数100は、他のコストとのスケールを合わせるためのもの
