@@ -417,7 +417,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
         log_to_buffer(f"Solver configured to use {num_workers_to_set} workers (available: {available_cores}, calculated: available/2, min: 8).")
 
         # OR-Tools ソルバーのログ出力を、子プロセス専用ロガーにリダイレクト (インポートを削除)
-        setup_logging(target_loggers=["ortools_solver_worker"])  # 子プロセス用設定
+        from utils.logging_config import setup_logging # ローカルインポート
         solver_logger = logging.getLogger("ortools_solver_worker")  # 子プロセス用ロガー
         solver.log_callback = lambda msg: solver_logger.info(f"[OR-Tools Solver] {msg.strip()}")
 
