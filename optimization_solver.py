@@ -329,7 +329,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
                     model.Add(num_total_assignments_l >= 5).OnlyEnforceIf(at_least_5)
                     model.Add(num_total_assignments_l < 5).OnlyEnforceIf(at_least_5.Not())
                     model.Add(num_assignments_5_plus == at_least_5)                    penalty_terms.append(num_assignments_5_plus * last_penalty_addition)
-
+                    
                 # 計算したペナルティ項の合計が、実際のペナルティとなる
                 model.Add(progressive_penalty == sum(penalty_terms))
 
