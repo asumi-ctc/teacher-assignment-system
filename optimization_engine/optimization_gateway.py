@@ -1,16 +1,17 @@
+# ==============================================================================
+# 1. optimization_gateway.py (エンジンと外部システムのインターフェース)
+# ==============================================================================
 import logging
-import datetime
 from typing import List, Dict, Any, Tuple, Optional
 
-from utils.logging_config import setup_logging
-from utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
-from utils.types import OptimizationResult, AssignmentResultRow, LecturerData, CourseData, ClassroomData, SolverOutput
-import optimization_solver
+# --- エンジン内部のモジュールをインポート ---
+from .utils.error_definitions import InvalidInputError, ProcessExecutionError
+from .utils.types import OptimizationResult, LecturerData, CourseData, ClassroomData, SolverOutput
+from . import optimization_solver
 
 logger = logging.getLogger(__name__)
 
 def run_optimization_with_monitoring(
-    # データ生成元(app.py)で型が保証されているため、より厳密な型ヒントを使用
     lecturers_data: List[LecturerData],
     courses_data: List[CourseData],
     classrooms_data: List[ClassroomData],
@@ -18,14 +19,11 @@ def run_optimization_with_monitoring(
 ) -> OptimizationResult:
     """
     最適化エンジンを直接呼び出し、結果を整形する。
-    入力データの前処理（日付変換など）もここで行う。
     """
     logger = logging.getLogger(__name__)
 
-    # 廃止されたキーをkwargsから削除し、ソルバー呼び出し時のエラーを防ぐ
-    kwargs.pop("allow_under_assignment", None)
-    kwargs.pop("weight_assignment_shortage", None)
-    kwargs.pop("weight_travel", None)
+    # 不要になったweight_lecturer_concentrationをkwargsから削除
+    kwargs.pop("weight_lecturer_concentration", None)
 
     solver_args = {
         "lecturers_data": lecturers_data,
@@ -36,7 +34,8 @@ def run_optimization_with_monitoring(
 
     try:
         logger.info("最適化ソルバーを直接呼び出します...")
-        solver_output = optimization_solver.solve_assignment(**solver_args)
+        # 新しいレキシコグラフィカルソルバー関数を呼び出す
+        solver_output = optimization_solver.solve_assignment_lexicographically(**solver_args)
         logger.info("最適化ソルバーが完了しました。")
 
     except (ValueError, TypeError) as e:
@@ -44,10 +43,9 @@ def run_optimization_with_monitoring(
         raise InvalidInputError(f"入力データ形式または値に誤りがあります: {e}") from e
     except Exception as e:
         logger.error(f"最適化処理中に予期せぬエラーが発生しました: {e}", exc_info=True)
-        # ProcessExecutionErrorはもはや適切ではないが、既存のUIエラーハンドリングのために利用
         raise ProcessExecutionError(f"最適化処理中に予期せぬエラーが発生しました: {e}") from e
 
-    # 結果の整形
+    # --- 結果の整形 ---
     logger.info("最適化結果を整形します...")
     all_lecturers_dict = {l['id']: l for l in solver_output['all_lecturers']}
     all_courses_dict = {c['id']: c for c in solver_output['all_courses']}
@@ -74,7 +72,8 @@ def run_optimization_with_monitoring(
     for assign in processed_assignments:
         lecturer_course_counts[assign['講師ID']] += 1
 
-    course_assignment_counts, course_remaining_capacity = {}, {}
+    course_assignment_counts = {}
+    course_remaining_capacity = {}
     for course in solver_output['all_courses']:
         cid = course['id']
         assigned_count = sum(1 for a in processed_assignments if a['講座ID'] == cid)
@@ -90,6 +89,6 @@ def run_optimization_with_monitoring(
         "lecturer_course_counts": lecturer_course_counts,
         "course_assignment_counts": course_assignment_counts,
         "course_remaining_capacity": course_remaining_capacity,
-        "raw_solver_status_code": solver_output["solver_raw_status_code"]
+        "raw_solver_status_code": solver_output["raw_solver_status_code"]
     }
     return final_result

@@ -1,13 +1,9 @@
-# utils/types.py
-
+# ==============================================================================
+# 3. utils/types.py (型定義)
+# ==============================================================================
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, TypedDict, Optional, Union
 import datetime
-
-# --- 0. データ構造の型定義 ---
-# データソース（DBやCSVなど）から読み込まれるデータの型を定義します。
-# これにより、前処理や最適化エンジンへの入力の型安全性が向上します。
-# 注: 日付は前処理段階でdatetime.dateオブジェクトに変換されることを想定しています。
 
 class PastAssignment(TypedDict):
     """過去の担当履歴"""
@@ -37,38 +33,6 @@ class ClassroomData(TypedDict):
     id: str
     location: str
 
-# --- 1. 設定オブジェクト関連の型定義 ---
-
-@dataclass
-class OptimizationWeights:
-    """目的関数の重み"""
-    past_assignment_recency: float = 0.5
-    qualification: float = 0.5
-    age: float = 0.5
-    frequency: float = 0.5
-    lecturer_concentration: float = 0.5
-    consecutive_assignment: float = 0.5
-
-@dataclass
-class SolverParameters:
-    """ソルバーの振る舞いを制御する全パラメータ"""
-    weights: OptimizationWeights = field(default_factory=OptimizationWeights)
-    max_search_seconds: int = 90
-
-@dataclass
-class OptimizationInput:
-    """最適化エンジンへの全入力データ"""
-    lecturers_data: List[LecturerData]
-    courses_data: List[CourseData]
-    classrooms_data: List[ClassroomData]
-    solver_params: SolverParameters
-    today_date: datetime.date
-    fixed_assignments: Optional[List[Tuple[str, str]]] = None
-    forced_unassignments: Optional[List[Tuple[str, str]]] = None
-
-# --- 2. 出力関連の型定義 ---
-
-# ソルバーからの割り当て結果1件分のデータ
 SolverAssignment = TypedDict(
     "SolverAssignment",
     {
@@ -89,17 +53,13 @@ class SolverOutput(TypedDict):
     solution_status_str: str
     objective_value: Optional[float]
     assignments: List[SolverAssignment]
-    # all_coursesとall_lecturersはソルバー内で加工される可能性があるため、汎用的な型を使用します。
     all_courses: List[Dict[str, Any]]
     all_lecturers: List[Dict[str, Any]]
     solver_raw_status_code: int
 
-# 最終的な割り当て結果の1行（DataFrame化される前のデータ）。
-# ソルバーからの情報とゲートウェイで追加される情報をすべて含む。
 AssignmentResultRow = TypedDict(
     "AssignmentResultRow",
     {
-        # --- From SolverAssignment ---
         "講師ID": str,
         "講座ID": str,
         "算出コスト(x100)": int,
@@ -109,7 +69,6 @@ AssignmentResultRow = TypedDict(
         "当該教室最終割当日からの日数": int,
         "今回の割り当て回数": int,
         "連続ペア割当": str,
-        # --- Added in Gateway ---
         "講師名": str,
         "講座名": str,
         "教室ID": str,
