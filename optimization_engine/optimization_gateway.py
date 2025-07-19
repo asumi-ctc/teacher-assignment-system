@@ -1,11 +1,8 @@
-# ==============================================================================
-# optimization_gateway.py (TypeError修正版)
-# ==============================================================================
 import logging
 from typing import List, Dict, Any, Tuple, Optional
 
-# --- エンジン内部のモジュールをインポート ---
-from .utils.error_definitions import InvalidInputError, ProcessExecutionError
+# [修正] ファイル分割に伴う相対インポートへの変更
+from .utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
 from .utils.types import OptimizationResult, LecturerData, CourseData, ClassroomData, SolverOutput
 from . import optimization_solver
 
@@ -30,18 +27,17 @@ def run_optimization_with_monitoring(
     }
 
     # --- [修正] 呼び出し先の関数が要求する引数を追加 ---
-    # optimization_solver.py側の関数定義がまだ古い引数を要求するため、
-    # ここでダミーの引数を追加してTypeErrorを回避します。
-    # この機能はUIから削除されているため、値は常に0.0となります。
+    # app.py(UI)からは'weight_lecturer_concentration'が渡されなくなりましたが、
+    # optimization_solver.pyはまだこの引数を要求しています。
+    # そのため、ここでデフォルト値を追加してTypeErrorを回避します。
     if 'weight_lecturer_concentration' not in solver_args:
         solver_args['weight_lecturer_concentration'] = 0.0
     # ---------------------------------------------------------
 
     try:
         logger.info("最適化ソルバーを直接呼び出します...")
-        # --- [修正なし] 正しい関数名 solve_assignment を呼び出す ---
+        # 元の正しい関数名 solve_assignment を呼び出す
         solver_output = optimization_solver.solve_assignment(**solver_args)
-        # ---------------------------------------------------------
         logger.info("最適化ソルバーが完了しました。")
 
     except (ValueError, TypeError) as e:
@@ -95,6 +91,6 @@ def run_optimization_with_monitoring(
         "lecturer_course_counts": lecturer_course_counts,
         "course_assignment_counts": course_assignment_counts,
         "course_remaining_capacity": course_remaining_capacity,
-        "raw_solver_status_code": solver_output["solver_raw_status_code"]
+        "raw_solver_status_code": solver_output["raw_solver_status_code"]
     }
     return final_result
