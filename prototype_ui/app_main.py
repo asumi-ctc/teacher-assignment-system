@@ -10,39 +10,47 @@ import logging
 # --- [修正] プロジェクトのルートディレクトリをPythonの検索パスに追加 ---
 # これにより、app_main.pyから見て上の階層にあるoptimization_engineフォルダを
 # importできるようになります。
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# --------------------------------------------------------------------
+# 実際のファイルパスに応じて調整が必要な場合があります。
+try:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+except NameError:
+    # Streamlit Cloudなど、__file__が定義されていない環境向けのフォールバック
+    sys.path.append("..")
+
 
 # --- 分離したモジュールをインポート ---
 from optimization_engine.utils.logging_config import setup_logging
 from app_data_utils import initialize_app_data
 from app_callbacks import (
-    run_optimization, 
-    handle_regenerate_sample_data, 
-    handle_generate_invalid_data
+    run_optimization,
+    handle_regenerate_sample_data,
+    handle_generate_invalid_data,
+    handle_execute_changes_callback # handle_execute_changes_callbackもインポート
 )
 from app_ui_views import (
-    display_sample_data_view, 
-    display_objective_function_view, 
-    display_optimization_result_view, 
+    display_sample_data_view,
+    display_objective_function_view,
+    display_optimization_result_view,
     display_change_assignment_view
 )
 
 def main():
-    # --- ロガーやデータ初期化など ---
+    # --- ロガーやページ設定 ---
     setup_logging()
     logger = logging.getLogger('app')
     st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
-    initialize_app_data() # 初回呼び出し
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 
     # --- セッション状態の初期化 ---
-    if "view_mode" not in st.session_state:
+    # [修正] 初回起動時のみデータとビューを初期化する
+    # これにより、ボタンクリックなどの再実行のたびにデータ生成ロジックが呼ばれるのを防ぎます。
+    if "app_data_initialized" not in st.session_state:
+        logger.info("Application first boot: Initializing data and view_mode...")
+        initialize_app_data() # データ初期化をこのブロック内に移動
         st.session_state.view_mode = "sample_data"
-    if "assignments_to_change_list" not in st.session_state:
         st.session_state.assignments_to_change_list = []
-    if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
+        logger.info("Data and view_mode initialized.")
 
     # --- UIの描画 ---
     st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
@@ -73,7 +81,7 @@ def main():
 
     if st.session_state.get("solution_executed", False) and \
        st.session_state.get("solver_result_cache") and \
-       st.session_state.solver_result_cache.get("assignments_df"):
+       st.session_state.solver_result_cache.get("assignments_df") is not None: # DataFrameの存在をチェック
         if st.sidebar.button("割り当て結果を変更", key="change_assignment_view_button", type="secondary" if st.session_state.view_mode != "change_assignment_view" else "primary"):
             st.session_state.view_mode = "change_assignment_view"
             st.rerun()
@@ -115,8 +123,10 @@ def main():
     logger.info("Exiting main function.")
 
 if __name__ == "__main__":
+    # WindowsやmacOSでspawnメソッドが安全なため、マルチプロセッシングの開始メソッドを設定
     try:
         multiprocessing.set_start_method('spawn', force=True)
     except RuntimeError:
+        # すでに設定されている場合は何もしない
         pass
     main()
