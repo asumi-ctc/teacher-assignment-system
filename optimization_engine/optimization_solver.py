@@ -4,7 +4,8 @@ import os
 import numpy as np
 from ortools.sat.python import cp_model
 from typing import List, Optional, Tuple, Dict, Any
-from utils.types import LecturerData, CourseData, ClassroomData, SolverOutput
+# [修正] 相対インポートに変更
+from .utils.types import LecturerData, CourseData, ClassroomData, SolverOutput
 
 logger = logging.getLogger(__name__)
 
