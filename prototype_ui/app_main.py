@@ -1,12 +1,19 @@
 # ==============================================================================
 # 1. app_main.py (アプリケーションのエントリーポイント)
 # ==============================================================================
+import sys
+import os
 import streamlit as st
 import multiprocessing
 import logging
 
+# --- [修正] プロジェクトのルートディレクトリをPythonの検索パスに追加 ---
+# これにより、app_main.pyから見て上の階層にあるoptimization_engineフォルダを
+# importできるようになります。
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# --------------------------------------------------------------------
+
 # --- 分離したモジュールをインポート ---
-# [修正] エンジン側のモジュールを正しいパスからインポート
 from optimization_engine.utils.logging_config import setup_logging
 from app_data_utils import initialize_app_data
 from app_callbacks import (
