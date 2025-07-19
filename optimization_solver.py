@@ -292,45 +292,22 @@ def solve_assignment(lecturers_data: List[LecturerData],
             objective_terms.append((1 - is_assigned) * BASE_PENALTY_UNASSIGNED_SCALED)
             log_to_buffer(f"  + Course {course_id}: Added unassignment penalty term ((1 - is_assigned) * {BASE_PENALTY_UNASSIGNED_SCALED}).")
 
-# --- 講師の割り当て集中度ペナルティ（累進） ---
-if weight_lecturer_concentration > 0:
-    log_to_buffer("Applying declarative progressive concentration penalty.")
-    
-    for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
-        # 割り当て候補が1つ以下の講師はペナルティ対象外
-        if not lecturer_vars or len(lecturer_vars) <= 1:
-            continue
+        if weight_lecturer_concentration > 0:
+            log_to_buffer("Applying simple concentration penalty (proportional to number of assignments).")
+            for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
+                if not lecturer_vars or len(lecturer_vars) <= 1:
+                    continue
 
-        # この講師の総割り当て数を計算する変数
-        num_total_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'num_total_assignments_{lecturer_id_loop}')
-        model.Add(num_total_assignments_l == sum(lecturer_vars))
-
-        # 各ペナルティ段階（2回目、3回目...）のペナルティ項を格納するリスト
-        penalty_objective_terms_for_lecturer = []
-
-        # 定義された累進ペナルティの段階ごとにループ
-        # i=0 -> 2回目, i=1 -> 3回目...
-        for i, incremental_penalty_base in enumerate(PROGRESSIVE_PENALTY_ADDITIONS_SCALED):
-            n = i + 2
-            
-            # 「割り当てがn回以上である」という状態を示すブール変数
-            is_at_least_n = model.NewBoolVar(f'is_at_least_{n}_for_{lecturer_id_loop}')
-
-            # 状態と割り当て数を関連付けるルールを宣言
-            model.Add(num_total_assignments_l >= n).OnlyEnforceIf(is_at_least_n)
-            model.Add(num_total_assignments_l < n).OnlyEnforceIf(is_at_least_n.Not())
-
-            # 重み付けしたペナルティを計算
-            # 状態が真(1)の場合にのみ、この段階の追加ペナルティが加算される
-            weighted_penalty = int(weight_lecturer_concentration * incremental_penalty_base)
-            
-            if weighted_penalty > 0:
-                penalty_objective_terms_for_lecturer.append(is_at_least_n * weighted_penalty)
-                log_to_buffer(f"    + For {lecturer_id_loop}, created penalty rule for assignment #{n} with weighted cost {weighted_penalty}")
-
-        # この講師の全ペナルティ項を、モデル全体の目的関数に追加
-        if penalty_objective_terms_for_lecturer:
-            objective_terms.extend(penalty_objective_terms_for_lecturer)
+                num_total_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'num_total_assignments_{lecturer_id_loop}')
+                model.Add(num_total_assignments_l == sum(lecturer_vars))
+                # ペナルティを大幅に下げて、目的関数に追加
+                # 係数100は、他のコストとのスケールを合わせるためのもの
+                concentration_penalty = int(round(weight_lecturer_concentration * 10))  # 元の1/10に
+                objective_terms.append(num_total_assignments_l * concentration_penalty)
+                log_to_buffer(
+                    f"  + Lecturer {lecturer_id_loop}: Added simple concentration penalty term "
+                    f"(num_assignments * {concentration_penalty})."
+                )
 
         consecutive_assignment_pair_vars_details: List[Dict[str, Any]] = []
         if weight_consecutive_assignment > 0 and consecutive_day_pairs:
@@ -408,8 +385,9 @@ if weight_lecturer_concentration > 0:
         solver.parameters.num_search_workers = num_workers_to_set
         log_to_buffer(f"Solver configured to use {num_workers_to_set} workers (available: {available_cores}, calculated: available/2, min: 8).")
 
-        # OR-Tools ソルバーのログ出力を、子プロセス専用ロガーにリダイレクト (インポートを削除)
-        from utils.logging_config import setup_logging # ローカルインポート
+        # OR-Tools ソルバーのログ出力を、子プロセス専用ロガーにリダイレクト
+        from utils.logging_config import setup_logging  # ここでインポート
+        setup_logging(target_loggers=["ortools_solver_worker"])  # 子プロセス用設定
         solver_logger = logging.getLogger("ortools_solver_worker")  # 子プロセス用ロガー
         solver.log_callback = lambda msg: solver_logger.info(f"[OR-Tools Solver] {msg.strip()}")
 
