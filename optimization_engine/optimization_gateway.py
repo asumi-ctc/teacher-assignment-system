@@ -1,5 +1,5 @@
 # ==============================================================================
-# 1. optimization_gateway.py (エンジンと外部システムのインターフェース)
+# optimization_gateway.py (AttributeError修正版)
 # ==============================================================================
 import logging
 from typing import List, Dict, Any, Tuple, Optional
@@ -22,9 +22,7 @@ def run_optimization_with_monitoring(
     """
     logger = logging.getLogger(__name__)
 
-    # 不要になったweight_lecturer_concentrationをkwargsから削除
-    kwargs.pop("weight_lecturer_concentration", None)
-
+    # [修正] このファイルでは引数を変更せず、そのままソルバーに渡す
     solver_args = {
         "lecturers_data": lecturers_data,
         "courses_data": courses_data,
@@ -34,8 +32,9 @@ def run_optimization_with_monitoring(
 
     try:
         logger.info("最適化ソルバーを直接呼び出します...")
-        # 新しいレキシコグラフィカルソルバー関数を呼び出す
-        solver_output = optimization_solver.solve_assignment_lexicographically(**solver_args)
+        # --- [修正] 正しい関数名 solve_assignment を呼び出す ---
+        solver_output = optimization_solver.solve_assignment(**solver_args)
+        # ---------------------------------------------------------
         logger.info("最適化ソルバーが完了しました。")
 
     except (ValueError, TypeError) as e:
@@ -89,6 +88,6 @@ def run_optimization_with_monitoring(
         "lecturer_course_counts": lecturer_course_counts,
         "course_assignment_counts": course_assignment_counts,
         "course_remaining_capacity": course_remaining_capacity,
-        "raw_solver_status_code": solver_output["raw_solver_status_code"]
+        "raw_solver_status_code": solver_output["solver_raw_status_code"]
     }
     return final_result
