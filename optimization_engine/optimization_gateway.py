@@ -1,5 +1,5 @@
 # ==============================================================================
-# optimization_gateway.py (AttributeError修正版)
+# optimization_gateway.py (TypeError修正版)
 # ==============================================================================
 import logging
 from typing import List, Dict, Any, Tuple, Optional
@@ -22,7 +22,6 @@ def run_optimization_with_monitoring(
     """
     logger = logging.getLogger(__name__)
 
-    # [修正] このファイルでは引数を変更せず、そのままソルバーに渡す
     solver_args = {
         "lecturers_data": lecturers_data,
         "courses_data": courses_data,
@@ -30,9 +29,17 @@ def run_optimization_with_monitoring(
         **kwargs
     }
 
+    # --- [修正] 呼び出し先の関数が要求する引数を追加 ---
+    # optimization_solver.py側の関数定義がまだ古い引数を要求するため、
+    # ここでダミーの引数を追加してTypeErrorを回避します。
+    # この機能はUIから削除されているため、値は常に0.0となります。
+    if 'weight_lecturer_concentration' not in solver_args:
+        solver_args['weight_lecturer_concentration'] = 0.0
+    # ---------------------------------------------------------
+
     try:
         logger.info("最適化ソルバーを直接呼び出します...")
-        # --- [修正] 正しい関数名 solve_assignment を呼び出す ---
+        # --- [修正なし] 正しい関数名 solve_assignment を呼び出す ---
         solver_output = optimization_solver.solve_assignment(**solver_args)
         # ---------------------------------------------------------
         logger.info("最適化ソルバーが完了しました。")
