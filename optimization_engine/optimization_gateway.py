@@ -1,9 +1,9 @@
 import logging
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any
 
-# [修正] ファイル分割に伴う相対インポートへの変更
-from .utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
-from .utils.types import OptimizationResult, LecturerData, CourseData, ClassroomData, SolverOutput
+# 必要な型定義をインポート
+from .utils.error_definitions import InvalidInputError, ProcessExecutionError
+from .utils.types import OptimizationResult, LecturerData, CourseData, ClassroomData
 from . import optimization_solver
 
 logger = logging.getLogger(__name__)
@@ -26,17 +26,12 @@ def run_optimization_with_monitoring(
         **kwargs
     }
 
-    # --- [修正] 呼び出し先の関数が要求する引数を追加 ---
-    # app.py(UI)からは'weight_lecturer_concentration'が渡されなくなりましたが、
-    # optimization_solver.pyはまだこの引数を要求しています。
-    # そのため、ここでデフォルト値を追加してTypeErrorを回避します。
+    # UI側から渡されなくなったが、ソルバー側でまだ要求されている引数のデフォルト値を追加
     if 'weight_lecturer_concentration' not in solver_args:
         solver_args['weight_lecturer_concentration'] = 0.0
-    # ---------------------------------------------------------
 
     try:
         logger.info("最適化ソルバーを直接呼び出します...")
-        # 元の正しい関数名 solve_assignment を呼び出す
         solver_output = optimization_solver.solve_assignment(**solver_args)
         logger.info("最適化ソルバーが完了しました。")
 
@@ -53,6 +48,7 @@ def run_optimization_with_monitoring(
     all_courses_dict = {c['id']: c for c in solver_output['all_courses']}
     all_classrooms_dict = {c['id']: c for c in solver_args['classrooms_data']}
     processed_assignments = []
+
     for assignment in solver_output['assignments']:
         lecturer = all_lecturers_dict.get(assignment['講師ID'], {})
         course = all_courses_dict.get(assignment['講座ID'], {})
@@ -80,17 +76,19 @@ def run_optimization_with_monitoring(
         cid = course['id']
         assigned_count = sum(1 for a in processed_assignments if a['講座ID'] == cid)
         course_assignment_counts[cid] = assigned_count
-        capacity = 1
+        capacity = 1 # 各講座の定員は1と仮定
         course_remaining_capacity[cid] = capacity - assigned_count
 
     final_result: OptimizationResult = {
-        "status": "成功", "message": "最適化処理が正常に完了しました。",
+        "status": "成功",
+        "message": "最適化処理が正常に完了しました。",
         "solution_status": solver_output["solution_status_str"],
         "objective_value": solver_output["objective_value"],
         "assignments_df": processed_assignments,
         "lecturer_course_counts": lecturer_course_counts,
         "course_assignment_counts": course_assignment_counts,
         "course_remaining_capacity": course_remaining_capacity,
-        "raw_solver_status_code": solver_output["raw_solver_status_code"]
+        # ▼▼▼【修正箇所】キー名を 'solver_raw_status_code' に修正 ▼▼▼
+        "raw_solver_status_code": solver_output["solver_raw_status_code"]
     }
     return final_result
