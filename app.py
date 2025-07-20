@@ -18,14 +18,14 @@ import logging # logging モジュールをインポート
 from typing import List, Optional, Any, Tuple # TypedDict は optimization_engine に移動
 
 # --- [修正点1] 分離したモジュールをインポート ---
-import optimization_gateway
-import optimization_solver
-from utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
+from optimization_engine import optimization_gateway
+# optimization_solver は optimization_gateway から呼び出されるため、app.pyでの直接インポートは不要
+from optimization_engine.utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
 from ortools.sat.python import cp_model # solver_raw_status_code の比較等で使用
 # ---------------------------------------------
 
 # --- [修正点3] ログ設定を別ファイルに分離し、定数をインポート ---
-from utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
+from optimization_engine.utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
 # ---
 
 
