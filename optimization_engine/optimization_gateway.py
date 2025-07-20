@@ -19,7 +19,7 @@ def run_optimization_with_monitoring(
     最適化エンジンを直接呼び出し、結果を整形する。
     入力データの前処理（日付変換など）もここで行う。
     """
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger('optimization_gateway')
 
     # 廃止されたキーをkwargsから削除し、ソルバー呼び出し時のエラーを防ぐ
     kwargs.pop("allow_under_assignment", None)

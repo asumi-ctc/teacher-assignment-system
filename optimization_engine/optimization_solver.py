@@ -7,7 +7,7 @@ from ortools.sat.python import cp_model
 from typing import List, Optional, Tuple, Dict, Any
 from .utils.types import LecturerData, CourseData, ClassroomData, SolverOutput
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('optimization_solver')
 
 # --- 定数定義 ---
 RECENCY_COST_CONSTANT = 100000.0
