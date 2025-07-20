@@ -385,7 +385,7 @@ def solve_assignment(lecturers_data: List[LecturerData],
         solver.parameters.num_search_workers = num_workers_to_set
         log_to_buffer(f"Solver configured to use {num_workers_to_set} workers (available: {available_cores}, calculated: available/2, min: 8).")
         # 重複していたログコールバック設定を一本化。ソルバーログはメインのロガーに出力されます。
-        solver.log_callback = lambda msg: logger.info(f"[OR-Tools Solver] {msg.strip()}")
+        solver.log_callback = lambda msg: log_to_buffer(f"[OR-Tools Solver] {msg.strip()}")
         
         status_code = cp_model.UNKNOWN 
         status_code = solver.Solve(model)
