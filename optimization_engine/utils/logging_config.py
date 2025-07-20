@@ -1,23 +1,13 @@
-# ==============================================================================
-# 5. utils/logging_config.py (ロギング設定)
-# ==============================================================================
 import logging
 import os
-from typing import Optional, List
 from logging.config import dictConfig
 
 _is_main_logging_configured = False
 
-# --- [修正] プロジェクトルートを基準にログパスを定義 ---
-# このファイルの場所からプロジェクトのルートディレクトリを特定
-# /workspaces/teacher-assignment-system/optimization_engine/utils/logging_config.py -> /workspaces/teacher-assignment-system
-try:
-    # __file__ が定義されている通常のPython環境
-    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-except NameError:
-    # Streamlit Cloudなど、__file__が定義されていない環境向けのフォールバック
-    PROJECT_ROOT = os.path.abspath(os.path.join(os.getcwd(), os.pardir, os.pardir))
-
+# --- [修正] streamlit run app.py で実行されることを前提に、カレントディレクトリをルートとする ---
+# streamlit run app.py で実行すると、カレントワーキングディレクトリは
+# プロジェクトのルートになるため、それを基準にするのが最も確実です。
+PROJECT_ROOT = os.getcwd()
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 
 LOGGING_CONFIG = {
@@ -81,28 +71,31 @@ LOGGING_CONFIG = {
     },
 }
 
-# --- [修正] UIから参照できるように、絶対パスの定数をエクスポート ---
+# --- UIから参照できるように、絶対パスの定数をエクスポート ---
 APP_LOG_FILE = LOGGING_CONFIG['handlers']['app_file']['filename']
 GATEWAY_LOG_FILE = LOGGING_CONFIG['handlers']['gateway_file']['filename']
 SOLVER_LOG_FILE = LOGGING_CONFIG['handlers']['solver_file']['filename']
 
 def setup_logging():
     """
-    アプリケーション全体のロギングを設定する。
+    アプリケーション全体のロギングを設定します。
     """
     global _is_main_logging_configured
     if _is_main_logging_configured:
         return
-    
+
+    # ログディレクトリが存在しない場合は作成します
     os.makedirs(LOG_DIR, exist_ok=True)
-    
+
+    # 既存のハンドラをクリアして、設定の重複を防ぎます
     all_logger_names = list(LOGGING_CONFIG['loggers'].keys())
-    all_logger_names.append('') 
+    all_logger_names.append('')  # ルートロガーも対象
 
     for logger_name in all_logger_names:
         logger_obj = logging.getLogger(logger_name)
         for handler in logger_obj.handlers[:]:
             logger_obj.removeHandler(handler)
 
+    # 設定を適用します
     dictConfig(LOGGING_CONFIG)
     _is_main_logging_configured = True
