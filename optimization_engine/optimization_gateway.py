@@ -1,11 +1,10 @@
 import logging
 import datetime
 from typing import List, Dict, Any, Tuple, Optional
-
-from utils.logging_config import setup_logging
-from utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
-from utils.types import OptimizationResult, AssignmentResultRow, LecturerData, CourseData, ClassroomData, SolverOutput
-import optimization_solver
+ 
+from .utils.error_definitions import InvalidInputError, ProcessExecutionError
+from .utils.types import OptimizationResult, AssignmentResultRow, LecturerData, CourseData, ClassroomData, SolverOutput
+from . import optimization_solver
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,7 @@ def run_optimization_with_monitoring(
 
     try:
         logger.info("最適化ソルバーを直接呼び出します...")
-        solver_output = optimization_solver.solve_assignment(**solver_args)
+        solver_output: SolverOutput = optimization_solver.solve_assignment(**solver_args)
         logger.info("最適化ソルバーが完了しました。")
 
     except (ValueError, TypeError) as e:
