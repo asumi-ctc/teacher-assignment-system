@@ -7,10 +7,18 @@ from typing import Optional, List
 from logging.config import dictConfig
 
 _is_main_logging_configured = False
-LOG_DIR = "logs"
-APP_LOG_FILE = os.path.join(LOG_DIR, "app.log")
-GATEWAY_LOG_FILE = os.path.join(LOG_DIR, "optimization_gateway.log")
-SOLVER_LOG_FILE = os.path.join(LOG_DIR, "optimization_solver.log")
+
+# --- [修正] プロジェクトルートを基準にログパスを定義 ---
+# このファイルの場所からプロジェクトのルートディレクトリを特定
+# /workspaces/teacher-assignment-system/optimization_engine/utils/logging_config.py -> /workspaces/teacher-assignment-system
+try:
+    # __file__ が定義されている通常のPython環境
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+except NameError:
+    # Streamlit Cloudなど、__file__が定義されていない環境向けのフォールバック
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.getcwd(), os.pardir, os.pardir))
+
+LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 
 LOGGING_CONFIG = {
     'version': 1,
@@ -28,7 +36,7 @@ LOGGING_CONFIG = {
         'app_file': {
             'class': 'logging.FileHandler',
             'mode': 'w',
-            'filename': os.path.abspath(APP_LOG_FILE),
+            'filename': os.path.join(LOG_DIR, "app.log"),
             'encoding': 'utf-8',
             'formatter': 'standard',
             'level': 'INFO',
@@ -36,7 +44,7 @@ LOGGING_CONFIG = {
         'gateway_file': {
             'class': 'logging.FileHandler',
             'mode': 'w',
-            'filename': os.path.abspath(GATEWAY_LOG_FILE),
+            'filename': os.path.join(LOG_DIR, "optimization_gateway.log"),
             'encoding': 'utf-8',
             'formatter': 'standard',
             'level': 'INFO',
@@ -44,7 +52,7 @@ LOGGING_CONFIG = {
         'solver_file': {
             'class': 'logging.FileHandler',
             'mode': 'w',
-            'filename': os.path.abspath(SOLVER_LOG_FILE),
+            'filename': os.path.join(LOG_DIR, "optimization_solver.log"),
             'encoding': 'utf-8',
             'formatter': 'standard',
             'level': 'INFO',
@@ -72,6 +80,11 @@ LOGGING_CONFIG = {
         'level': 'INFO',
     },
 }
+
+# --- [修正] UIから参照できるように、絶対パスの定数をエクスポート ---
+APP_LOG_FILE = LOGGING_CONFIG['handlers']['app_file']['filename']
+GATEWAY_LOG_FILE = LOGGING_CONFIG['handlers']['gateway_file']['filename']
+SOLVER_LOG_FILE = LOGGING_CONFIG['handlers']['solver_file']['filename']
 
 def setup_logging():
     """
