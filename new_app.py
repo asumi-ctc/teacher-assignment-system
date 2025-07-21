@@ -9,6 +9,7 @@ import multiprocessing
 try:
     multiprocessing.set_start_method('spawn', force=True)
 except RuntimeError:
+    # Streamlitの内部的な再実行サイクルなどで既に設定されている場合があるので無視する
     pass
 
 import logging
@@ -59,7 +60,7 @@ def load_initial_data_from_files(data_dir: str = "data"):
     except FileNotFoundError as e:
         logger.error(f"Required data file not found: {e.filename}. Please ensure data files are generated in '{data_dir}'.", exc_info=True)
         st.error(f"エラー: 必要なデータファイルが見つかりません。`{data_dir}` ディレクトリにデータファイルが生成されていることを確認してください。")
-        st.stop()
+        st.stop() # アプリの実行を停止
     except json.JSONDecodeError as e:
         logger.error(f"Error decoding JSON from data files: {e}", exc_info=True)
         st.error(f"エラー: データファイルの読み込み中にJSON形式のエラーが発生しました。ファイルが破損している可能性があります。")
@@ -183,17 +184,12 @@ def run_optimization():
         st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE)
         engine_log_content = read_log_file(SOLVER_LOG_FILE)
         st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
+
+        # OR-Toolsソルバーログのフィルタリングを削除し、ファイル内容をそのまま格納
+        st.session_state.solver_log_for_download = engine_log_content
+        logger.info(f"OR-Tools solver log content (length: {len(engine_log_content)} chars) stored for download.")
+
         st.session_state.app_log_for_download = read_log_file(APP_LOG_FILE)
-
-        solver_log_lines = []
-        if engine_log_content:
-            solver_log_prefix = "[OR-Tools Solver]"
-            for line in engine_log_content.splitlines():
-                if solver_log_prefix in line:
-                    solver_log_lines.append(line)
-        st.session_state.solver_log_for_download = "\n".join(solver_log_lines)
-        logger.info(f"Extracted {len(solver_log_lines)} lines of OR-Tools solver log for download.")
-
         logger.info("Finished reading log files.")
 
 def handle_execute_changes_callback():
@@ -612,9 +608,6 @@ def main():
         st.session_state.assignments_to_change_list = []
     if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
-    # タイムリミット設定は完全に削除
-    # if "solver_time_limit" not in st.session_state:
-    #     st.session_state.solver_time_limit = 60
     if "min_max_assignments_suggested" not in st.session_state:
         st.session_state.min_max_assignments_suggested = None
     if "weight_lecturer_concentration_exp" not in st.session_state:
@@ -642,20 +635,6 @@ def main():
     )
     st.sidebar.button("最適割り当てを実行", type="primary", on_click=run_optimization)
     st.sidebar.markdown("---")
-
-    # 【ソルバー設定】セクションは完全に削除
-    # with st.sidebar.expander("【ソルバー設定】", expanded=False):
-    #     st.slider(
-    #         "タイムリミット (秒)",
-    #         min_value=10,
-    #         max_value=300,
-    #         value=st.session_state.solver_time_limit,
-    #         step=10,
-    #         format="%d秒",
-    #         key="solver_time_limit",
-    #         help="各最適化フェーズでソルバーが解を探索する最大時間。"
-    #     )
-    # st.sidebar.markdown("---") # 上記セクションとセットで削除
 
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない")
