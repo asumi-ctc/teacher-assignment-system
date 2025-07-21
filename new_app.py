@@ -1,30 +1,25 @@
 import streamlit as st
 import pandas as pd
 import datetime
-from dateutil.relativedelta import relativedelta
 import time
 import json
-from pathlib import Path # ファイル読み込み用に追加
+from pathlib import Path
 
-# Streamlit環境で安全にmultiprocessingを使用するため、'spawn'メソッドを強制的に設定
-# これはアプリケーションの起動時に一度だけ実行されるべき。
 import multiprocessing
 try:
     multiprocessing.set_start_method('spawn', force=True)
 except RuntimeError:
-    # Streamlitの内部的な再実行サイクルなどで既に設定されている場合があるので無視する
     pass
 
-import logging # logging モジュールをインポート
+import logging
 
-# --- 分離したモジュールをインポート ---
 from optimization_engine import optimization_gateway
-from optimization_engine.utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError
+from optimization_engine.utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError, SolverError
 from optimization_engine.utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
-from ortools.sat.python import cp_model # solver_raw_status_code の比較等で使用
-from typing import Optional, Any, Tuple, List, Dict # 型ヒント用
+from ortools.sat.python import cp_model
+from typing import Optional, Any, Tuple, List, Dict
+from dateutil.relativedelta import relativedelta
 
-# --- ロギング設定をアプリケーション起動時に一度だけ実行 ---
 setup_logging()
 logger = logging.getLogger('app')
 
@@ -45,7 +40,6 @@ def load_initial_data_from_files(data_dir: str = "data"):
         classrooms_data = json.loads(classrooms_file.read_text(encoding="utf-8"))
 
         # 日付文字列をdatetime.dateオブジェクトに変換（必要に応じて）
-        # LecturerDataのavailabilityとpast_assignments['date']、CourseDataのschedule
         for lecturer in lecturers_data:
             if 'availability' in lecturer and isinstance(lecturer['availability'], list):
                 lecturer['availability'] = [datetime.date.fromisoformat(d) if isinstance(d, str) else d for d in lecturer['availability']]
@@ -63,7 +57,7 @@ def load_initial_data_from_files(data_dir: str = "data"):
     except FileNotFoundError as e:
         logger.error(f"Required data file not found: {e.filename}. Please ensure data files are generated in '{data_dir}'.", exc_info=True)
         st.error(f"エラー: 必要なデータファイルが見つかりません。`{data_dir}` ディレクトリにデータファイルが生成されていることを確認してください。")
-        st.stop() # アプリの実行を停止
+        st.stop()
     except json.JSONDecodeError as e:
         logger.error(f"Error decoding JSON from data files: {e}", exc_info=True)
         st.error(f"エラー: データファイルの読み込み中にJSON形式のエラーが発生しました。ファイルが破損している可能性があります。")
@@ -81,7 +75,7 @@ def run_optimization():
         "solver_result_cache",
         "solver_log_for_download", "optimization_error_message",
         "optimization_gateway_log_for_download",
-        "app_log_for_download", "optimization_duration" # Gemini関連のキーを削除
+        "app_log_for_download", "optimization_duration"
     ]
     for key in keys_to_clear_on_execute:
         if key in st.session_state:
@@ -100,9 +94,27 @@ def run_optimization():
 
     try:
         with st.spinner("最適化計算を実行中..."):
-            start_time = time.time() # 処理時間測定開始
+            start_time = time.time()
             
             logger.info("Starting optimization calculation (optimization_gateway.run_optimization_with_monitoring).")
+
+            # ユーザー設定の「集中度」スライダーからmax_assignments_per_lecturerを計算
+            calculated_max_assignments_per_lecturer = None
+            if st.session_state.min_max_assignments_suggested is not None:
+                M_min = st.session_state.min_max_assignments_suggested
+                # M_max は、全ての講座を1人の講師が担当できるという極端なケース
+                M_max = len(st.session_state.DEFAULT_COURSES_DATA)
+                # スライダー値 S (0.0: 集中許容 - 1.0: 集中回避)
+                S = st.session_state.get("weight_lecturer_concentration_exp", 0.5)
+
+                # 計算式: S=1.0でM_min、S=0.0でM_maxに近づく
+                calculated_max_assignments_per_lecturer = M_min + (M_max - M_min) * (1 - S)
+                calculated_max_assignments_per_lecturer = int(max(1, round(calculated_max_assignments_per_lecturer)))
+                logger.info(f"Calculated max_assignments_per_lecturer: {calculated_max_assignments_per_lecturer} (M_min={M_min}, M_max={M_max}, S={S})")
+            else:
+                logger.warning("min_max_assignments_suggested が未設定のため、講師の最大割り当て回数上限は適用されません。")
+
+
             solver_output = optimization_gateway.run_optimization_with_monitoring(
                 lecturers_data=st.session_state.DEFAULT_LECTURERS_DATA,
                 courses_data=st.session_state.DEFAULT_COURSES_DATA,
@@ -111,29 +123,32 @@ def run_optimization():
                 weight_qualification=st.session_state.get("weight_qualification_exp", 0.5),
                 weight_age=st.session_state.get("weight_age_exp", 0.5),
                 weight_frequency=st.session_state.get("weight_frequency_exp", 0.5),
-                weight_lecturer_concentration=st.session_state.get("weight_lecturer_concentration_exp", 0.5),
+                # weight_lecturer_concentration はUIスライダーの計算ロジックに移行したため、ここでは渡さない
                 weight_consecutive_assignment=st.session_state.get("weight_consecutive_assignment_exp", 0.5),
                 today_date=st.session_state.TODAY,
                 fixed_assignments=st.session_state.get("fixed_assignments_for_solver"),
-                forced_unassignments=st.session_state.get("forced_unassignments_for_solver")
+                forced_unassignments=st.session_state.get("forced_unassignments_for_solver"),
+                time_limit_seconds=st.session_state.get("solver_time_limit", 60),
+                max_assignments_per_lecturer=calculated_max_assignments_per_lecturer # 計算された上限値を渡す
             )
             
-            end_time = time.time() # 処理時間測定終了
+            end_time = time.time()
             elapsed_time = end_time - start_time
             logger.info(f"Optimization process took {elapsed_time:.2f} seconds.")
-            st.session_state.optimization_duration = elapsed_time # 結果をセッションに保存
+            st.session_state.optimization_duration = elapsed_time
 
             logger.info("solve_assignment completed.")
 
             if not isinstance(solver_output, dict):
                 raise TypeError(f"最適化関数の戻り値が不正です。型: {type(solver_output).__name__}")
 
-            required_keys = ["status", "message", "solution_status", "objective_value", "assignments_df", "lecturer_course_counts", "course_assignment_counts", "course_remaining_capacity", "raw_solver_status_code"]
+            required_keys = ["status", "message", "solution_status", "objective_value", "assignments_df", "lecturer_course_counts", "course_assignment_counts", "course_remaining_capacity", "raw_solver_status_code", "unassigned_courses", "min_max_assignments_per_lecturer"]
             missing_keys = [key for key in required_keys if key not in solver_output]
             if missing_keys:
                 raise KeyError(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}")
 
             st.session_state.solver_result_cache = solver_output
+            st.session_state.min_max_assignments_suggested = solver_output.get("min_max_assignments_per_lecturer") # フェーズ2の出力をセッションに保存
 
             if "fixed_assignments_for_solver" in st.session_state: del st.session_state.fixed_assignments_for_solver
             if "forced_unassignments_for_solver" in st.session_state: del st.session_state.forced_unassignments_for_solver
@@ -141,47 +156,33 @@ def run_optimization():
             st.session_state.solution_executed = True
             st.session_state.view_mode = "optimization_result"
 
-    except (InvalidInputError, ProcessExecutionError, ProcessTimeoutError) as e:
+    except (InvalidInputError, ProcessExecutionError, ProcessTimeoutError, SolverError) as e:
         logger.error(f"最適化ゲートウェイでエラーが発生しました: {e}", exc_info=True)
-        # エラーの種類に応じてユーザーへのメッセージを調整
-        if isinstance(e, InvalidInputError):
-            error_message = f"入力データの検証中にエラーが発生しました:\n\n{e}"
-        elif isinstance(e, ProcessTimeoutError):
-            error_message = f"最適化処理がタイムアウトしました:\n\n{e}"
-        elif isinstance(e, ProcessExecutionError):
-            error_message = f"最適化プロセスの実行中にエラーが発生しました:\n\n{e}"
-        else:
-            error_message = f"予期せぬ最適化エラーが発生しました:\n\n{e}"
-
+        error_message = f"最適化処理中にエラーが発生しました:\n\n{e}"
         st.session_state.optimization_error_message = error_message
-        # ログダウンロード用に空の文字列を設定
         st.session_state.solver_log_for_download = ""
         st.session_state.app_log_for_download = ""
-        # UIにエラーを表示するための設定
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
-        st.rerun() # UIを即時更新してエラーを表示
+        st.rerun()
 
     except Exception as e:
         logger.error(f"予期せぬエラーが発生しました: {e}", exc_info=True)
         import traceback
         error_trace = traceback.format_exc()
-        st.session_state.optimization_error_message = f"最適化処理中にエラーが発生しました:\n\n{error_trace}"
+        st.session_state.optimization_error_message = f"最適化処理中に予期せぬエラーが発生しました:\n\n{error_trace}"
         st.session_state.solver_log_for_download = ""
         st.session_state.app_log_for_download = ""
         st.session_state.solution_executed = True
         st.session_state.view_mode = "optimization_result"
 
     finally:
-        # 処理の最後にログファイルを読み込む
         logger.info("Reading log files to store in session state.")
         st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE)
-        # optimization_engine のログは直接ファイルから読み込む
         engine_log_content = read_log_file(SOLVER_LOG_FILE)
         st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
         st.session_state.app_log_for_download = read_log_file(APP_LOG_FILE)
 
-        # OR-Toolsソルバーログを抽出してダウンロード用に設定
         solver_log_lines = []
         if engine_log_content:
             solver_log_prefix = "[OR-Tools Solver]"
@@ -204,7 +205,6 @@ def handle_execute_changes_callback():
     )
     
     current_forced = st.session_state.get("forced_unassignments_for_solver", [])
-    # current_forcedがリストでない場合やNoneの場合に初期化
     if not isinstance(current_forced, list):
         current_forced = []
         logger.warning("forced_unassignments_for_solver was not a list or None, re-initialized to empty list.")
@@ -214,34 +214,29 @@ def handle_execute_changes_callback():
         logger.warning("handle_execute_changes_callback called with empty assignments_to_change_list.")
         return
 
-    # 変更サマリー表示用に情報を保存
     st.session_state.pending_change_summary_info = [
         {
             "lecturer_id": item[0], "course_id": item[1],
             "lecturer_name": item[2], "course_name": item[3],
-            "classroom_name": item[4] # 教室名も追加
+            "classroom_name": item[4]
         }
         for item in st.session_state.assignments_to_change_list
     ]
     logger.info(f"Pending change summary info: {st.session_state.pending_change_summary_info}")
 
-    # ソルバーに渡す強制非割り当てリストを準備
     newly_forced_unassignments = [
         (item[0], item[1]) for item in st.session_state.assignments_to_change_list
     ]
     
-    # 既存の強制非割り当てと結合し、重複を避ける
     for pair in newly_forced_unassignments:
         if pair not in current_forced:
             current_forced.append(pair)
             
-    st.session_state.forced_unassignments_for_solver = current_forced # セッション状態を更新
+    st.session_state.forced_unassignments_for_solver = current_forced
     logger.info(f"forced_unassignments_for_solver updated to: {st.session_state.forced_unassignments_for_solver}")
     
-    # 選択リストをクリア
     st.session_state.assignments_to_change_list = []
 
-    # メインの最適化ロジックをトリガー
     run_optimization()
 
 # --- Streamlit UI 表示関数 ---
@@ -253,21 +248,19 @@ def display_optimization_result_view():
 
     if not st.session_state.get("solution_executed", False):
         st.info("サイドバーの「最適割り当てを実行」ボタンを押して最適化を実行してください。")
-    else: # solution_executed is True
-        if "solver_result_cache" not in st.session_state:
-            if "optimization_error_message" in st.session_state and st.session_state.optimization_error_message:
-                logger.warning("Optimization error occurred. Displaying error message.")
-                st.error("最適化処理でエラーが発生しました。詳細は以下をご確認ください。")
-                with st.expander("エラー詳細", expanded=True):
-                    st.code(st.session_state.optimization_error_message, language=None)
-            else:
-                logger.info("No solver_result_cache and no optimization_error_message. Prompting user to run optimization.")
-                st.warning(
-                    "最適化結果のデータは現在ありません。\n"
-                    "再度結果を表示するには、サイドバーの「最適割り当てを実行」ボタンを押してください。"
-                )
-        else: # solution_executed is True and solver_result_cache exists
-            logger.info("solver_result_cache found. Displaying results.")
+    else:
+        if "optimization_error_message" in st.session_state and st.session_state.optimization_error_message:
+            logger.warning("Optimization error occurred. Displaying error message.")
+            st.error("最適化処理でエラーが発生しました。詳細は以下をご確認ください。")
+            with st.expander("エラー詳細", expanded=True):
+                st.code(st.session_state.optimization_error_message, language=None)
+        elif "solver_result_cache" not in st.session_state:
+            logger.info("No solver_result_cache and no optimization_error_message. Prompting user to run optimization.")
+            st.warning(
+                "最適化結果のデータは現在ありません。\n"
+                "再度結果を表示するには、サイドバーの「最適割り当てを実行」ボタンを押してください。"
+            )
+        else:
             solver_result = st.session_state.solver_result_cache
             st.subheader(f"求解ステータス: {solver_result['solution_status']}")
 
@@ -279,7 +272,38 @@ def display_optimization_result_view():
                 if 'optimization_duration' in st.session_state:
                     st.metric("処理時間", f"{st.session_state.optimization_duration:.2f} 秒", help="データ準備から最適化完了までの時間です。")
 
-            if solver_result['raw_solver_status_code'] in [cp_model.FEASIBLE, cp_model.UNKNOWN]:
+            # フェーズ1での割り当て不能メッセージ
+            if solver_result['solution_status'] == "NO_ASSIGNMENT_POSSIBLE":
+                st.error("フェーズ1: 全ての講座に割り当て可能な講師が見つかりませんでした。")
+                st.caption("以下の講座は、現在の制約（資格、スケジュールなど）では割り当てられませんでした。")
+                if solver_result.get('unassigned_courses'):
+                    st.dataframe(pd.DataFrame(solver_result['unassigned_courses']))
+                else:
+                    st.info("割り当てられなかった講座の具体的なリストは提供されていません。")
+                st.warning(
+                    """
+                    **考えられる原因:**
+                    - 講師の空き日や資格が厳しすぎる。
+                    - 講座の要求が厳しすぎる。
+                    - データに矛盾がある。
+                    """
+                )
+            elif solver_result['solution_status'] == "PARTIALLY_ASSIGNED":
+                st.warning("フェーズ1: 一部の講座に割り当て可能な講師が見つかりませんでした。")
+                st.caption("以下の講座は、現在の制約（資格、スケジュールなど）では割り当てられませんでした。")
+                if solver_result.get('unassigned_courses'):
+                    st.dataframe(pd.DataFrame(solver_result['unassigned_courses']))
+                else:
+                    st.info("割り当てられなかった講座の具体的なリストは提供されていません。")
+                st.warning(
+                    """
+                    **対処法の例:**
+                    - 講師の対応可能日を増やす。
+                    - 講座の要求ランクを下げる。
+                    - 割り当て対象の講座を減らす。
+                    """
+                )
+            elif solver_result['raw_solver_status_code'] in [cp_model.FEASIBLE, cp_model.UNKNOWN]:
                 st.warning(
                     """
                     時間制限(Time Limit)内に最適解が見つかりませんでした。現在の最良の解を表示します。
@@ -287,18 +311,43 @@ def display_optimization_result_view():
                     もう一度やり直す場合は、余り必要としない最適化目標の重みを0.0に設定することで、その最適化目標が除外されて計算時間が短縮される可能性があります。
                     """
                 )
+            elif solver_result['raw_solver_status_code'] == cp_model.INFEASIBLE:
+                st.error("実行不可能な割り当てです。")
+                st.warning(
+                    """
+                    指定された条件では、制約を満たす割り当てパターンが見つかりませんでした。
+
+                    **考えられる主な原因:**
+                    - **制約の競合:** 「全ての講座に必ず1名割り当てる」というルールが厳格化されたため、一人の講師が担当できる唯一の講座が複数存在する場合などに、制約が満たせなくなります。
+
+                    **対処法の例:**
+                    - 講師の対応可能日を増やす。
+                    - 割り当て対象の講座を減らす。
+                    - 「割り当ての変更」機能で、競合していそうな講師の割り当てを強制的に交代させてみる。
+                    """
+                )
 
             if solver_result.get('assignments_df'):
                 results_df = pd.DataFrame(solver_result['assignments_df'])
-
-                assigned_course_ids = set(results_df["講座ID"])
-                unassigned_courses = [c for c in st.session_state.DEFAULT_COURSES_DATA if c["id"] not in assigned_course_ids]
-                if not unassigned_courses:
-                    st.success("全ての講座が割り当てられました。")
+                
+                if solver_result['solution_status'] in ["OPTIMAL", "FEASIBLE"]:
+                    assigned_course_ids = set(results_df["講座ID"])
+                    unassigned_courses_after_final_phase = [c for c in st.session_state.DEFAULT_COURSES_DATA if c["id"] not in assigned_course_ids]
+                    if not unassigned_courses_after_final_phase:
+                        st.success("全ての講座が割り当てられました。")
+                    else:
+                        st.warning("最終フェーズ後、一部の講座が割り当てられませんでした。")
+                        st.dataframe(pd.DataFrame(unassigned_courses_after_final_phase))
 
                 st.subheader("割り当て結果サマリー")
                 summary_data = []
                 summary_data.append(("**総割り当て件数**", f"{len(results_df)}件"))
+
+                # フェーズ2で決定された最小最大割り当て回数を表示
+                if st.session_state.get("min_max_assignments_suggested") is not None:
+                    summary_data.append(("**講師の最小最大割り当て回数**", f"{st.session_state.min_max_assignments_suggested}回"))
+                    st.info(f"全ての講座を割り当てるために、講師一人あたり最低でも最大 **{st.session_state.min_max_assignments_suggested}回** の割り当てが必要です。")
+
 
                 assigned_lecturer_ids = results_df["講師ID"].unique()
                 temp_assigned_lecturers = [l for l in st.session_state.DEFAULT_LECTURERS_DATA if l["id"] in assigned_lecturer_ids]
@@ -356,7 +405,6 @@ def display_optimization_result_view():
                 st.markdown(markdown_table)
                 st.markdown("---")
 
-                # --- 割り当て変更サマリーの表示 ---
                 if "pending_change_summary_info" in st.session_state and st.session_state.pending_change_summary_info:
                     st.subheader("今回の割り当て変更による影響")
                     change_details_markdown = ""
@@ -378,51 +426,18 @@ def display_optimization_result_view():
                     if change_details_markdown:
                         st.markdown(change_details_markdown)
                     st.markdown("---")
-                    del st.session_state.pending_change_summary_info # 表示後にクリア
+                    del st.session_state.pending_change_summary_info
 
-                # --- 詳細結果と未割り当て講座 ---
                 st.subheader("割り当て結果詳細")
                 st.dataframe(results_df)
                 st.markdown("---")
 
-                if unassigned_courses:
-                    st.subheader("割り当てられなかった講座")
-                    st.dataframe(pd.DataFrame(unassigned_courses))
-                    st.caption("上記の講座は、制約（資格ランクなど）により割り当て可能な講師が見つからなかったか、または他の割り当てと比較してコストが高すぎると判断された可能性があります。")
-
-            else: # solver_result['assignments'] が存在しないか、空の場合
-                if solver_result['raw_solver_status_code'] in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-                    st.error("解が見つかりましたが、実際の割り当ては行われませんでした。")
-                    st.warning(
-                        """
-                        考えられる原因:
-                        - 割り当て可能な講師と講座のペアが元々存在しない (制約が厳しすぎる、データ不適合)。
-                        - 結果として、総コスト 0.00 (何も割り当てない) が最適と判断された可能性があります。
-                        """
-                    )
-                    st.subheader("全ての講座が割り当てられませんでした")
-                    st.dataframe(pd.DataFrame(st.session_state.DEFAULT_COURSES_DATA))
-                elif solver_result['raw_solver_status_code'] == cp_model.INFEASIBLE:
-                    st.error("実行不可能な割り当てです。")
-                    st.warning(
-                        """
-                        指定された条件では、制約を満たす割り当てパターンが見つかりませんでした。
-
-                        **考えられる主な原因:**
-                        - **制約の競合:** 「全ての講座に必ず1名割り当てる」というルールが厳格化されたため、一人の講師が担当できる唯一の講座が複数存在する場合などに、制約が満たせなくなります。
-
-                        **対処法の例:**
-                        - 講師の対応可能日を増やす。
-                        - 割り当て対象の講座を減らす。
-                        - 「割り当ての変更」機能で、競合していそうな講師の割り当てを強制的に交代させてみる。
-                        """
-                    )
-                else:
-                    st.error(solver_result['solution_status_str'])
+            elif solver_result['solution_status'] not in ["NO_ASSIGNMENT_POSSIBLE", "PARTIALLY_ASSIGNED", "INFEASIBLE_PHASE1", "UNKNOWN_FEASIBILITY"]:
+                 st.error(solver_result['solution_status'])
 
             # ログダウンロードセクション
             if st.session_state.get("solution_executed"):
-                st.markdown("---") # 区切り線
+                st.markdown("---")
                 st.subheader("ログのダウンロード")
                 dl_cols_1 = st.columns(2)
                 dl_cols_2 = st.columns(2)
@@ -479,7 +494,7 @@ def display_change_assignment_view():
        "solver_result_cache" not in st.session_state or \
        not st.session_state.solver_result_cache.get("assignments_df"):
         st.warning("割り当て結果が存在しないため、この機能は利用できません。まず最適化を実行してください。")
-    else: # 割り当て結果が存在する場合
+    else:
         solver_result = st.session_state.solver_result_cache
         results_df = pd.DataFrame(solver_result['assignments_df'])
 
@@ -488,7 +503,6 @@ def display_change_assignment_view():
         else:
             st.markdown("交代させたい講師の割り当てを選択し、「交代リスト」に追加してください。リスト作成後、「選択した割り当ての講師を変更して再最適化」ボタンで実行します。")
 
-            # --- 検索フィルター ---
             st.subheader("割り当て検索フィルター")
             filter_cols = st.columns(3)
             with filter_cols[0]:
@@ -503,7 +517,7 @@ def display_change_assignment_view():
                 filtered_assignments_df = filtered_assignments_df[filtered_assignments_df['講師名'].str.lower().str.contains(search_lecturer_name, na=False)]
             if search_course_name:
                 filtered_assignments_df = filtered_assignments_df[filtered_assignments_df['講座名'].str.lower().str.contains(search_course_name, na=False)]
-            if search_classroom_name: # 教室名で検索 (results_df に '教室名' がある前提)
+            if search_classroom_name:
                 if '教室名' in filtered_assignments_df.columns:
                     filtered_assignments_df = filtered_assignments_df[filtered_assignments_df['教室名'].str.lower().str.contains(search_classroom_name, na=False)]
                 else:
@@ -518,63 +532,70 @@ def display_change_assignment_view():
                     item_tuple = (
                         row['講師ID'], row['講座ID'],
                         row['講師名'], row['講座名'],
-                        row['教室名'], row['スケジュール'] # 教室名とスケジュールもタプルに含める
+                        row['教室名'], row['スケジュール']
                     )
                     is_selected = item_tuple in st.session_state.assignments_to_change_list
 
                     checkbox_label = f"講師: {row['講師名']} (`{row['講師ID']}`), 講座: {row['講座名']} (`{row['講座ID']}`), 教室: {row['教室名']} @ {row['スケジュール']}"
 
-                    # チェックボックスの状態変更で直接リストを更新
                     if st.checkbox(checkbox_label, value=is_selected, key=f"cb_change_{row['講師ID']}_{row['講座ID']}"):
-                        if not is_selected: # 以前選択されていなくて、今チェックされた
+                        if not is_selected:
                             st.session_state.assignments_to_change_list.append(item_tuple)
-                    else: # チェックが外された場合
-                        if is_selected: # 以前選択されていて、今チェックが外された
+                    else:
+                        if is_selected:
                             st.session_state.assignments_to_change_list.remove(item_tuple)
                     st.markdown("---")
 
-            # --- 交代リストの表示と管理 ---
             st.sidebar.markdown("---")
             st.sidebar.subheader("交代予定の割り当てリスト")
             if not st.session_state.assignments_to_change_list:
                 st.sidebar.info("交代する割り当てはありません。")
             else:
                 for i, item in enumerate(st.session_state.assignments_to_change_list):
-                    # item: (lecturer_id, course_id, lecturer_name, course_name, classroom_name, schedule)
                     st.sidebar.markdown(f"- **講師:** {item[2]}, **講座:** {item[3]}")
                     if st.sidebar.button(f"リストから削除 ({item[2]}-{item[3]})", key=f"remove_change_{item[0]}_{item[1]}_{i}"):
                         st.session_state.assignments_to_change_list.pop(i)
-                        st.rerun() # リスト変更を即時反映
+                        st.rerun()
                 st.sidebar.markdown("---")
 
-            # --- 変更実行ボタン ---
             if st.button("選択した割り当ての講師を変更して再最適化",
                             type="primary",
                             use_container_width=True,
                             disabled=not st.session_state.assignments_to_change_list,
                             on_click=handle_execute_changes_callback):
-                pass # on_click で処理される
+                pass
     logger.info("Change assignment view display complete.")
 
 def main():
-    # --- Streamlitアプリの基本設定 ---
     st.set_page_config(page_title="講師割り当てシステムデモ", layout="wide")
     st.title("講師割り当てシステム(OR-Tools)-プロトタイプ")
 
     # --- セッション状態の初期化と初期データ読み込み ---
-    # アプリケーション起動時に一度だけ実行
+    if "DEFAULT_LECTURERS_DATA" not in st.session_state:
+        st.session_state.DEFAULT_LECTURERS_DATA = []
+    if "DEFAULT_COURSES_DATA" not in st.session_state:
+        st.session_state.DEFAULT_COURSES_DATA = []
+    if "DEFAULT_CLASSROOMS_DATA" not in st.session_state:
+        st.session_state.DEFAULT_CLASSROOMS_DATA = []
+    if "TODAY" not in st.session_state:
+        st.session_state.TODAY = datetime.date.today()
+    if "ASSIGNMENT_TARGET_MONTH_START" not in st.session_state:
+        st.session_state.ASSIGNMENT_TARGET_MONTH_START = (st.session_state.TODAY + relativedelta(months=4)).replace(day=1)
+    if "ASSIGNMENT_TARGET_MONTH_END" not in st.session_state:
+        st.session_state.ASSIGNMENT_TARGET_MONTH_END = (st.session_state.ASSIGNMENT_TARGET_MONTH_START + relativedelta(months=1)) - datetime.timedelta(days=1)
     if "app_data_initialized" not in st.session_state:
-        logger.info("Initializing app data and loading from files.")
+        st.session_state.app_data_initialized = False
+    
+    # データがまだ読み込まれていない場合のみ、ファイルから読み込む
+    if not st.session_state.app_data_initialized:
+        logger.info("Loading app data from files for the first time.")
         st.session_state.DEFAULT_LECTURERS_DATA, \
         st.session_state.DEFAULT_COURSES_DATA, \
         st.session_state.DEFAULT_CLASSROOMS_DATA = load_initial_data_from_files()
         
-        # 割り当て対象月の設定 (現在の4ヶ月後)
         st.session_state.TODAY = datetime.date.today()
-        assignment_target_month_start_val = (st.session_state.TODAY + relativedelta(months=4)).replace(day=1)
-        st.session_state.ASSIGNMENT_TARGET_MONTH_START = assignment_target_month_start_val
-        next_month_val = assignment_target_month_start_val + relativedelta(months=1)
-        st.session_state.ASSIGNMENT_TARGET_MONTH_END = next_month_val - datetime.timedelta(days=1)
+        st.session_state.ASSIGNMENT_TARGET_MONTH_START = (st.session_state.TODAY + relativedelta(months=4)).replace(day=1)
+        st.session_state.ASSIGNMENT_TARGET_MONTH_END = (st.session_state.ASSIGNMENT_TARGET_MONTH_START + relativedelta(months=1)) - datetime.timedelta(days=1)
         logger.info(f"Assignment target month set: {st.session_state.ASSIGNMENT_TARGET_MONTH_START} to {st.session_state.ASSIGNMENT_TARGET_MONTH_END}")
 
         st.session_state.app_data_initialized = True
@@ -584,21 +605,26 @@ def main():
 
     # その他のセッション状態変数
     if "view_mode" not in st.session_state:
-        st.session_state.view_mode = "optimization_result" # デフォルトビュー
+        st.session_state.view_mode = "optimization_result"
     if "assignments_to_change_list" not in st.session_state:
         st.session_state.assignments_to_change_list = []
     if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
+    if "solver_time_limit" not in st.session_state:
+        st.session_state.solver_time_limit = 60
+    if "min_max_assignments_suggested" not in st.session_state:
+        st.session_state.min_max_assignments_suggested = None
+    # ユーザーが設定する「集中度を低くする」スライダーの値を初期化
+    if "weight_lecturer_concentration_exp" not in st.session_state:
+        st.session_state.weight_lecturer_concentration_exp = 0.5 # デフォルト値
 
     # --- UIの描画 ---
-    # ナビゲーションボタン (最適化結果と割り当て変更のみ)
-    nav_cols = st.columns([1, 1]) # ボタン数を2つに調整
+    nav_cols = st.columns([1, 1])
     with nav_cols[0]:
         if st.button("最適化結果", use_container_width=True, type="primary" if st.session_state.view_mode == "optimization_result" else "secondary"):
             st.session_state.view_mode = "optimization_result"
             st.rerun()
     with nav_cols[1]:
-        # 「割り当て結果を変更」ボタンは、最適化が実行されて結果がある場合のみ表示
         if st.session_state.get("solution_executed", False) and \
            st.session_state.get("solver_result_cache") and \
            st.session_state.solver_result_cache.get("assignments_df"):
@@ -606,7 +632,6 @@ def main():
                 st.session_state.view_mode = "change_assignment_view"
                 st.rerun()
         else:
-            # 最適化がまだ実行されていない、または結果がない場合はボタンを無効化または非表示
             st.button("割り当て結果を変更", use_container_width=True, disabled=True, help="最適化を実行すると有効になります。")
     
     st.sidebar.markdown(
@@ -616,10 +641,24 @@ def main():
     st.sidebar.button("最適割り当てを実行", type="primary", on_click=run_optimization)
     st.sidebar.markdown("---")
 
+    with st.sidebar.expander("【ソルバー設定】", expanded=False):
+        st.slider(
+            "タイムリミット (秒)",
+            min_value=10,
+            max_value=300,
+            value=st.session_state.solver_time_limit,
+            step=10,
+            format="%d秒",
+            key="solver_time_limit",
+            help="各最適化フェーズでソルバーが解を探索する最大時間。"
+        )
+    st.sidebar.markdown("---")
+
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない")
         st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。")
-        st.markdown("- 3.講座には、出来るだけ1名を割り当てる。（ソフト制約）")
+        st.markdown("- 3.全講座に必ず1名の講師が割り当てられる。（レキシコグラフィカル優先目標）")
+        st.markdown("- 4.講師の割り当て回数は、設定された上限を超えない。（ユーザー設定制約）") # 文言修正
 
     with st.sidebar.expander("【最適化目標】", expanded=False):
         st.caption(
@@ -634,8 +673,20 @@ def main():
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど講師資格ランクが高い人が重視されます。", key="weight_qualification_exp")
         st.markdown("**同教室への割り当て実績が無い人を優先**")
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
+        
+        # 「講師の割り当て集中度を低くする（今回の割り当て内）」スライダーを復活
         st.markdown("**講師の割り当て集中度を低くする（今回の割り当て内）**")
-        st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、一人の講師が今回の最適化で複数の講座を担当することへのペナルティが大きくなります。", key="weight_lecturer_concentration_exp")
+        # スライダーのステップを0.25に設定し、5段階相当にする
+        concentration_help_text = "高いほど講師一人あたりの割り当て回数が厳しく制限され、集中が回避されます。0.0は制限なし、1.0は最低限の回数に制限されます。"
+        if st.session_state.min_max_assignments_suggested is not None:
+            concentration_help_text += f" (フェーズ2推奨値: {st.session_state.min_max_assignments_suggested}回)"
+        st.slider(
+            "重み",
+            0.0, 1.0, st.session_state.weight_lecturer_concentration_exp, 0.25, # stepを0.25に
+            format="%.2f", # 少数点以下2桁表示
+            help=concentration_help_text,
+            key="weight_lecturer_concentration_exp"
+        )
 
         st.markdown("**連日講座への連続割り当てを優先**")
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど、特別資格を持つ講師が一般講座と特別講座の連日ペアをまとめて担当することを重視します（報酬が増加）。", key="weight_consecutive_assignment_exp")
@@ -646,7 +697,7 @@ def main():
         display_optimization_result_view()
     elif st.session_state.view_mode == "change_assignment_view":
         display_change_assignment_view()
-    else: # view_mode が予期せぬ値の場合 (フォールバック)
+    else:
         logger.warning(f"Unexpected view_mode: {st.session_state.view_mode}. Displaying fallback info.")
         st.info("サイドバーから表示するデータを選択してください。")
     logger.info("Exiting main function.")

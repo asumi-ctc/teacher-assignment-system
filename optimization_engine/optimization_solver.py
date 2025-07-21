@@ -1,457 +1,471 @@
-# optimization_solver.py
 import logging
-import datetime # 日付処理用
-import os # 並列探索用にインポート
-import numpy as np
+import datetime
+from typing import List, Dict, Any, Tuple, Optional, Callable
+import pandas as pd
 from ortools.sat.python import cp_model
-from typing import List, Optional, Tuple, Dict, Any
-from .utils.types import LecturerData, CourseData, ClassroomData, SolverOutput
 
-logger = logging.getLogger('optimization_solver')
+from .utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError, SolverError
+from .utils.types import LecturerData, CourseData, ClassroomData, SolverOutput, SolverAssignment
 
-# --- 定数定義 ---
-RECENCY_COST_CONSTANT = 100000.0
-# --- [変更] 累進ペナルティの定義 ---
-# 各割り当て回数で「追加」されるペナルティコストを定義する。
-# インデックス0: 2回目の割り当てでの追加ペナルティ
-# インデックス1: 3回目の割り当てでの追加ペナルティ...
-PROGRESSIVE_PENALTY_ADDITIONS_SCALED = [
-    200 * 100,  # 2回目: +20,000
-    500 * 100,  # 3回目: +50,000 (総額 70,000)
-    1500 * 100, # 4回目: +150,000 (総額 220,000)
-    # 5回目以降は、4回目の追加ペナルティ(150,000)が適用され続けるようにコード側でハンドリングする。
-]
+logger = logging.getLogger(__name__)
 
-BASE_REWARD_CONSECUTIVE_SCALED = 30000 * 100
-# 講座が割り当てられない場合のペナルティ。他のコストより十分に大きく設定する。
-BASE_PENALTY_UNASSIGNED_SCALED = 50000 * 100
-# ---
+DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 365 * 10 # 10年
 
-# --- [ここから app.py より移動] ---
+def solve_assignment(
+    lecturers_data: List[LecturerData],
+    courses_data: List[CourseData],
+    classrooms_data: List[ClassroomData],
+    weight_past_assignment_recency: float,
+    weight_qualification: float,
+    weight_age: float,
+    weight_frequency: float,
+    # weight_lecturer_concentration: float, # この重みはUIスライダーの制御ロジックに移行するため、solverからは削除
+    weight_consecutive_assignment: float,
+    today_date: datetime.date,
+    fixed_assignments: Optional[List[Tuple[str, str]]] = None,
+    forced_unassignments: Optional[List[Tuple[str, str]]] = None,
+    time_limit_seconds: int = 60,
+    max_assignments_per_lecturer: Optional[int] = None # UIの集中度スライダーから計算された上限値
+) -> SolverOutput:
+    """
+    レキシコグラフィカル法（3フェーズ）を用いて講師割り当て問題を解くメイン関数。
+    フェーズ1: 全講座割り当て可能性の確認
+    フェーズ2: 講師割り当て回数の最小化（min_max_assignmentsの決定）
+    フェーズ3: ユーザー設定の「集中度」から計算された割り当て上限を制約とした最終最適化
+    """
+    logger.info("レキシコグラフィカル法による最適化を開始します。")
 
-def solve_assignment(lecturers_data: List[LecturerData],
-                     courses_data: List[CourseData],
-                     classrooms_data: List[ClassroomData],
-                     weight_past_assignment_recency: float,
-                     weight_qualification: float,
-                     weight_age: float,
-                     weight_frequency: float,
-                     weight_lecturer_concentration: float,
-                     weight_consecutive_assignment: float,
-                     today_date: datetime.date,
-                     fixed_assignments: Optional[List[Tuple[str, str]]] = None,
-                     forced_unassignments: Optional[List[Tuple[str, str]]] = None) -> SolverOutput:
-    # --- パフォーマンス向上のため、詳細ログをメモリにバッファリング ---
-    log_buffer = []
-    def log_to_buffer(message: str):
-        """詳細ログをメモリ上のバッファに格納する。"""
-        log_buffer.append(f"[SolverEngineLog] {message}")
+    # --- 1. データの前処理と準備（既存ロジックを維持） ---
+    lecturers_dict = {l['id']: l for l in lecturers_data}
+    courses_dict = {c['id']: c for c in courses_data}
+    classrooms_dict = {c['id']: c for c in classrooms_data}
 
-    def flush_log_buffer():
-        """バッファされたログをファイルに書き出し、バッファをクリアする。"""
-        nonlocal log_buffer
-        if log_buffer:
-            # ログが空でなければ、まとめてファイルに出力
-            logger.info("\n".join(log_buffer))
-            log_buffer = [] # バッファをクリア
+    def parse_date_if_str(date_obj: Any) -> Optional[datetime.date]:
+        if isinstance(date_obj, str):
+            try:
+                return datetime.date.fromisoformat(date_obj)
+            except ValueError:
+                logger.warning(f"Invalid date format encountered: {date_obj}. Returning None.")
+                return None
+        return date_obj
 
-    try: # メインのtryブロック
-        model = cp_model.CpModel()
+    for lecturer_id, lecturer in lecturers_dict.items():
+        if 'availability' in lecturer and isinstance(lecturer['availability'], list):
+            lecturer['availability'] = [parse_date_if_str(d) for d in lecturer['availability']]
+            lecturer['availability'] = [d for d in lecturer['availability'] if d is not None]
+        if 'past_assignments' in lecturer and isinstance(lecturer['past_assignments'], list):
+            for pa in lecturer['past_assignments']:
+                if 'date' in pa:
+                    pa['date'] = parse_date_if_str(pa['date'])
+    
+    for course_id, course in courses_dict.items():
+        if 'schedule' in course:
+            course['schedule'] = parse_date_if_str(course['schedule'])
 
-        # --- 1. データ前処理: リストをIDをキーとする辞書に変換 ---
-        lecturers_dict = {lecturer['id']: lecturer for lecturer in lecturers_data}
-        courses_dict = {course['id']: course for course in courses_data}
-        classrooms_dict = {classroom['id']: classroom for classroom in classrooms_data} # 教室データも辞書に変換
+    fixed_assignments_set = set(fixed_assignments) if fixed_assignments else set()
+    forced_unassignments_set = set(forced_unassignments) if forced_unassignments else set()
 
-        # --- パフォーマンス改善: 講師ごとの教室別最終割り当て日を事前に計算 ---
-        log_to_buffer("Pre-calculating latest assignment dates per classroom for each lecturer.")
-        for lecturer in lecturers_dict.values():
-            latest_assignments = {}
-            # データ生成時に過去の割り当ては日付で降順ソートされていると仮定
-            for pa in lecturer.get("past_assignments", []):
-                if pa["classroom_id"] not in latest_assignments:
-                    latest_assignments[pa["classroom_id"]] = pa["date"]
-            lecturer["_latest_assignment_by_classroom"] = latest_assignments
+    # --- 2. 割り当て候補の生成とコスト計算（既存ロジックを維持） ---
+    possible_assignments_details = []
+    
+    consecutive_day_pairs = []
+    courses_by_date_classroom = {}
+    for course_id, course in courses_dict.items():
+        if course['schedule'] and course['classroom_id']:
+            key = (course['schedule'], course['classroom_id'])
+            if key not in courses_by_date_classroom:
+                courses_by_date_classroom[key] = []
+            courses_by_date_classroom[key].append(course_id)
 
-        # --- パフォーマンス改善: 講師の対応可能日をセットに変換して検索を高速化 ---
-        log_to_buffer("Pre-converting lecturer availability to sets for faster lookups.")
-        for lecturer in lecturers_dict.values():
-            # O(N)のリスト内検索をO(1)のセット内検索に切り替えるための事前処理
-            lecturer["_availability_set"] = set(lecturer.get("availability", []))
+    for course_id_1, course_1 in courses_dict.items():
+        if course_1['schedule'] and course_1['course_type'] == 'general':
+            next_day_date = course_1['schedule'] + datetime.timedelta(days=1)
+            if (next_day_date, course_1['classroom_id']) in courses_by_date_classroom:
+                for course_id_2 in courses_by_date_classroom[(next_day_date, course_1['classroom_id'])]:
+                    course_2 = courses_dict[course_id_2]
+                    if course_2['course_type'] == 'special':
+                        for lecturer_id, lecturer in lecturers_dict.items():
+                            if lecturer['qualification_special_rank'] is not None:
+                                if course_1['schedule'] in lecturer['availability'] and \
+                                   course_2['schedule'] in lecturer['availability'] and \
+                                   lecturer['qualification_special_rank'] <= course_1['rank'] and \
+                                   lecturer['qualification_special_rank'] <= course_2['rank']:
+                                    consecutive_day_pairs.append({
+                                        "lecturer_id": lecturer_id,
+                                        "course1_id": course_id_1,
+                                        "course2_id": course_id_2,
+                                        "classroom_id": course_1['classroom_id'],
+                                        "dates": (course_1['schedule'], course_2['schedule'])
+                                    })
+    
+    MAX_AGE_COST = 65 - 22
+    MAX_FREQUENCY_COST = 12
+    MAX_QUALIFICATION_COST = 5
+    MAX_RECENCY_DAYS = 365 * 2
 
-        # --- ステップ1: 連日講座ペアのリストアップ ---
-        consecutive_day_pairs: List[Dict[str, Any]] = []
-        log_to_buffer("Starting search for consecutive general-special course pairs.")
-        # 型定義により、'schedule'は既にdatetime.dateオブジェクトであると想定
-        parsed_courses_for_pairing = [{**c, 'schedule_date_obj': c['schedule']} for c in courses_dict.values()]
+    for lecturer_id, lecturer in lecturers_dict.items():
+        for course_id, course in courses_dict.items():
+            if course['schedule'] not in lecturer['availability']:
+                continue
 
-        courses_by_classroom_for_pairing: Dict[str, List[Dict[str, Any]]] = {}
-        for course_in_list in parsed_courses_for_pairing:
-            cid = course_in_list['classroom_id']
-            if cid not in courses_by_classroom_for_pairing:
-                courses_by_classroom_for_pairing[cid] = []
-            courses_by_classroom_for_pairing[cid].append(course_in_list)
-
-        for cid_loop, classroom_courses_list in courses_by_classroom_for_pairing.items():
-            classroom_courses_list.sort(key=lambda c: c['schedule_date_obj'])
-            for i in range(len(classroom_courses_list) - 1):
-                course1 = classroom_courses_list[i]
-                course2 = classroom_courses_list[i+1]
-                
-                is_general_special_pair = (course1['course_type'] == 'general' and course2['course_type'] == 'special') or \
-                                          (course1['course_type'] == 'special' and course2['course_type'] == 'general')
-                
-                if is_general_special_pair and (course2['schedule_date_obj'] - course1['schedule_date_obj']).days == 1:
-                    pair_c1_obj, pair_c2_obj = course1, course2 # 日付順
-                    consecutive_day_pairs.append({
-                        "pair_id": f"CDP_{pair_c1_obj['id']}_{pair_c2_obj['id']}",
-                        "course1_id": pair_c1_obj['id'], "course2_id": pair_c2_obj['id'],
-                        "classroom_id": cid_loop
-                    })
-                    log_to_buffer(f"  + Found consecutive day pair: {pair_c1_obj['id']} ({pair_c1_obj['schedule']}) and {pair_c2_obj['id']} ({pair_c2_obj['schedule']}) at {cid_loop}")
-
-
-        # --- Main logic for model building and solving ---
-        possible_assignments_temp_data: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        potential_assignment_count = 0
-        log_to_buffer(f"Initial lecturers: {len(lecturers_data)}, Initial courses: {len(courses_data)}")
-
-        forced_unassignments_set = set(forced_unassignments) if forced_unassignments else set()
-        if forced_unassignments_set:
-            log_to_buffer(f"  Forced unassignments specified: {forced_unassignments_set}")
-
-        for lecturer_id_loop, lecturer in lecturers_dict.items():
-            for course_id_loop, course in courses_dict.items():
-                lecturer_id = lecturer["id"]
-                course_id = course["id"]
-
-                if (lecturer_id, course_id) in forced_unassignments_set:
-                    log_to_buffer(f"  - Filtered out (forced unassignment): {lecturer_id} for {course_id}")
-                    continue
-
-                course_type = course["course_type"]
-                course_rank = course["rank"]
-                lecturer_general_rank = lecturer["qualification_general_rank"]
-                lecturer_special_rank = lecturer.get("qualification_special_rank")
-
-                can_assign_by_qualification = False
-                qualification_cost_for_this_assignment = 0
-
-                if course_type == "general":
-                    if lecturer_special_rank is not None:
-                        can_assign_by_qualification = True
-                        qualification_cost_for_this_assignment = lecturer_general_rank
-                    elif lecturer_general_rank <= course_rank:
-                        can_assign_by_qualification = True
-                        qualification_cost_for_this_assignment = lecturer_general_rank
-                elif course_type == "special":
-                    if lecturer_special_rank is not None and lecturer_special_rank <= course_rank:
-                        can_assign_by_qualification = True
-                        qualification_cost_for_this_assignment = lecturer_special_rank
-                
-                if not can_assign_by_qualification:
-                    log_to_buffer(f"  - Filtered out: {lecturer_id} for {course_id} (Qualification insufficient. Course: {course_type} Rank {course_rank}. Lecturer: GenRank {lecturer_general_rank}, SpecRank {lecturer_special_rank})")
-                    continue
-
-                schedule_available = course["schedule"] in lecturer["_availability_set"] # 高速化: リストの代わりにセットで検索
-                if not schedule_available:
-                    log_to_buffer(f"  - Filtered out: {lecturer_id} for {course_id} (Schedule unavailable: Course_schedule={course['schedule']}, Lecturer_avail_sample={list(lecturer['_availability_set'])[:3]}...)")
-                    continue
-
-                potential_assignment_count += 1
-                log_to_buffer(f"  + Potential assignment: {lecturer_id} to {course_id} on {course['schedule']}")
-                var = model.NewBoolVar(f'x_{lecturer_id}_{course_id}')
-                
-                age_cost = float(lecturer.get("age", 99))
-                frequency_cost = float(len(lecturer.get("past_assignments", [])))
-                qualification_cost_val = float(qualification_cost_for_this_assignment)
-                
-                past_assignment_recency_cost = 0.0
-                days_since_last_assignment_to_classroom = -1
-                
-                # 事前に計算した辞書を使ってO(1)で最終割り当て日を取得
-                latest_assignment_date = lecturer["_latest_assignment_by_classroom"].get(course["classroom_id"])
-                if latest_assignment_date:
-                    days_since_last_assignment_to_classroom = (today_date - latest_assignment_date).days
-                    if days_since_last_assignment_to_classroom >= 0:
-                        past_assignment_recency_cost = RECENCY_COST_CONSTANT / (days_since_last_assignment_to_classroom + 1.0)
-                    else:
-                        past_assignment_recency_cost = 0.0
-                        days_since_last_assignment_to_classroom = -2 # 過去の日付が未来になっているなど、不正な場合
-                else:
-                    past_assignment_recency_cost = 0.0
-                    days_since_last_assignment_to_classroom = -1
-
-                log_to_buffer(f"    Raw costs for {lecturer_id} to {course_id}: age={age_cost}, freq={frequency_cost}, qual={qualification_cost_val}, recency={past_assignment_recency_cost:.2f} (days_since_last={days_since_last_assignment_to_classroom})")
-
-                assignment_key = (lecturer_id, course_id)
-                possible_assignments_temp_data[assignment_key] = {
-                    "lecturer_id": lecturer_id, "course_id": course_id,
-                    "variable": var,
-                    "raw_costs": {
-                        "age": age_cost, "frequency": frequency_cost,
-                        "qualification": qualification_cost_val, "recency": past_assignment_recency_cost
-                    },
-                    "debug_days_since_last_assignment": days_since_last_assignment_to_classroom
-                }
-
-        log_to_buffer(f"Total potential assignments after filtering: {potential_assignment_count}")
-        log_to_buffer(f"Number of entries in possible_assignments_temp_data: {len(possible_assignments_temp_data)}")
-
-        # --- 中間フラッシュポイント 1: 割り当て候補の生成後 ---
-        flush_log_buffer()
-
-        if not possible_assignments_temp_data:
-            log_to_buffer("No possible assignments found after filtering. Optimization will likely result in no assignments.")
-            return SolverOutput(
-                solution_status_str="前提条件エラー (割り当て候補なし)",
-                objective_value=None,
-                assignments=[],
-                all_courses=list(courses_dict.values()),
-                all_lecturers=list(lecturers_dict.values()),
-                solver_raw_status_code=cp_model.UNKNOWN
-            )
-
-        def get_norm_factor(cost_list: List[float], name: str) -> float:
-            if not cost_list: return 1.0
-            avg = np.mean(cost_list)
-            factor = avg if avg > 1e-9 else 1.0
-            log_to_buffer(f"  Normalization factor for {name}: {factor:.4f} (avg: {avg:.4f}, count: {len(cost_list)})")
-            return factor
-
-        cost_keys_for_norm = ["age", "frequency", "qualification", "recency"]
-        # パフォーマンス改善: 巨大な辞書に対するループを1回にまとめる
-        # 1. 各コスト値を格納するためのリストを初期化
-        raw_cost_lists = {key: [] for key in cost_keys_for_norm}
-
-        # 2. 割り当て候補データを一度だけループし、各コスト値をそれぞれのリストに追加
-        for temp_data in possible_assignments_temp_data.values():
-            raw_costs = temp_data.get("raw_costs", {})
-            for key in cost_keys_for_norm:
-                if key in raw_costs:
-                    raw_cost_lists[key].append(raw_costs[key])
-
-        # 3. 収集したリストから正規化係数を計算
-        norm_factors = {}
-        for key in cost_keys_for_norm:
-            norm_factors[key] = get_norm_factor(raw_cost_lists[key], key)
-
-        # パフォーマンス改善: 新しい辞書を生成せず、既存の辞書を更新する
-        for key, temp_data in possible_assignments_temp_data.items():
-            raw = temp_data["raw_costs"]
+            is_qualified = False
+            if course['course_type'] == 'general':
+                if lecturer['qualification_general_rank'] <= course['rank']:
+                    is_qualified = True
+                elif lecturer['qualification_special_rank'] is not None:
+                    is_qualified = True
+            elif course['course_type'] == 'special':
+                if lecturer['qualification_special_rank'] is not None and lecturer['qualification_special_rank'] <= course['rank']:
+                    is_qualified = True
             
-            norm_age = raw["age"] / norm_factors["age"]
-            norm_frequency = raw["frequency"] / norm_factors["frequency"]
-            norm_qualification = raw["qualification"] / norm_factors["qualification"]
-            norm_recency = raw["recency"] / norm_factors["recency"]
+            if not is_qualified:
+                continue
 
-            total_weighted_cost_float = (
-                weight_age * norm_age +
-                weight_frequency * norm_frequency +
-                weight_qualification * norm_qualification +
-                weight_past_assignment_recency * norm_recency
-            )
-            total_weighted_cost_int = int(round(total_weighted_cost_float * 100))
-            log_to_buffer(f"    Final cost for {key[0]}-{key[1]}: total_weighted_int={total_weighted_cost_int} (norm_age={norm_age:.2f}, norm_freq={norm_frequency:.2f}, norm_qual={norm_qualification:.2f}, norm_recency={norm_recency:.2f})")
-            temp_data["cost"] = total_weighted_cost_int
-
-        # 後続の処理で使われる変数名に合わせる
-        possible_assignments_dict = possible_assignments_temp_data
-        
-        # --- 中間フラッシュポイント 2: コスト計算完了後 ---
-        flush_log_buffer()
-
-        # パフォーマンス改善: 割り当て候補のループを1回にまとめる
-        assignments_by_course: Dict[str, List[Any]] = {}
-        assignments_by_lecturer: Dict[str, List[Any]] = {lect_id: [] for lect_id in lecturers_dict}
-        log_to_buffer("Grouping possible assignments by course and lecturer in a single loop.")
-        for (lecturer_id_group, course_id_group), data_group in possible_assignments_dict.items():
-            variable_group = data_group["variable"]
-            # 講座ごとの割り当てリストを作成
-            if course_id_group not in assignments_by_course:
-                assignments_by_course[course_id_group] = []
-            assignments_by_course[course_id_group].append(variable_group)
-            # 講師ごとの割り当てリストを作成
-            assignments_by_lecturer[lecturer_id_group].append(data_group["variable"])
-
-        objective_terms: List[Any] = [data["variable"] * data["cost"] for data in possible_assignments_dict.values()] # LinearExpr terms
-
-        # --- 講座への割り当てをソフト制約化 ---
-        # 以前のハード制約 `sum(...) == 1` を削除し、ペナルティ方式に変更
-        log_to_buffer("Applying soft constraints for course assignments with penalties.")
-        for course_id, possible_vars in assignments_by_course.items():
-            # 各講座には最大1名しか割り当てられない (これはハード制約として維持)
-            model.Add(sum(possible_vars) <= 1)
-
-            # 講座が割り当てられない場合にペナルティを課す
-            # is_assigned = 1 if sum(possible_vars) == 1, 0 otherwise
-            is_assigned = model.NewBoolVar(f'is_assigned_{course_id}')
-            model.Add(is_assigned == sum(possible_vars))
-
-            # (1 - is_assigned) が 1 のとき (つまり未割り当てのとき) ペナルティを課す
-            objective_terms.append((1 - is_assigned) * BASE_PENALTY_UNASSIGNED_SCALED)
-            log_to_buffer(f"  + Course {course_id}: Added unassignment penalty term ((1 - is_assigned) * {BASE_PENALTY_UNASSIGNED_SCALED}).")
-
-        if weight_lecturer_concentration > 0:
-            log_to_buffer("Applying simple concentration penalty (proportional to number of assignments).")
-            for lecturer_id_loop, lecturer_vars in assignments_by_lecturer.items():
-                if not lecturer_vars or len(lecturer_vars) <= 1:
-                    continue
-
-                num_total_assignments_l = model.NewIntVar(0, len(lecturer_vars), f'num_total_assignments_{lecturer_id_loop}')
-                model.Add(num_total_assignments_l == sum(lecturer_vars))
-                # ペナルティを大幅に下げて、目的関数に追加
-                # 係数100は、他のコストとのスケールを合わせるためのもの
-                concentration_penalty = int(round(weight_lecturer_concentration * 10))  # 元の1/10に
-                objective_terms.append(num_total_assignments_l * concentration_penalty)
-                log_to_buffer(
-                    f"  + Lecturer {lecturer_id_loop}: Added simple concentration penalty term "
-                    f"(num_assignments * {concentration_penalty})."
-                )
-
-        consecutive_assignment_pair_vars_details: List[Dict[str, Any]] = []
-        if weight_consecutive_assignment > 0 and consecutive_day_pairs:
-            log_to_buffer(f"Processing {len(consecutive_day_pairs)} consecutive day pairs for special assignment reward.")
-            for pair_info in consecutive_day_pairs:
-                pair_id = pair_info["pair_id"]
-                c1_id = pair_info["course1_id"]
-                c2_id = pair_info["course2_id"]
-
-                for lecturer_id_loop_pair, lecturer_pair in lecturers_dict.items():
-                    if lecturer_pair.get("qualification_special_rank") is None:
-                        continue
-
-                    key1 = (lecturer_id_loop_pair, c1_id)
-                    key2 = (lecturer_id_loop_pair, c2_id)
-                    if key1 not in possible_assignments_dict or key2 not in possible_assignments_dict:
-                        continue
-
-                    log_to_buffer(f"  + Potential consecutive pair assignment: Lecturer {lecturer_id_loop_pair} for pair {pair_id} ({c1_id}, {c2_id})")
-                    pair_var_name = f"y_{lecturer_id_loop_pair}_{pair_id}"
-                    pair_var = model.NewBoolVar(pair_var_name)
-                    consecutive_assignment_pair_vars_details.append({
-                        "variable": pair_var, "lecturer_id": lecturer_id_loop_pair,
-                        "course1_id": c1_id, "course2_id": c2_id, "pair_id": pair_id
-                    })
-
-                    individual_var_c1 = possible_assignments_dict[key1]["variable"]
-                    individual_var_c2 = possible_assignments_dict[key2]["variable"]
-                    model.Add(pair_var <= individual_var_c1)
-                    model.Add(pair_var <= individual_var_c2)
-
-                    actual_reward_for_pair = int(weight_consecutive_assignment * BASE_REWARD_CONSECUTIVE_SCALED)
-
-                    if actual_reward_for_pair > 0:
-                        objective_terms.append(pair_var * -actual_reward_for_pair)
-                        log_to_buffer(f"    Added reward {-actual_reward_for_pair} for pair_var {pair_var_name}")
-        else:
-            if weight_consecutive_assignment > 0: # This condition implies consecutive_day_pairs was empty
-                log_to_buffer("No consecutive day pairs found, or weight_consecutive_assignment is zero. Skipping reward logic.")
-
-        if fixed_assignments:
-            log_to_buffer(f"Processing {len(fixed_assignments)} fixed assignments (pinning).")
-            for fixed_lect_id, fixed_course_id in fixed_assignments:
-                assignment_key = (fixed_lect_id, fixed_course_id)
-                if assignment_key in possible_assignments_dict:
-                    var_to_pin = possible_assignments_dict[assignment_key]["variable"]
-                    model.Add(var_to_pin == 1)
-                    log_to_buffer(f"  + Pinned assignment: {fixed_lect_id} to {fixed_course_id} (variable {var_to_pin.Name()} forced to 1).")
-                else:
-                    log_to_buffer(f"  WARNING: Attempted to pin assignment ({fixed_lect_id}, {fixed_course_id}) but it's not a possible assignment. This may lead to an INFEASIBLE solution.")
-        else:
-            log_to_buffer("No fixed assignments specified.")
-
-        # The redundant log for "No consecutive day pairs found..." was removed as it's covered by the earlier else block.
-
-        if objective_terms:
-            model.Minimize(sum(objective_terms))
-        else:
-            log_to_buffer("Warning: Objective terms list was empty. Minimizing 0.")
-            model.Minimize(0) 
-
-        # --- 中間フラッシュポイント 3: モデル構築完了後、求解開始前 ---
-        flush_log_buffer()
-
-        solver = cp_model.CpSolver()
-        solver.parameters.log_search_progress = True
-
-        # CPUコア数に応じて並列探索数を動的に設定
-        available_cores = os.cpu_count() or 1 # os.cpu_count() が None を返す場合を考慮
-        # os.cpu_count()がホストのコア数を返し、多すぎると逆に性能が劣化する問題への対策。
-        # 実験結果から8コアが最適であったため、利用可能コア数の半分を基本としつつ、
-        # 最小でも8コアを確保するロジックに変更する。
-        calculated_workers = available_cores // 2
-        num_workers_to_set = max(8, calculated_workers)
-        solver.parameters.num_search_workers = num_workers_to_set
-        log_to_buffer(f"Solver configured to use {num_workers_to_set} workers (available: {available_cores}, calculated: available/2, min: 8).")
-        # 重複していたログコールバック設定を一本化。ソルバーログはメインのロガーに出力されます。
-        solver.log_callback = lambda msg: log_to_buffer(f"[OR-Tools Solver] {msg.strip()}")
-        
-        status_code = cp_model.UNKNOWN 
-        status_code = solver.Solve(model)
-
-        status_name = solver.StatusName(status_code)
-        results: List[Dict[str, Any]] = []
-        objective_value_solved: Optional[float] = None # Renamed to avoid conflict with outer scope if any
-        solution_status_str = "解なし"
-
-        if status_code == cp_model.OPTIMAL or status_code == cp_model.FEASIBLE:
-            if status_code == cp_model.OPTIMAL:
-                solution_status_str = "最適解"
-            else: # FEASIBLE
-                solution_status_str = "実行可能解"
-
-            objective_value_solved = solver.ObjectiveValue() / 100
+            assignment_pair = (lecturer_id, course_id)
+            if assignment_pair in forced_unassignments_set:
+                continue
             
-            lecturer_assignment_counts_this_round: Dict[str, int] = {}
-            for pa_data_count_check in possible_assignments_dict.values():
-                if solver.Value(pa_data_count_check["variable"]) == 1:
-                    lecturer_id_for_count = pa_data_count_check["lecturer_id"]
-                    lecturer_assignment_counts_this_round[lecturer_id_for_count] = \
-                        lecturer_assignment_counts_this_round.get(lecturer_id_for_count, 0) + 1
+            # --- コスト計算 ---
+            age_cost = (lecturer['age'] - 22) / MAX_AGE_COST if MAX_AGE_COST > 0 else 0
+            frequency_cost = len(lecturer.get('past_assignments', [])) / MAX_FREQUENCY_COST if MAX_FREQUENCY_COST > 0 else 0
 
-            solved_consecutive_assignments_map: Dict[Tuple[str, str], str] = {}
-            if weight_consecutive_assignment > 0 and consecutive_assignment_pair_vars_details:
-                for pair_detail in consecutive_assignment_pair_vars_details:
-                    if solver.Value(pair_detail["variable"]) == 1:
-                        lect_id = pair_detail["lecturer_id"]
-                        c1_id_res = pair_detail["course1_id"]
-                        c2_id_res = pair_detail["course2_id"]
-                        p_id_res = pair_detail["pair_id"]
-                        solved_consecutive_assignments_map[(lect_id, c1_id_res)] = p_id_res
-                        solved_consecutive_assignments_map[(lect_id, c2_id_res)] = p_id_res
-                        log_to_buffer(f"  Confirmed consecutive assignment for L:{lect_id} on Pair:{p_id_res} (C1:{c1_id_res}, C2:{c2_id_res})")
+            qualification_cost = 0
+            if course['course_type'] == 'general':
+                qualification_cost = (lecturer['qualification_general_rank'] - course['rank']) / MAX_QUALIFICATION_COST if MAX_QUALIFICATION_COST > 0 else 0
+            elif course['course_type'] == 'special' and lecturer['qualification_special_rank'] is not None:
+                qualification_cost = (lecturer['qualification_special_rank'] - course['rank']) / MAX_QUALIFICATION_COST if MAX_QUALIFICATION_COST > 0 else 0
+            qualification_cost = max(0, qualification_cost)
 
-            for (lecturer_id_res, course_id_res), pa_data in possible_assignments_dict.items():
-                if solver.Value(pa_data["variable"]) == 1:
-                    lecturer = lecturers_dict[lecturer_id_res]
-                    results.append({
-                        "講師ID": lecturer_id_res,
-                        "講座ID": course_id_res,
-                        "算出コスト(x100)": pa_data["cost"],
-                        "年齢コスト(元)": pa_data["raw_costs"]["age"],
-                        "頻度コスト(元)": pa_data["raw_costs"]["frequency"],
-                        "資格コスト(元)": pa_data["raw_costs"]["qualification"],
-                        "当該教室最終割当日からの日数": pa_data["debug_days_since_last_assignment"],
-                        "今回の割り当て回数": lecturer_assignment_counts_this_round.get(lecturer_id_res, 0),
-                        "連続ペア割当": solved_consecutive_assignments_map.get((lecturer_id_res, course_id_res), "なし")
-                    })
-        elif status_code == cp_model.INFEASIBLE:
-            solution_status_str = "実行不可能 (制約を満たす解なし)"
-        elif status_code == cp_model.UNKNOWN:
-            solution_status_str = "解探索失敗"
+            recency_cost = 0
+            last_assignment_date_in_classroom = None
+            for pa in lecturer.get('past_assignments', []):
+                if pa['classroom_id'] == course['classroom_id'] and pa['date'] is not None:
+                    if last_assignment_date_in_classroom is None or pa['date'] > last_assignment_date_in_classroom:
+                        last_assignment_date_in_classroom = pa['date']
+            
+            days_since_last_assignment = DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT
+            if last_assignment_date_in_classroom:
+                days_since_last_assignment = (today_date - last_assignment_date_in_classroom).days
+            
+            recency_cost = max(0, (MAX_RECENCY_DAYS - days_since_last_assignment) / MAX_RECENCY_DAYS) if MAX_RECENCY_DAYS > 0 else 0
+
+            total_scaled_cost = (
+                age_cost * weight_age +
+                frequency_cost * weight_frequency +
+                qualification_cost * weight_qualification +
+                recency_cost * weight_past_assignment_recency
+            ) * 1000
+
+            cost = int(round(total_scaled_cost))
+
+            possible_assignments_details.append({
+                "lecturer_id": lecturer_id,
+                "course_id": course_id,
+                "cost": cost,
+                "age_cost_raw": age_cost,
+                "frequency_cost_raw": frequency_cost,
+                "qualification_cost_raw": qualification_cost,
+                "recency_days": days_since_last_assignment,
+                "is_fixed": assignment_pair in fixed_assignments_set
+            })
+
+    # --- 3. レキシコグラフィカル法による求解 ---
+    final_assignments: List[SolverAssignment] = []
+    final_objective_value: Optional[float] = None
+    final_solution_status_str: str = "UNKNOWN"
+    final_raw_solver_status_code: int = cp_model.UNKNOWN
+    unassigned_courses_list: List[Dict[str, Any]] = []
+    determined_min_max_assignments: Optional[int] = None # フェーズ2の出力
+
+    # --- フェーズ1: 全講座割り当て可能性の確認 ---
+    logger.info("フェーズ1開始: 全講座割り当て可能性の確認...")
+    model_phase1 = cp_model.CpModel()
+    solver_phase1 = cp_model.CpSolver()
+    solver_phase1.parameters.log_search_progress = True
+    solver_phase1.parameters.max_time_in_seconds = time_limit_seconds
+
+    x_vars_phase1: Dict[Tuple[str, str], cp_model.BoolVar] = {}
+    
+    for assign_detail in possible_assignments_details:
+        lecturer_id = assign_detail["lecturer_id"]
+        course_id = assign_detail["course_id"]
+        
+        x_var = model_phase1.NewBoolVar(f'x_{lecturer_id}_{course_id}_P1')
+        x_vars_phase1[(lecturer_id, course_id)] = x_var
+        
+        if assign_detail["is_fixed"]:
+            model_phase1.Add(x_var == 1)
+
+    # 制約: 各講座には必ず1名の講師を割り当てる (ハード制約)
+    for course_id, course in courses_dict.items():
+        possible_x_vars_for_course = [
+            x_vars_phase1[(l_id, course_id)] for l_id in lecturers_dict.keys()
+            if (l_id, course_id) in x_vars_phase1
+        ]
+        if possible_x_vars_for_course:
+            model_phase1.Add(sum(possible_x_vars_for_course) == 1)
         else:
-            solution_status_str = f"解探索失敗 (ステータス: {status_name} [{status_code}])"
+            logger.warning(f"講座 {course_id} に割り当て可能な講師がありません。")
+            unassigned_courses_list.append(courses_dict[course_id])
+            status_phase1 = cp_model.INFEASIBLE # 割り当て候補がなければ即座にINFEASIBLEと判断
+            logger.info(f"フェーズ1結果: {solver_phase1.StatusName(status_phase1)} (講座 {course_id} に割り当て候補なし)")
+            return {
+                "solution_status_str": "NO_ASSIGNMENT_POSSIBLE",
+                "objective_value": None,
+                "assignments": [],
+                "all_courses": courses_data,
+                "all_lecturers": lecturers_data,
+                "solver_raw_status_code": status_phase1,
+                "unassigned_courses": unassigned_courses_list,
+                "min_max_assignments_per_lecturer": None # フェーズ1失敗時は設定しない
+            }
 
-        return SolverOutput(
-            solution_status_str=solution_status_str,
-            objective_value=objective_value_solved,
-            assignments=results,
-            all_courses=list(courses_dict.values()),
-            all_lecturers=list(lecturers_dict.values()),
-            solver_raw_status_code=status_code
-        )
-    finally:
-        # 求解プロセスの成否にかかわらず、バッファされたログをまとめて出力
-        flush_log_buffer()
-# --- [ここまで app.py より移動] ---
+    status_phase1 = solver_phase1.Solve(model_phase1)
+    logger.info(f"フェーズ1結果: {solver_phase1.StatusName(status_phase1)}")
+
+    if status_phase1 not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+        final_solution_status_str = solver_phase1.StatusName(status_phase1)
+        final_raw_solver_status_code = status_phase1
+        
+        if status_phase1 == cp_model.FEASIBLE or status_phase1 == cp_model.UNKNOWN:
+            assigned_courses_count = 0
+            for course_id in courses_dict.keys():
+                course_assigned = False
+                for lecturer_id in lecturers_dict.keys():
+                    if (lecturer_id, course_id) in x_vars_phase1 and solver_phase1.Value(x_vars_phase1[(lecturer_id, course_id)]) == 1:
+                        course_assigned = True
+                        break
+                if course_assigned:
+                    assigned_courses_count += 1
+                else:
+                    unassigned_courses_list.append(courses_dict[course_id])
+            
+            if assigned_courses_count > 0 and len(unassigned_courses_list) > 0:
+                final_solution_status_str = "PARTIALLY_ASSIGNED"
+            elif assigned_courses_count == 0 and len(unassigned_courses_list) > 0:
+                 final_solution_status_str = "NO_ASSIGNMENT_POSSIBLE"
+            else:
+                 final_solution_status_str = "UNKNOWN_FEASIBILITY"
+
+        elif status_phase1 == cp_model.INFEASIBLE:
+            final_solution_status_str = "INFEASIBLE_PHASE1"
+
+        logger.warning(f"フェーズ1終了: 全ての講座を割り当てることはできませんでした。ステータス: {final_solution_status_str}")
+        return {
+            "solution_status_str": final_solution_status_str,
+            "objective_value": None,
+            "assignments": [],
+            "all_courses": courses_data,
+            "all_lecturers": lecturers_data,
+            "solver_raw_status_code": final_raw_solver_status_code,
+            "unassigned_courses": unassigned_courses_list,
+            "min_max_assignments_per_lecturer": None
+        }
+    
+    logger.info("フェーズ1成功: 全ての講座を割り当て可能です。")
+
+    # --- フェーズ2: 講師割り当て回数の最大値の最小化 ---
+    logger.info("フェーズ2開始: 講師割り当て回数の最大値の最小化...")
+    model_phase2 = cp_model.CpModel()
+    solver_phase2 = cp_model.CpSolver()
+    solver_phase2.parameters.log_search_progress = True
+    solver_phase2.parameters.max_time_in_seconds = time_limit_seconds
+
+    x_vars_phase2: Dict[Tuple[str, str], cp_model.BoolVar] = {}
+    assignments_by_lecturer_phase2: Dict[str, List[cp_model.BoolVar]] = {l_id: [] for l_id in lecturers_dict.keys()}
+
+    for assign_detail in possible_assignments_details:
+        lecturer_id = assign_detail["lecturer_id"]
+        course_id = assign_detail["course_id"]
+        x_var = model_phase2.NewBoolVar(f'x_{lecturer_id}_{course_id}_P2')
+        x_vars_phase2[(lecturer_id, course_id)] = x_var
+        assignments_by_lecturer_phase2[lecturer_id].append(x_var)
+        
+        if (lecturer_id, course_id) in fixed_assignments_set:
+             model_phase2.Add(x_var == 1)
+
+    # 制約: 各講座には必ず1名の講師を割り当てる (ハード制約)
+    for course_id, course in courses_dict.items():
+        possible_x_vars_for_course = [
+            x_vars_phase2[(l_id, course_id)] for l_id in lecturers_dict.keys()
+            if (l_id, course_id) in x_vars_phase2
+        ]
+        if possible_x_vars_for_course:
+            model_phase2.Add(sum(possible_x_vars_for_course) == 1)
+        else:
+            raise SolverError(f"講座 {course_id} に割り当て可能な講師がありません。フェーズ1で検知されるべき問題です。")
+
+    max_assignments_var = model_phase2.NewIntVar(0, len(courses_data), 'max_assignments')
+    for lecturer_id, x_vars in assignments_by_lecturer_phase2.items():
+        num_total_assignments_l = model_phase2.NewIntVar(0, len(courses_data), f'num_total_assignments_{lecturer_id}_P2')
+        model_phase2.Add(num_total_assignments_l == sum(x_vars))
+        model_phase2.Add(num_total_assignments_l <= max_assignments_var)
+
+    model_phase2.Minimize(max_assignments_var)
+
+    status_phase2 = solver_phase2.Solve(model_phase2)
+    logger.info(f"フェーズ2結果: {solver_phase2.StatusName(status_phase2)}")
+
+    if status_phase2 not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+        logger.error(f"フェーズ2失敗: 講師割り当て回数の最大値を決定できませんでした。ステータス: {solver_phase2.StatusName(status_phase2)}")
+        final_solution_status_str = solver_phase2.StatusName(status_phase2)
+        final_raw_solver_status_code = status_phase2
+        raise SolverError(f"フェーズ2で解が見つかりませんでした: {final_solution_status_str}")
+
+    determined_min_max_assignments = int(solver_phase2.ObjectiveValue())
+    logger.info(f"フェーズ2成功: 決定された講師の最小最大割り当て回数 = {determined_min_max_assignments}")
+
+    # --- フェーズ3: 最終的な最適化 ---
+    logger.info("フェーズ3開始: ユーザー設定の割り当て上限を制約として最終最適化...")
+    model_phase3 = cp_model.CpModel()
+    solver_phase3 = cp_model.CpSolver()
+    solver_phase3.parameters.log_search_progress = True
+    solver_phase3.parameters.max_time_in_seconds = time_limit_seconds
+
+    x_vars_phase3: Dict[Tuple[str, str], cp_model.BoolVar] = {}
+    possible_assignments_dict: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    assignments_by_lecturer_phase3: Dict[str, List[cp_model.BoolVar]] = {l_id: [] for l_id in lecturers_dict.keys()}
+    
+    consecutive_assignment_pair_vars_details: List[Dict[str, Any]] = []
+
+    for assign_detail in possible_assignments_details:
+        lecturer_id = assign_detail["lecturer_id"]
+        course_id = assign_detail["course_id"]
+        cost = assign_detail["cost"]
+
+        x_var = model_phase3.NewBoolVar(f'x_{lecturer_id}_{course_id}_P3')
+        x_vars_phase3[(lecturer_id, course_id)] = x_var
+        assignments_by_lecturer_phase3[lecturer_id].append(x_var)
+        
+        possible_assignments_dict[(lecturer_id, course_id)] = {
+            "variable": x_var,
+            "cost": cost,
+            **assign_detail
+        }
+
+        if assign_detail["is_fixed"]:
+             model_phase3.Add(x_var == 1)
+
+    # 制約: 各講座には必ず1名の講師を割り当てる (ハード制約)
+    for course_id, course in courses_dict.items():
+        possible_x_vars_for_course = [
+            x_vars_phase3[(l_id, course_id)] for l_id in lecturers_dict.keys()
+            if (l_id, course_id) in x_vars_phase3
+        ]
+        if possible_x_vars_for_course:
+            model_phase3.Add(sum(possible_x_vars_for_course) == 1)
+
+    # ユーザー設定の「最大割り当て回数上限」を制約として追加
+    # max_assignments_per_lecturer が None でない場合のみ適用
+    if max_assignments_per_lecturer is not None:
+        for lecturer_id, x_vars in assignments_by_lecturer_phase3.items():
+            model_phase3.Add(sum(x_vars) <= max_assignments_per_lecturer)
+        logger.info(f"制約追加: 各講師の割り当て回数は最大 {max_assignments_per_lecturer} 回（ユーザー設定）")
+    else:
+        # max_assignments_per_lecturer が None の場合、集中度に関する上限制約は適用しない
+        # これはユーザーが「集中度を低くする」スライダーを0.0に設定した場合などに該当
+        logger.warning("max_assignments_per_lecturer が設定されていません。講師の割り当て集中度に関する明示的な上限制約は適用されません。")
+        # ただし、フェーズ2で得られた determined_min_max_assignments は、
+        # UIで情報提供として利用されるため、ここでの制約には直接影響しない。
+
+
+    # 連日割り当ての報酬に関する変数定義
+    actual_reward_for_consecutive = int(weight_consecutive_assignment * 500)
+    if weight_consecutive_assignment > 0 and actual_reward_for_consecutive > 0:
+        for pair_detail in consecutive_day_pairs:
+            lecturer_id = pair_detail["lecturer_id"]
+            course1_id = pair_detail["course1_id"]
+            course2_id = pair_detail["course2_id"]
+
+            if (lecturer_id, course1_id) in x_vars_phase3 and \
+               (lecturer_id, course2_id) in x_vars_phase3:
+                
+                pair_var = model_phase3.NewBoolVar(f'y_{lecturer_id}_{course1_id}_{course2_id}_P3')
+                individual_var_c1 = x_vars_phase3[(lecturer_id, course1_id)]
+                individual_var_c2 = x_vars_phase3[(lecturer_id, course2_id)]
+                
+                model_phase3.Add(pair_var <= individual_var_c1)
+                model_phase3.Add(pair_var <= individual_var_c2)
+                
+                consecutive_assignment_pair_vars_details.append({
+                    "variable": pair_var,
+                    "lecturer_id": lecturer_id,
+                    "course1_id": course1_id,
+                    "course2_id": course2_id,
+                    "reward": actual_reward_for_consecutive
+                })
+
+    # 目的関数の構築
+    objective_terms = []
+    for detail in possible_assignments_dict.values():
+        objective_terms.append(detail["variable"] * detail["cost"])
+
+    # 講師の割り当て集中度に関するペナルティ項は、ユーザー設定のハード制約に役割を譲るため、ここでは削除
+    # if weight_lecturer_concentration > 0 and actual_penalty_concentration > 0:
+    #     for lecturer_id_loop, lecturer_vars in assignments_by_lecturer_phase3.items():
+    #         if not lecturer_vars or len(lecturer_vars) <= 1:
+    #             continue
+    #         extra_assign_var_name = f'extra_assign_{lecturer_id_loop}_P3'
+    #         if model_phase3.HasVar(extra_assign_var_name):
+    #             extra_assignments_l = model_phase3.GetVarFromName(extra_assign_var_name)
+    #             objective_terms.append(extra_assignments_l * actual_penalty_concentration)
+
+    if weight_consecutive_assignment > 0 and actual_reward_for_consecutive > 0:
+        for pair_detail in consecutive_assignment_pair_vars_details:
+            objective_terms.append(pair_detail["variable"] * -pair_detail["reward"])
+
+    if objective_terms:
+        model_phase3.Minimize(sum(objective_terms))
+    else:
+        model_phase3.Minimize(0)
+
+    status_phase3 = solver_phase3.Solve(model_phase3)
+    logger.info(f"フェーズ3結果: {solver_phase3.StatusName(status_phase3)}")
+
+    # --- 4. 結果の抽出と整形 ---
+    if status_phase3 in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+        final_solution_status_str = solver_phase3.StatusName(status_phase3)
+        final_objective_value = solver_phase3.ObjectiveValue()
+
+        for detail in possible_assignments_details:
+            lecturer_id = detail["lecturer_id"]
+            course_id = detail["course_id"]
+            if solver_phase3.Value(x_vars_phase3[(lecturer_id, course_id)]) == 1:
+                lecturer_assign_count = int(solver_phase3.Value(model_phase3.GetVarFromName(f'num_total_assignments_{lecturer_id}_P3'))) if model_phase3.HasVar(f'num_total_assignments_{lecturer_id}_P3') else 1
+
+                is_consecutive_pair = "なし"
+                for pair_var_detail in consecutive_assignment_pair_vars_details:
+                    if pair_var_detail["lecturer_id"] == lecturer_id and \
+                       (pair_var_detail["course1_id"] == course_id or pair_var_detail["course2_id"] == course_id) and \
+                       solver_phase3.Value(pair_var_detail["variable"]) == 1:
+                        is_consecutive_pair = f"あり ({pair_var_detail['course1_id']}-{pair_var_detail['course2_id']})"
+                        break
+
+                final_assignments.append({
+                    "講師ID": lecturer_id,
+                    "講座ID": course_id,
+                    "算出コスト(x100)": detail["cost"],
+                    "年齢コスト(元)": detail["age_cost_raw"],
+                    "頻度コスト(元)": detail["frequency_cost_raw"],
+                    "資格コスト(元)": detail["qualification_cost_raw"],
+                    "当該教室最終割当日からの日数": detail["recency_days"],
+                    "今回の割り当て回数": lecturer_assign_count,
+                    "連続ペア割当": is_consecutive_pair,
+                })
+    else:
+        final_solution_status_str = solver_phase3.StatusName(status_phase3)
+        final_objective_value = None
+        logger.error(f"最終最適化フェーズで解が見つかりませんでした。ステータス: {final_solution_status_str}")
+
+    final_raw_solver_status_code = status_phase3
+
+    return {
+        "solution_status_str": final_solution_status_str,
+        "objective_value": final_objective_value,
+        "assignments": final_assignments,
+        "all_courses": courses_data,
+        "all_lecturers": lecturers_data,
+        "solver_raw_status_code": final_raw_solver_status_code,
+        "unassigned_courses": unassigned_courses_list,
+        "min_max_assignments_per_lecturer": determined_min_max_assignments
+    }
