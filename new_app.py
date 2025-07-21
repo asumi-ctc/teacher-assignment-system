@@ -13,6 +13,7 @@ except RuntimeError:
 
 import logging
 
+# --- 分離したモジュールをインポート ---
 from optimization_engine import optimization_gateway
 from optimization_engine.utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError, SolverError
 from optimization_engine.utils.logging_config import setup_logging, APP_LOG_FILE, GATEWAY_LOG_FILE, SOLVER_LOG_FILE
@@ -20,6 +21,7 @@ from ortools.sat.python import cp_model
 from typing import Optional, Any, Tuple, List, Dict
 from dateutil.relativedelta import relativedelta
 
+# --- ロギング設定をアプリケーション起動時に一度だけ実行 ---
 setup_logging()
 logger = logging.getLogger('app')
 
@@ -113,7 +115,8 @@ def run_optimization():
                 logger.info(f"Calculated max_assignments_per_lecturer: {calculated_max_assignments_per_lecturer} (M_min={M_min}, M_max={M_max}, S={S})")
             else:
                 logger.warning("min_max_assignments_suggested が未設定のため、講師の最大割り当て回数上限は適用されません。")
-
+                # min_max_assignments_suggested が未設定の場合、max_assignments_per_lecturer は None のまま渡される
+                # この場合、solver.py はこの制約を適用しない
 
             solver_output = optimization_gateway.run_optimization_with_monitoring(
                 lecturers_data=st.session_state.DEFAULT_LECTURERS_DATA,
@@ -123,13 +126,12 @@ def run_optimization():
                 weight_qualification=st.session_state.get("weight_qualification_exp", 0.5),
                 weight_age=st.session_state.get("weight_age_exp", 0.5),
                 weight_frequency=st.session_state.get("weight_frequency_exp", 0.5),
-                # weight_lecturer_concentration はUIスライダーの計算ロジックに移行したため、ここでは渡さない
                 weight_consecutive_assignment=st.session_state.get("weight_consecutive_assignment_exp", 0.5),
                 today_date=st.session_state.TODAY,
                 fixed_assignments=st.session_state.get("fixed_assignments_for_solver"),
                 forced_unassignments=st.session_state.get("forced_unassignments_for_solver"),
-                time_limit_seconds=st.session_state.get("solver_time_limit", 60),
-                max_assignments_per_lecturer=calculated_max_assignments_per_lecturer # 計算された上限値を渡す
+                # time_limit_seconds は solver.py のデフォルト値 (60秒) を使用
+                max_assignments_per_lecturer=calculated_max_assignments_per_lecturer
             )
             
             end_time = time.time()
@@ -148,7 +150,7 @@ def run_optimization():
                 raise KeyError(f"最適化関数の戻り値に必要なキーが不足しています。不足キー: {missing_keys}")
 
             st.session_state.solver_result_cache = solver_output
-            st.session_state.min_max_assignments_suggested = solver_output.get("min_max_assignments_per_lecturer") # フェーズ2の出力をセッションに保存
+            st.session_state.min_max_assignments_suggested = solver_output.get("min_max_assignments_per_lecturer")
 
             if "fixed_assignments_for_solver" in st.session_state: del st.session_state.fixed_assignments_for_solver
             if "forced_unassignments_for_solver" in st.session_state: del st.session_state.forced_unassignments_for_solver
@@ -610,11 +612,11 @@ def main():
         st.session_state.assignments_to_change_list = []
     if "solution_executed" not in st.session_state:
         st.session_state.solution_executed = False
-    if "solver_time_limit" not in st.session_state:
-        st.session_state.solver_time_limit = 60
+    # タイムリミット設定は完全に削除
+    # if "solver_time_limit" not in st.session_state:
+    #     st.session_state.solver_time_limit = 60
     if "min_max_assignments_suggested" not in st.session_state:
         st.session_state.min_max_assignments_suggested = None
-    # ユーザーが設定する「集中度を低くする」スライダーの値を初期化
     if "weight_lecturer_concentration_exp" not in st.session_state:
         st.session_state.weight_lecturer_concentration_exp = 0.5 # デフォルト値
 
@@ -641,24 +643,25 @@ def main():
     st.sidebar.button("最適割り当てを実行", type="primary", on_click=run_optimization)
     st.sidebar.markdown("---")
 
-    with st.sidebar.expander("【ソルバー設定】", expanded=False):
-        st.slider(
-            "タイムリミット (秒)",
-            min_value=10,
-            max_value=300,
-            value=st.session_state.solver_time_limit,
-            step=10,
-            format="%d秒",
-            key="solver_time_limit",
-            help="各最適化フェーズでソルバーが解を探索する最大時間。"
-        )
-    st.sidebar.markdown("---")
+    # 【ソルバー設定】セクションは完全に削除
+    # with st.sidebar.expander("【ソルバー設定】", expanded=False):
+    #     st.slider(
+    #         "タイムリミット (秒)",
+    #         min_value=10,
+    #         max_value=300,
+    #         value=st.session_state.solver_time_limit,
+    #         step=10,
+    #         format="%d秒",
+    #         key="solver_time_limit",
+    #         help="各最適化フェーズでソルバーが解を探索する最大時間。"
+    #     )
+    # st.sidebar.markdown("---") # 上記セクションとセットで削除
 
     with st.sidebar.expander("【制約】", expanded=False):
         st.markdown("- 1.講師は、資格ランクを超える講座への割り当てはできない")
         st.markdown("- 2.講師は、個人スケジュールに適合しない講座への割り当てはできない。")
         st.markdown("- 3.全講座に必ず1名の講師が割り当てられる。（レキシコグラフィカル優先目標）")
-        st.markdown("- 4.講師の割り当て回数は、設定された上限を超えない。（ユーザー設定制約）") # 文言修正
+        st.markdown("- 4.講師の割り当て回数は、設定された上限を超えない。（ユーザー設定制約）")
 
     with st.sidebar.expander("【最適化目標】", expanded=False):
         st.caption(
@@ -674,16 +677,14 @@ def main():
         st.markdown("**同教室への割り当て実績が無い人を優先**")
         st.slider("重み", 0.0, 1.0, 0.5, 0.1, format="%.1f", help="高いほど同教室への割り当て実績が無い人、或いは最後に割り当てられた日からの経過日数が長い人が重視されます。", key="weight_past_assignment_exp")
         
-        # 「講師の割り当て集中度を低くする（今回の割り当て内）」スライダーを復活
         st.markdown("**講師の割り当て集中度を低くする（今回の割り当て内）**")
-        # スライダーのステップを0.25に設定し、5段階相当にする
         concentration_help_text = "高いほど講師一人あたりの割り当て回数が厳しく制限され、集中が回避されます。0.0は制限なし、1.0は最低限の回数に制限されます。"
         if st.session_state.min_max_assignments_suggested is not None:
             concentration_help_text += f" (フェーズ2推奨値: {st.session_state.min_max_assignments_suggested}回)"
         st.slider(
             "重み",
-            0.0, 1.0, st.session_state.weight_lecturer_concentration_exp, 0.25, # stepを0.25に
-            format="%.2f", # 少数点以下2桁表示
+            0.0, 1.0, st.session_state.weight_lecturer_concentration_exp, 0.25,
+            format="%.2f",
             help=concentration_help_text,
             key="weight_lecturer_concentration_exp"
         )
