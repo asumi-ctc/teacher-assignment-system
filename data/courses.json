@@ -1,0 +1,90 @@
+[
+  {
+    "id": "P1-GC1",
+    "name": "北海道 一般講座 初心 (11-02)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 5,
+    "schedule": "2025-11-02"
+  },
+  {
+    "id": "P1-GC2",
+    "name": "北海道 一般講座 初級 (11-02)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 4,
+    "schedule": "2025-11-02"
+  },
+  {
+    "id": "P1-GC3",
+    "name": "北海道 一般講座 中級 (11-09)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 3,
+    "schedule": "2025-11-09"
+  },
+  {
+    "id": "P1-GC4",
+    "name": "北海道 一般講座 上級 (11-09)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 2,
+    "schedule": "2025-11-09"
+  },
+  {
+    "id": "P1-GC5",
+    "name": "北海道 一般講座 プロ (11-16)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 1,
+    "schedule": "2025-11-16"
+  },
+  {
+    "id": "P1-GC6",
+    "name": "北海道 一般講座 初心 (11-16)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 5,
+    "schedule": "2025-11-16"
+  },
+  {
+    "id": "P1-GC7",
+    "name": "北海道 一般講座 初級 (11-23)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 4,
+    "schedule": "2025-11-23"
+  },
+  {
+    "id": "P1-GC8",
+    "name": "北海道 一般講座 中級 (11-23)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 3,
+    "schedule": "2025-11-23"
+  },
+  {
+    "id": "P1-GC9",
+    "name": "北海道 一般講座 上級 (11-30)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 2,
+    "schedule": "2025-11-30"
+  },
+  {
+    "id": "P1-GC10",
+    "name": "北海道 一般講座 プロ (11-30)",
+    "classroom_id": "P1",
+    "course_type": "general",
+    "rank": 1,
+    "schedule": "2025-11-30"
+  },
+  {
+    "id": "P1-SC11",
+    "name": "北海道 特別講座 初級 (11-01)",
+    "classroom_id": "P1",
+    "course_type": "special",
+    "rank": 4,
+    "schedule": "2025-11-01"
+  }
+]
