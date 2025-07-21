@@ -8,7 +8,7 @@ from ortools.sat.python import cp_model
 from .utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError, SolverError
 from .utils.types import LecturerData, CourseData, ClassroomData, SolverOutput, SolverAssignment
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('optimization_solver')
 
 # Default value for days since last assignment if no past assignment or invalid date
 DEFAULT_DAYS_FOR_NO_OR_INVALID_PAST_ASSIGNMENT = 365 * 10 # Represents a very old assignment (10 years)
@@ -246,6 +246,8 @@ def solve_assignment(
     solver_phase1 = cp_model.CpSolver()
     solver_phase1.parameters.log_search_progress = True
     solver_phase1.parameters.max_time_in_seconds = time_limit_seconds
+    # OR-Toolsのログをキャプチャするためのコールバックを設定
+    solver_phase1.log_callback = lambda message: logger.info(f"[OR-Tools] {message}")
 
     x_vars_phase1: Dict[Tuple[str, str], cp_model.BoolVar] = {}
     
@@ -342,6 +344,8 @@ def solve_assignment(
     solver_phase2 = cp_model.CpSolver()
     solver_phase2.parameters.log_search_progress = True
     solver_phase2.parameters.max_time_in_seconds = time_limit_seconds
+    # OR-Toolsのログをキャプチャするためのコールバックを設定
+    solver_phase2.log_callback = lambda message: logger.info(f"[OR-Tools] {message}")
 
     x_vars_phase2: Dict[Tuple[str, str], cp_model.BoolVar] = {}
     assignments_by_lecturer_phase2: Dict[str, List[cp_model.BoolVar]] = {l_id: [] for l_id in lecturers_dict.keys()}
@@ -398,6 +402,8 @@ def solve_assignment(
     solver_phase3 = cp_model.CpSolver()
     solver_phase3.parameters.log_search_progress = True
     solver_phase3.parameters.max_time_in_seconds = time_limit_seconds
+    # OR-Toolsのログをキャプチャするためのコールバックを設定
+    solver_phase3.log_callback = lambda message: logger.info(f"[OR-Tools] {message}")
 
     x_vars_phase3: Dict[Tuple[str, str], cp_model.BoolVar] = {}
     possible_assignments_dict: Dict[Tuple[str, str], Dict[str, Any]] = {} # コスト情報も持つ
@@ -546,4 +552,3 @@ def solve_assignment(
         "unassigned_courses": unassigned_courses_list, # フェーズ1で割り当てられなかった講座があればここに
         "min_max_assignments_per_lecturer": determined_min_max_assignments # フェーズ2の出力 (M_min)
     }
-
