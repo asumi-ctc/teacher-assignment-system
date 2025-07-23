@@ -103,6 +103,7 @@ def run_optimization():
 
             # ユーザー設定の「集中度」スライダーからmax_assignments_per_lecturerを計算
             calculated_max_assignments_per_lecturer = None
+            # min_max_assignments_suggested がまだ計算されていない場合でも、デフォルトの上限を設定
             if st.session_state.min_max_assignments_suggested is not None:
                 M_min = st.session_state.min_max_assignments_suggested
                 # M_max は、全ての講座を1人の講師が担当できるという極端なケース
@@ -110,14 +111,15 @@ def run_optimization():
                 # スライダー値 S (0.0: 集中許容 - 1.0: 集中回避)
                 S = st.session_state.get("weight_lecturer_concentration_exp", 0.5)
 
-                # 計算式: S=1.0でM_min、S=0.0でM_maxに近づく
                 calculated_max_assignments_per_lecturer = M_min + (M_max - M_min) * (1 - S)
                 calculated_max_assignments_per_lecturer = int(max(1, round(calculated_max_assignments_per_lecturer)))
                 logger.info(f"Calculated max_assignments_per_lecturer: {calculated_max_assignments_per_lecturer} (M_min={M_min}, M_max={M_max}, S={S})")
             else:
-                logger.warning("min_max_assignments_suggested が未設定のため、講師の最大割り当て回数上限は適用されません。")
-                # min_max_assignments_suggested が未設定の場合、max_assignments_per_lecturer は None のまま渡される
-                # この場合、solver.py はこの制約を適用しない
+                # min_max_assignments_suggested がまだない初回実行時など
+                # この場合、総講座数を上限とする（集中を最も許容する設定に相当）
+                calculated_max_assignments_per_lecturer = len(st.session_state.DEFAULT_COURSES_DATA)
+                logger.warning(f"min_max_assignments_suggested が未設定のため、講師の最大割り当て回数上限は総講座数 ({calculated_max_assignments_per_lecturer}) に設定されます。")
+
 
             solver_output = optimization_gateway.run_optimization_with_monitoring(
                 lecturers_data=st.session_state.DEFAULT_LECTURERS_DATA,
@@ -131,7 +133,6 @@ def run_optimization():
                 today_date=st.session_state.TODAY,
                 fixed_assignments=st.session_state.get("fixed_assignments_for_solver"),
                 forced_unassignments=st.session_state.get("forced_unassignments_for_solver"),
-                # time_limit_seconds は solver.py のデフォルト値 (60秒) を使用
                 max_assignments_per_lecturer=calculated_max_assignments_per_lecturer
             )
             
@@ -185,9 +186,15 @@ def run_optimization():
         engine_log_content = read_log_file(SOLVER_LOG_FILE)
         st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
 
-        # OR-Toolsソルバーログのフィルタリングを削除し、ファイル内容をそのまま格納
-        st.session_state.solver_log_for_download = engine_log_content
-        logger.info(f"OR-Tools solver log content (length: {len(engine_log_content)} chars) stored for download.")
+        # OR-Toolsソルバーログのフィルタリングを再度有効化（StreamToLoggerでプレフィックスが付与されるため）
+        solver_log_lines = []
+        if engine_log_content:
+            solver_log_prefix = "[OR-Tools Solver]" 
+            for line in engine_log_content.splitlines():
+                if solver_log_prefix in line: # プレフィックス付きの行のみを抽出
+                    solver_log_lines.append(line)
+        st.session_state.solver_log_for_download = "\n".join(solver_log_lines)
+        logger.info(f"OR-Tools solver log content (length: {len(st.session_state.solver_log_for_download)} chars) stored for download.")
 
         st.session_state.app_log_for_download = read_log_file(APP_LOG_FILE)
         logger.info("Finished reading log files.")
