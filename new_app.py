@@ -4,12 +4,12 @@ import datetime
 import time
 import json
 from pathlib import Path
+import os # os.remove を使用するため
 
 import multiprocessing
 try:
     multiprocessing.set_start_method('spawn', force=True)
 except RuntimeError:
-    # Streamlitの内部的な再実行サイクルなどで既に設定されている場合があるので無視する
     pass
 
 import logging
@@ -85,6 +85,22 @@ def run_optimization():
             del st.session_state[key]
     logger.info("Cleared previous optimization results from session_state.")
 
+    # 各ログファイルをクリアする関数
+    def clear_log_file(log_path: str):
+        try:
+            if Path(log_path).exists():
+                with open(log_path, 'w', encoding='utf-8') as f:
+                    f.truncate(0) # ファイル内容をクリア
+                logger.info(f"Cleared log file: {log_path}")
+        except Exception as e:
+            logger.error(f"Failed to clear log file {log_path}: {e}")
+
+    # 最適化実行前にログファイルをクリア
+    clear_log_file(APP_LOG_FILE)
+    clear_log_file(GATEWAY_LOG_FILE)
+    clear_log_file(SOLVER_LOG_FILE)
+
+
     def read_log_file(log_path: str) -> str:
         """ログファイルを読み込んで内容を返す。存在しない場合は空文字列を返す。"""
         try:
@@ -103,12 +119,9 @@ def run_optimization():
 
             # ユーザー設定の「集中度」スライダーからmax_assignments_per_lecturerを計算
             calculated_max_assignments_per_lecturer = None
-            # min_max_assignments_suggested がまだ計算されていない場合でも、デフォルトの上限を設定
             if st.session_state.min_max_assignments_suggested is not None:
                 M_min = st.session_state.min_max_assignments_suggested
-                # M_max は、全ての講座を1人の講師が担当できるという極端なケース
                 M_max = len(st.session_state.DEFAULT_COURSES_DATA)
-                # スライダー値 S (0.0: 集中許容 - 1.0: 集中回避)
                 S = st.session_state.get("weight_lecturer_concentration_exp", 0.5)
 
                 calculated_max_assignments_per_lecturer = M_min + (M_max - M_min) * (1 - S)
@@ -182,6 +195,9 @@ def run_optimization():
 
     finally:
         logger.info("Reading log files to store in session state.")
+        # ファイル書き込みが完了するのを少し待つ
+        time.sleep(0.5) # 0.5秒待機
+
         st.session_state.optimization_gateway_log_for_download = read_log_file(GATEWAY_LOG_FILE)
         engine_log_content = read_log_file(SOLVER_LOG_FILE)
         st.session_state.optimization_engine_log_for_download_from_file = engine_log_content
@@ -189,9 +205,9 @@ def run_optimization():
         # OR-Toolsソルバーログのフィルタリングを再度有効化（StreamToLoggerでプレフィックスが付与されるため）
         solver_log_lines = []
         if engine_log_content:
-            solver_log_prefix = "[OR-Tools Solver]" 
+            solver_log_prefix = "[OR-Tools]" # プレフィックスを"[OR-Tools]"に修正
             for line in engine_log_content.splitlines():
-                if solver_log_prefix in line: # プレフィックス付きの行のみを抽出
+                if solver_log_prefix in line:
                     solver_log_lines.append(line)
         st.session_state.solver_log_for_download = "\n".join(solver_log_lines)
         logger.info(f"OR-Tools solver log content (length: {len(st.session_state.solver_log_for_download)} chars) stored for download.")
@@ -374,20 +390,6 @@ def display_optimization_result_view():
                         rank = l_assigned.get("qualification_general_rank")
                         if rank in assigned_general_rank_counts:
                             assigned_general_rank_counts[rank] += 1
-                    for rank_num in range(1, 6):
-                        summary_data.append((f"　一般ランク{rank_num}", f"{assigned_general_rank_counts.get(rank_num, 0)}人 / {general_rank_total_counts.get(rank_num, 0)}人中"))
-
-                    summary_data.append(("**特別資格ランク別割り当て**", "(講師が保有する特別資格ランク / 全講師中の同ランク保有者数)"))
-                    special_rank_total_counts = {i: 0 for i in range(1, 6)}
-                    for lecturer in st.session_state.DEFAULT_LECTURERS_DATA:
-                        rank = lecturer.get("qualification_special_rank")
-                        if rank is not None and rank in special_rank_total_counts:
-                            special_rank_total_counts[rank] += 1
-                    assigned_special_rank_counts = {i: 0 for i in range(1, 6)}
-                    for l_assigned in temp_assigned_lecturers:
-                        rank = l_assigned.get("qualification_special_rank")
-                        if rank is not None and rank in assigned_special_rank_counts:
-                            assigned_special_rank_counts[rank] += 1
                     for rank_num in range(1, 6):
                         summary_data.append((f"　特別ランク{rank_num}", f"{assigned_special_rank_counts.get(rank_num, 0)}人 / {special_rank_total_counts.get(rank_num, 0)}人中"))
 

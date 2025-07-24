@@ -35,12 +35,11 @@ def run_optimization_with_monitoring(
     logger = logging.getLogger('optimization_gateway')
 
     # ソルバーに直接渡すべきではない、またはUI側で計算された引数をkwargsから削除
-    # weight_lecturer_concentration は app.py で max_assignments_per_lecturer を計算するために使用されるため、
-    # solver には直接渡されない
     kwargs.pop("allow_under_assignment", None)
     kwargs.pop("weight_assignment_shortage", None)
     kwargs.pop("weight_travel", None)
     kwargs.pop("weight_lecturer_concentration", None) # UIで処理するため削除
+    kwargs.pop("solver_time_limit", None) # app.pyから削除されたため、ここでもpopする
 
     solver_args = {
         "lecturers_data": lecturers_data,
@@ -114,7 +113,7 @@ def run_optimization_with_monitoring(
     # 最終的な OptimizationResult 辞書を構築
     final_result: OptimizationResult = {
         "status": "成功", # デフォルトは成功
-        "message": "最適化処理が正常に完了しました。",
+        "message": "Optimization process completed successfully.",
         "solution_status": solver_output["solution_status_str"],
         "objective_value": solver_output["objective_value"],
         "assignments_df": processed_assignments,
@@ -131,7 +130,6 @@ def run_optimization_with_monitoring(
         final_result["status"] = "失敗" # フェーズ1で割り当て不能なら最終的に失敗
         if final_result["solution_status"] == "PARTIALLY_ASSIGNED":
             final_result["status"] = "警告" # 部分的に割り当てられた場合は警告
-        final_result["message"] = f"フェーズ1で全ての講座を割り当てることはできませんでした。ステータス: {final_result['solution_status']}"
+        final_result["message"] = f"Phase 1 failed to assign all courses. Status: {final_result['solution_status']}"
 
     return final_result
-
