@@ -5,6 +5,7 @@ import pandas as pd
 from ortools.sat.python import cp_model
 import sys
 import time # timeモジュールをインポートし、sleepを使用
+from pathlib import Path # Pathモジュールをインポートし、ファイルクリアに使用
 
 # .utils から型定義とエラー定義をインポート
 from .utils.error_definitions import InvalidInputError, ProcessExecutionError, ProcessTimeoutError, SolverError
@@ -102,7 +103,6 @@ def solve_assignment(
     courses_dict = {c['id']: c for c in courses_data}
     classrooms_dict = {c['id']: c for c in classrooms_data}
 
-    # 日付文字列をdatetime.dateオブジェクトに変換するヘルパー関数
     def parse_date_if_str(date_obj: Any) -> Optional[datetime.date]:
         if isinstance(date_obj, str):
             try:
@@ -244,6 +244,7 @@ def solve_assignment(
     solver_logger = logging.getLogger('optimization_solver')
     old_stdout = sys.stdout
     old_stderr = sys.stderr
+    # StreamToLoggerのprefixをnew_app.pyのフィルタリングと完全に一致させる
     sys.stdout = StreamToLogger(solver_logger, logging.INFO, prefix="[OR-Tools] ") # プレフィックスを"[OR-Tools] "に修正
     sys.stderr = StreamToLogger(solver_logger, logging.ERROR, prefix="[OR-Tools ERROR] ") # エラーログのプレフィックスも修正
 

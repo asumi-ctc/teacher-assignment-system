@@ -205,7 +205,7 @@ def run_optimization():
         # OR-Toolsソルバーログのフィルタリングを再度有効化（StreamToLoggerでプレフィックスが付与されるため）
         solver_log_lines = []
         if engine_log_content:
-            solver_log_prefix = "[OR-Tools]" 
+            solver_log_prefix = "[OR-Tools] " # プレフィックスを"[OR-Tools] "に修正
             for line in engine_log_content.splitlines():
                 if solver_log_prefix in line:
                     solver_log_lines.append(line)
@@ -390,20 +390,6 @@ def display_optimization_result_view():
                         rank = l_assigned.get("qualification_general_rank")
                         if rank in assigned_general_rank_counts:
                             assigned_general_rank_counts[rank] += 1
-                    for rank_num in range(1, 6):
-                        summary_data.append((f"　一般ランク{rank_num}", f"{assigned_general_rank_counts.get(rank_num, 0)}人 / {general_rank_total_counts.get(rank_num, 0)}人中"))
-
-                    # special_rank_total_countsとassigned_special_rank_countsをここで初期化
-                    special_rank_total_counts = {i: 0 for i in range(1, 6)}
-                    assigned_special_rank_counts = {i: 0 for i in range(1, 6)}
-                    for lecturer in st.session_state.DEFAULT_LECTURERS_DATA:
-                        rank = lecturer.get("qualification_special_rank")
-                        if rank is not None and rank in special_rank_total_counts:
-                            special_rank_total_counts[rank] += 1
-                    for l_assigned in temp_assigned_lecturers:
-                        rank = l_assigned.get("qualification_special_rank")
-                        if rank is not None and rank in assigned_special_rank_counts:
-                            assigned_special_rank_counts[rank] += 1
                     for rank_num in range(1, 6):
                         summary_data.append((f"　特別ランク{rank_num}", f"{assigned_special_rank_counts.get(rank_num, 0)}人 / {special_rank_total_counts.get(rank_num, 0)}人中"))
 
