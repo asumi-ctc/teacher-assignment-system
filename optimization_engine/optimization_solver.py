@@ -13,7 +13,7 @@ from .utils.types import LecturerData, CourseData, ClassroomData, SolverOutput, 
 # logging_config から SOLVER_LOG_FILE をインポート (StreamToLoggerが使用)
 from .utils.logging_config import SOLVER_LOG_FILE 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('optimization_solver')
 
 # OR-Toolsの標準出力/標準エラー出力をPythonロガーにリダイレクトするためのクラス
 class StreamToLogger:
@@ -241,12 +241,11 @@ def solve_assignment(
     determined_min_max_assignments: Optional[int] = None
 
     # OR-Toolsソルバーのログ出力をPythonロガーにリダイレクト
-    solver_logger = logging.getLogger('optimization_solver')
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     # StreamToLoggerのprefixをnew_app.pyのフィルタリングと完全に一致させる
-    sys.stdout = StreamToLogger(solver_logger, logging.INFO, prefix="[OR-Tools] ") # プレフィックスを"[OR-Tools] "に修正
-    sys.stderr = StreamToLogger(solver_logger, logging.ERROR, prefix="[OR-Tools ERROR] ") # エラーログのプレフィックスも修正
+    sys.stdout = StreamToLogger(logger, logging.INFO, prefix="[OR-Tools] ") # プレフィックスを"[OR-Tools] "に修正
+    sys.stderr = StreamToLogger(logger, logging.ERROR, prefix="[OR-Tools ERROR] ") # エラーログのプレフィックスも修正
 
     try: # try-finallyブロックで確実にストリームを元に戻す
         # --- フェーズ1: 全講座割り当て可能性の確認 ---
@@ -532,6 +531,6 @@ def solve_assignment(
     finally: # 確実にストリームを元に戻し、ロガーをフラッシュ
         sys.stdout = old_stdout
         sys.stderr = old_stderr
-        for handler in solver_logger.handlers:
+        for handler in logger.handlers:
             handler.flush()
         time.sleep(0.1) # ファイルシステムへの書き込みが完了するのを少し待つ

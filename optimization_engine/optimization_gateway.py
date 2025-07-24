@@ -7,7 +7,7 @@ from .utils.types import OptimizationResult, AssignmentResultRow, LecturerData, 
 # optimization_solver は optimization_solver.py の関数を直接呼び出すため、相対インポート
 from . import optimization_solver
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('optimization_gateway')
 
 def run_optimization_with_monitoring(
     lecturers_data: List[LecturerData],
@@ -32,8 +32,6 @@ def run_optimization_with_monitoring(
         InvalidInputError: 入力データ形式または値が不正な場合。
         ProcessExecutionError: 最適化処理中に予期せぬエラーが発生した場合。
     """
-    logger = logging.getLogger('optimization_gateway')
-
     # ソルバーに直接渡すべきではない、またはUI側で計算された引数をkwargsから削除
     kwargs.pop("allow_under_assignment", None)
     kwargs.pop("weight_assignment_shortage", None)

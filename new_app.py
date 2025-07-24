@@ -391,8 +391,22 @@ def display_optimization_result_view():
                         if rank in assigned_general_rank_counts:
                             assigned_general_rank_counts[rank] += 1
                     for rank_num in range(1, 6):
-                        summary_data.append((f"　特別ランク{rank_num}", f"{assigned_special_rank_counts.get(rank_num, 0)}人 / {special_rank_total_counts.get(rank_num, 0)}人中"))
+                        summary_data.append((f"　一般ランク{rank_num}", f"{assigned_general_rank_counts.get(rank_num, 0)}人 / {general_rank_total_counts.get(rank_num, 0)}人中"))
 
+                    summary_data.append(("**特別資格ランク別割り当て**", "(講師が保有する特別資格ランク / 全講師中の同ランク保有者数)"))
+                    special_rank_total_counts = {i: 0 for i in range(1, 6)}
+                    for lecturer in st.session_state.DEFAULT_LECTURERS_DATA:
+                        rank = lecturer.get("qualification_special_rank")
+                        if rank is not None and rank in special_rank_total_counts:
+                            special_rank_total_counts[rank] += 1
+                    assigned_special_rank_counts = {i: 0 for i in range(1, 6)}
+                    for l_assigned in temp_assigned_lecturers:
+                        rank = l_assigned.get("qualification_special_rank")
+                        if rank is not None and rank in assigned_special_rank_counts:
+                            assigned_special_rank_counts[rank] += 1
+                    for rank_num in range(1, 6):
+                        summary_data.append((f"　特別ランク{rank_num}", f"{assigned_special_rank_counts.get(rank_num, 0)}人 / {special_rank_total_counts.get(rank_num, 0)}人中"))
+                        
                 if '今回の割り当て回数' in results_df.columns:
                     counts_of_lecturers_by_assignment_num = results_df['講師ID'].value_counts().value_counts().sort_index()
                     summary_data.append(("**講師の割り当て回数別**", "(今回の最適化での担当講座数)"))
