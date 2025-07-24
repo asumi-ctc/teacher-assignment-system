@@ -62,7 +62,7 @@ LOGGING_CONFIG = {
         'optimization_solver': {
             'handlers': ['solver_file'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
     },
     'root': {
