@@ -17,6 +17,9 @@ LOGGING_CONFIG = {
         'standard': {
             'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         },
+        'solver_formatter': {
+            'format': '%(message)s'
+        },
     },
     'handlers': {
         'console': {
@@ -44,7 +47,7 @@ LOGGING_CONFIG = {
             'mode': 'w',
             'filename': os.path.join(LOG_DIR, "optimization_solver.log"),
             'encoding': 'utf-8',
-            'formatter': 'standard',
+            'formatter': 'solver_formatter',
             'level': 'INFO',
         },
     },

@@ -89,15 +89,6 @@ def solve_assignment(
     """
     logger.info("レキシコグラフィカル最適化を開始します。")
 
-    # 最適化開始時にSOLVER_LOG_FILEをクリア
-    try:
-        if Path(SOLVER_LOG_FILE).exists():
-            with open(SOLVER_LOG_FILE, 'w', encoding='utf-8') as f:
-                f.truncate(0)
-            logger.info(f"Cleared SOLVER_LOG_FILE: {SOLVER_LOG_FILE}")
-    except Exception as e:
-        logger.error(f"Failed to clear SOLVER_LOG_FILE {SOLVER_LOG_FILE}: {e}")
-
     # --- データの前処理と準備 ---
     lecturers_dict = {l['id']: l for l in lecturers_data}
     courses_dict = {c['id']: c for c in courses_data}
